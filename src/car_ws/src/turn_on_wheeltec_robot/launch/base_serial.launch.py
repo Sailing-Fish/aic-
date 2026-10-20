@@ -25,8 +25,7 @@ def generate_launch_description():
                 'odom_x_scale': 1.0,
                 'odom_y_scale': 1.0,
                 'odom_z_scale_positive': 1.0,
-                'odom_z_scale_negative': 1.0,
-                'cmd_vel_timeout': 0.5}],
+                'odom_z_scale_negative': 1.0}],
             )
 
 

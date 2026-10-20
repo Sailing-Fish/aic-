@@ -98,11 +98,6 @@ void turn_on_robot::Send_Velocity(double vx, double vy, double vz)
 void turn_on_robot::Cmd_Vel_Callback(const geometry_msgs::msg::Twist::SharedPtr twist_aux)
 {
   Send_Velocity(twist_aux->linear.x, twist_aux->linear.y, twist_aux->angular.z);
-  //Refresh the watchdog timestamp, a new command cancels any pending stop
-  //刷新看门狗时间戳，新的速度指令会取消待发送的停车帧
-  last_cmd_vel_time = this->now();
-  cmd_vel_active = true;
-  stop_frame_count = 0;
 }
 /**************************************
 Date: January 28, 2021
@@ -669,24 +664,6 @@ void turn_on_robot::Control()
       
     }
     
-    //cmd_vel watchdog: if no new command arrives within cmd_vel_timeout, send zero speed frames
-    //速度指令超时保护：超过 cmd_vel_timeout 未收到新指令时主动补发零速帧，
-    //避免上位机停止发布后下位机一直保持最后一条速度继续运行
-    if (cmd_vel_timeout > 0.0 && cmd_vel_active &&
-        (_Now - last_cmd_vel_time).seconds() > cmd_vel_timeout)
-    {
-      cmd_vel_active = false;
-      stop_frame_count = 5; //repeat several frames in case one gets lost //多发几帧防止丢帧
-    }
-    if (stop_frame_count > 0)
-    {
-      Send_Velocity(0.0, 0.0, 0.0);
-      if (--stop_frame_count == 0)
-      {
-        RCLCPP_WARN(this->get_logger(), "cmd_vel timeout: no command for %.2fs, robot stopped", cmd_vel_timeout);
-      }
-    }
-
     //自动回充数据话题
     if(check_AutoCharge_data)
     {
@@ -735,7 +712,6 @@ turn_on_robot::turn_on_robot():rclcpp::Node ("wheeltec_robot")
   this->declare_parameter<double>("odom_y_scale");
   this->declare_parameter<double>("odom_z_scale_positive");
   this->declare_parameter<double>("odom_z_scale_negative");
-  this->declare_parameter<double>("cmd_vel_timeout", 0.5);
 
   this->get_parameter("serial_baud_rate", serial_baud_rate);//Communicate baud rate 115200 to the lower machine //和下位机通信波特率115200
   this->get_parameter("usart_port_name", usart_port_name);//Fixed serial port number //固定串口号

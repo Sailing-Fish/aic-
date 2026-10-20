@@ -250,11 +250,6 @@ class turn_on_robot : public rclcpp::Node
         int serial_baud_rate;      //Serial communication baud rate //串口通信波特率
         RECEIVE_DATA Receive_Data; //The serial port receives the data structure //串口接收数据结构体
         SEND_DATA Send_Data;       //The serial port sends the data structure //串口发送数据结构体
-        //cmd_vel timeout watchdog //速度指令超时保护
-        double cmd_vel_timeout = 0.5;    //timeout in seconds, <=0 disables it //超时时间(秒)，<=0 表示关闭
-        rclcpp::Time last_cmd_vel_time;  //time when the last command was received //最后一条速度指令的接收时刻
-        bool cmd_vel_active = false;     //whether a command has been received //是否已收到过速度指令
-        int stop_frame_count = 0;        //zero-speed frames left to send //待补发的零速帧数
         DISTANCE_DATA Distance_Data; //超声波数据
         RECEIVE_AutoCharge_DATA Receive_AutoCharge_Data;  //串口接收自动回充数据结构体
         Supersonic_data distance;  //超声波距离对象

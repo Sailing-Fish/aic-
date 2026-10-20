@@ -40,11 +40,11 @@ def generate_launch_description():
         name="line_follower_node",
         output="screen",
         parameters=[
+            params_file,
             {
                 "image_topic": image_topic,
                 "cmd_vel_topic": cmd_vel_topic,
             },
-            params_file,
         ],
     )
 
