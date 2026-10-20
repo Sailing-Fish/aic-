@@ -2,6 +2,7 @@
 # coding=utf-8
 
 import os
+import sys
 import time
 
 import cv2
@@ -20,6 +21,10 @@ from sensor_msgs.msg import Image, RegionOfInterest
 # 与 detection_turn_controller.cpp 完全对接
 # ============================================================
 from ai_msgs.msg import PerceptionTargets, Target, Roi
+
+# 模型与类别文件默认放在脚本同级的 mod1 目录下。
+# 用 __file__ 推导，避免把工作区绝对路径写死（工作区改名后仍可用）。
+DEFAULT_MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mod1')
 
 
 def bgr2nv12_fast(image):
@@ -88,7 +93,15 @@ class BPUYoloV8DigitNode(Node):
         # =====================================================
         # 2. 类别文件
         # =====================================================
-        cls_list_path = '/home/sunrise/ws_rdkx5/src/yolov8/mod1/out.list'
+        self.declare_parameter('model_dir', DEFAULT_MODEL_DIR)
+        self.declare_parameter('cls_list_path', '')
+        self.declare_parameter('model_path', '')
+
+        model_dir = self.get_parameter('model_dir').value or DEFAULT_MODEL_DIR
+        cls_list_path = self.get_parameter('cls_list_path').value or os.path.join(
+            model_dir, 'out.list')
+        model_path = self.get_parameter('model_path').value or os.path.join(
+            model_dir, 'best_modified_yolov8.bin')
 
         if os.path.exists(cls_list_path):
             with open(cls_list_path, 'r', encoding='utf-8') as f:
@@ -96,22 +109,20 @@ class BPUYoloV8DigitNode(Node):
             self.get_logger().info(f'加载 {len(self.classes)} 类: {self.classes}')
         else:
             self.classes = ['1', '2', '3', '4', '5', '6', '7', '8']
-            self.get_logger().warn('类别文件不存在，使用预设8类数字标签')
+            self.get_logger().warn(f'类别文件不存在: {cls_list_path}，使用预设8类数字标签')
 
         if len(self.classes) != 8:
-            self.get_logger().error(
+            raise RuntimeError(
                 f'类别数量错误: 当前 out.list 有 {len(self.classes)} 类，新模型应只有 8 类（1~8）'
             )
-            return
 
         # =====================================================
         # 3. 加载 X5 BPU 模型
         # =====================================================
-        model_path = '/home/sunrise/ws_rdkx5/src/yolov8/mod1/best_modified_yolov8.bin'
-
         if not os.path.exists(model_path):
-            self.get_logger().error(f'模型文件不存在: {model_path}')
-            return
+            raise RuntimeError(f'模型文件不存在: {model_path}')
+
+        self.get_logger().info(f'模型文件: {model_path}')
 
         self.bpu_model = dnn.load(model_path)[0]
         self.get_logger().info('RDK X5 BPU YOLOv8 视觉检测节点就绪')
@@ -362,14 +373,23 @@ class BPUYoloV8DigitNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = BPUYoloV8DigitNode()
+    try:
+        node = BPUYoloV8DigitNode()
+    except Exception as e:
+        # 构造失败必须让进程退出，否则节点看起来"活着"但从不发布检测结果。
+        print(f'[bpu_yolov8_node] 初始化失败: {e}', file=sys.stderr)
+        rclpy.shutdown()
+        sys.exit(1)
+
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        # Ctrl+C 时 rclpy 的信号处理器已经做过 shutdown，这里只需静默退出。
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
