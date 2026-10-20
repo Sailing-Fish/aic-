@@ -1,0 +1,60 @@
+    if (digit_active_) {
+      double age = (now - last_digit_time_).seconds();
+      if (age > digit_goal_timeout_) {
+        reset_digit_state();
+      } else {
+        double bias = clamp(digit_yaw_gain_ * last_digit_offset_, -max_yaw_rate_, max_yaw_rate_);
+        yaw_rate = clamp(yaw_rate + bias, -max_yaw_rate_, max_yaw_rate_);
+      }
+    }
+
+    // 黄线恢复后的限�?    if (now <= post_yellow_active_until_) {
+      linear_speed = std::min(linear_speed, post_yellow_speed_cap_);
+    }
+
+    // 加速度限制
+    double dt = (now - last_speed_update_time_).seconds();
+    if (dt > 0.0) {
+      double max_delta = speed_accel_limit_ * dt;
+      double delta = clamp(linear_speed - last_speed_cmd_, -max_delta, max_delta);
+      linear_speed = last_speed_cmd_ + delta;
+    }
+    last_speed_cmd_ = linear_speed;
+    last_speed_update_time_ = now;
+
+    publish_cmd_vel(linear_speed, yaw_rate, publish_stop);
+    if (current_state != last_state_ || current_state == TrackState::LOST || current_state == TrackState::YELLOW_LINE_DETECTED) {
+      publish_state(current_state);
+    }
+    last_state_ = current_state;
+  }
+
+  std::optional<ProcessingResult> process_image(const cv::Mat & frame_bgr) const
+  {
+    if (frame_bgr.empty()) {
+      return std::nullopt;
+    }
+
+    const int height = frame_bgr.rows;
+    const int width = frame_bgr.cols;
+
+    int roi_top = std::clamp(
+      static_cast<int>(height * (1.0 - roi_top_ratio_)), 0, height - 1);
+    int roi_bottom = std::clamp(
+      height - static_cast<int>(height * roi_bottom_ratio_), roi_top + 1, height);
+    const int roi_height = roi_bottom - roi_top;
+
+    cv::Rect roi_rect(0, roi_top, width, roi_height);
+    cv::Mat roi = frame_bgr(roi_rect);
+
+    cv::Mat blurred;
+    cv::GaussianBlur(roi, blurred, cv::Size(gaussian_kernel_, gaussian_kernel_), 0);
+
+    cv::Mat gray;
+    cv::cvtColor(blurred, gray, cv::COLOR_BGR2GRAY);
+
+    cv::Mat hsv;
+    cv::cvtColor(blurred, hsv, cv::COLOR_BGR2HSV);
+
+    cv::Mat white_mask;
+    if (use_white_filter_) {

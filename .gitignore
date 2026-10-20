@@ -1,0 +1,30 @@
+# colcon 构建产物（所有层级，含嵌套工作区）
+build/
+install/
+log/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 编译中间文件
+*.o
+*.so
+*.a
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 运行时日志
+*.log
+
+# 嵌套仓库的上游 .git 备份（未纳入版本管理）
+src/car_ws/src/serial_ros2/.git.upstream-backup/
