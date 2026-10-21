@@ -97,6 +97,7 @@ private:
       has_stop_ &&
       (now - last_stop_time_).seconds() <= stop_timeout_)
     {
+      note_source("stop");
       publish(
         std::make_shared<geometry_msgs::msg::Twist>(
           last_stop_msg_));
@@ -108,6 +109,7 @@ private:
     last_high_time_ = now;
     has_high_ = true;
 
+    note_source("detection");
     publish(msg);
   }
 
@@ -122,6 +124,7 @@ private:
     last_stop_time_ = this->now();
     has_stop_ = true;
 
+    note_source("stop");
     publish(msg);
   }
 
@@ -141,6 +144,7 @@ private:
       has_stop_ &&
       (now - last_stop_time_).seconds() <= stop_timeout_)
     {
+      note_source("stop");
       publish(
         std::make_shared<geometry_msgs::msg::Twist>(
           last_stop_msg_));
@@ -154,6 +158,7 @@ private:
       has_high_ &&
       (now - last_high_time_).seconds() <= high_timeout_)
     {
+      note_source("detection");
       publish(
         std::make_shared<geometry_msgs::msg::Twist>(
           last_high_msg_));
@@ -163,9 +168,20 @@ private:
     // ------------------------------------------------
     // 第三优先级：普通巡线
     // ------------------------------------------------
+    note_source("follower");
     publish(msg);
   }
 
+
+  // [DEC] 仲裁源变化时才打一条，避免每帧刷屏。
+  void note_source(const char * src)
+  {
+    if (last_source_ == src) {
+      return;
+    }
+    last_source_ = src;
+    RCLCPP_INFO(get_logger(), "[DEC] mux change active=%s", src);
+  }
 
   void publish(
     const geometry_msgs::msg::Twist::SharedPtr & msg)
@@ -190,6 +206,8 @@ private:
 
   bool has_high_{false};
   bool has_stop_{false};
+
+  std::string last_source_;   // [DEC] 当前仲裁源，用于只记录切换
 
   geometry_msgs::msg::Twist last_high_msg_;
   geometry_msgs::msg::Twist last_stop_msg_;

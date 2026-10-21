@@ -251,8 +251,8 @@ private:
 
     RCLCPP_INFO(
       get_logger(),
-      "[digit turn] best:%d x_diff:%.2f y_diff:%.2f dur:%.2fs lin:%.2f ang:%.2f (frames:%d)",
-      best_digit_, best_x_diff_, best_y_diff_, dur, cmd.linear.x, cmd.angular.z, session_frames_);
+      "[DEC] digit turn best=%d conf=%.2f xdiff=%+.2f yaw=%+.2f dur=%.2f lin=%.2f frames=%d",
+      best_digit_, best_conf_, best_x_diff_, cmd.angular.z, dur, cmd.linear.x, session_frames_);
   }
 
   void on_timer()

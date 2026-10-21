@@ -40,6 +40,8 @@
 
 ---
 
+./tools/start.sh
+
 ## 1. 编译
 
 ```bash

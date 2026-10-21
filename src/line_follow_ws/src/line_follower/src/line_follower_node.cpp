@@ -55,6 +55,9 @@ struct RedAvoidRuntime
 
 RedAvoidRuntime g_red_avoid;
 
+// [DEC] 用：红色避让只在进入时打一条，避免每帧刷屏。
+bool g_soft_red_logged = false;
+
 // 运行过程中短暂丢线时，保持一个低速前进和上一帧转向，
 // 避免除黄色停车线之外的情况把车停住。
 struct MotionRuntime
@@ -76,6 +79,19 @@ LineFollowerNode::LineFollowerNode()
 {
   declare_parameters();
   setup_interfaces();
+
+  // 启动时把"实际生效"的关键参数打出来。
+  // 面板改了 YAML 但没重启节点时，对比这一行就能立刻看出没生效。
+  RCLCPP_INFO(
+    this->get_logger(),
+    "[DEC] param effective target_speed=%.2f max_speed=%.2f kp=%.2f max_yaw_rate=%.2f "
+    "roi_top=%.2f roi_bottom=%.2f yellow_stop_dur=%.2f yellow_count=%d "
+    "red_near=%.2f red_close=%.2f lost_speed=%.2f",
+    target_speed_, max_speed_, kp_, max_yaw_rate_,
+    roi_top_ratio_, roi_bottom_ratio_, yellow_stop_duration_, yellow_permanent_count_,
+    this->get_parameter("red_near_ratio").as_double(),
+    this->get_parameter("red_very_close_ratio").as_double(),
+    this->get_parameter("line_lost_forward_speed").as_double());
 
   const int kernel_size = std::max<int>(1, morph_kernel_);
   morph_element_ = cv::getStructuringElement(
@@ -621,7 +637,7 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
       RCLCPP_INFO(
         this->get_logger(),
-        "New yellow line detected! Count: %d/%d",
+        "[DEC] yellow stop_begin count=%d/%d",
         yellow_line_detection_count_,
         yellow_permanent_count_);
 
@@ -631,13 +647,17 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
         RCLCPP_INFO(
           this->get_logger(),
-          "Final yellow line detected. Permanent stop activated.");
+          "[DEC] yellow final_stop count=%d/%d",
+          yellow_line_detection_count_,
+          yellow_permanent_count_);
       } else {
         yellow_line_stop_active_ = true;
 
         RCLCPP_INFO(
           this->get_logger(),
-          "Temporary yellow stop activated for %.2f s.",
+          "[DEC] yellow temp_stop count=%d/%d dur=%.2f",
+          yellow_line_detection_count_,
+          yellow_permanent_count_,
           yellow_stop_duration_);
       }
     }
@@ -713,7 +733,8 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       yellow_line_stop_active_ = false;
       RCLCPP_INFO(
         this->get_logger(),
-        "Yellow line stop duration ended. Resuming line following.");
+        "[DEC] yellow stop_end dur=%.2f",
+        since_yellow_detection);
     }
 
     if (result_opt && result_opt->line_detected) {
@@ -792,6 +813,17 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
   if (!yellow_stop_now && soft_red_enabled) {
     if (soft_red_active) {
+      if (!g_soft_red_logged) {
+        g_soft_red_logged = true;
+        RCLCPP_INFO(
+          this->get_logger(),
+          "[DEC] red avoid_on side=%s kind=%s bottom=%.2f area=%.4f in_path=%d",
+          soft_red_yaw_bias < 0.0 ? "L" : "R",
+          g_red_avoid.is_red_line ? "line" : "cone",
+          g_red_avoid.bottom_ratio,
+          g_red_avoid.contour_area_ratio,
+          g_red_avoid.in_corridor ? 1 : 0);
+      }
       // ==========================================================
       // 动态红锥避障融合
       //
@@ -912,6 +944,8 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         bottom_ratio >= red_very_close_ratio;
 
       current_state = TrackState::TRACKING;
+    } else {
+      g_soft_red_logged = false;
     }
   } else if (!yellow_stop_now && red_turning_ && now < red_turn_end_time_) {
     // 旧红锥控制：仅在 enable_soft_red_avoidance=false 时生效。
@@ -949,6 +983,15 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
   }
 
   publish_cmd_vel(linear_speed, yaw_rate, publish_stop_cmd);
+
+  if (current_state != last_state_)
+  {
+    RCLCPP_INFO(
+      this->get_logger(),
+      "[DEC] state change from=%s to=%s",
+      state_to_string(last_state_).c_str(),
+      state_to_string(current_state).c_str());
+  }
 
   if (current_state != last_state_ ||
       current_state == TrackState::LOST ||

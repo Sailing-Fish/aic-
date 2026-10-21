@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDK X5 · 智能车面板</title>
+<style>
+  :root{
+    --bg:#0b0f16; --card:#141a24; --card2:#1b2330; --line:#26303f;
+    --fg:#e6edf7; --dim:#8b98ab; --mute:#5d6b7e;
+    --ok:#2fd07a; --warn:#f5b93b; --bad:#ff5a5a; --acc:#4a9eff; --purple:#a47aff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:13px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
+  .mono{font-family:Consolas,"Courier New",monospace}
+
+  /* ---------- header ---------- */
+  header{display:flex;align-items:center;gap:14px;padding:9px 16px;
+         background:linear-gradient(180deg,#151c27,#101620);
+         border-bottom:1px solid var(--line)}
+  .brand{font-weight:700;font-size:14px;letter-spacing:.5px;white-space:nowrap}
+  .brand small{color:var(--mute);font-weight:400;margin-left:6px;letter-spacing:0}
+  .lights{display:flex;gap:6px;flex-wrap:wrap}
+  .light{display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;
+         background:#10161f;border:1px solid var(--line);font-size:11.5px;color:var(--dim);
+         transition:.15s}
+  .light .dot{width:8px;height:8px;border-radius:50%;background:#39434f;transition:.15s}
+  .light.on{color:#d8f5e4;border-color:#1f6b45;background:#0e2318}
+  .light.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .light.bad{color:#ffd4d4;border-color:#7a2b2b;background:#241111}
+  .light.bad .dot{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+  .spacer{flex:1}
+  .round{font-size:11.5px;color:var(--dim);padding:3px 9px;border-radius:6px;
+         background:#10161f;border:1px solid var(--line);white-space:nowrap}
+  .clock{font:700 34px/1 Consolas,monospace;letter-spacing:1px;color:#fff;
+         text-shadow:0 0 18px rgba(74,158,255,.35);min-width:150px;text-align:right}
+  .clock.run{color:#8fe3ff}
+  .clock.final{color:var(--warn);text-shadow:0 0 18px rgba(245,185,59,.4)}
+  button{background:var(--card2);color:var(--fg);border:1px solid var(--line);padding:6px 13px;
+         border-radius:7px;cursor:pointer;font-size:12.5px;font-family:inherit;transition:.15s}
+  button:hover:not(:disabled){border-color:var(--acc);background:#22303f}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  button.estop{background:linear-gradient(180deg,#8f2626,#6d1c1c);border-color:#b33;
+               color:#ffe3e3;font-weight:700}
+  button.estop:hover{background:#a52c2c}
+  button.primary{background:linear-gradient(180deg,#1d5fa8,#164a83);border-color:#2f7dd1;color:#eaf4ff}
+  button.ghost{background:transparent}
+  button.icon{width:30px;padding:5px 0;text-align:center;font-weight:700}
+
+  /* ---------- layout ---------- */
+  main{padding:10px;display:grid;gap:10px;height:calc(100vh - 57px);
+       grid-template-rows:auto 1fr auto}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:9px 13px;position:relative;overflow:hidden}
+  .stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--acc)}
+  .stat.s2::before{background:var(--ok)} .stat.s3::before{background:var(--purple)}
+  .stat.s4::before{background:var(--warn)}
+  .stat .k{font-size:11px;color:var(--mute);letter-spacing:.5px}
+  .stat .v{font:700 20px/1.25 Consolas,monospace;margin-top:3px}
+  .stat .sub{font-size:11px;color:var(--dim);margin-top:2px}
+
+  .cols{display:grid;gap:10px;min-height:0;
+        grid-template-columns:minmax(300px,360px) minmax(340px,1fr) minmax(250px,290px)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .card>h2{margin:0;padding:8px 12px;font-size:12px;font-weight:600;color:#a9b8cc;
+           background:var(--card2);border-bottom:1px solid var(--line);
+           display:flex;align-items:center;gap:8px}
+  .card>h2 .tag{margin-left:auto;font-size:10.5px;color:var(--mute);font-weight:400}
+
+  /* images */
+  .imgs{padding:8px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  .imgwrap{position:relative;border:1px solid var(--line);border-radius:7px;
+           background:#05080c;overflow:hidden;flex:1;min-height:0;display:flex}
+  .imgwrap img{width:100%;height:100%;object-fit:contain;display:block}
+  .imgwrap .lbl{position:absolute;left:8px;top:6px;font-size:11px;color:#cfe3ff;
+                background:rgba(8,12,18,.75);padding:2px 7px;border-radius:5px;
+                border:1px solid rgba(74,158,255,.3)}
+
+  /* params */
+  .params{overflow:auto;padding:6px 10px 10px;flex:1;min-height:0}
+  details.grp{border-bottom:1px dashed var(--line);padding:5px 0}
+  details.grp:last-child{border-bottom:0}
+  details.grp>summary{cursor:pointer;color:var(--acc);font-weight:600;font-size:12px;
+                      padding:4px 0;outline:none;list-style:none;display:flex;gap:6px;align-items:center}
+  details.grp>summary::-webkit-details-marker{display:none}
+  details.grp>summary::before{content:"▸";color:var(--mute);transition:.15s;display:inline-block}
+  details.grp[open]>summary::before{transform:rotate(90deg)}
+  .row{display:grid;grid-template-columns:1fr 88px;gap:8px;align-items:center;padding:2px 0 2px 14px}
+  .row .lbl{font-size:12px}
+  .row .hint{display:block;color:var(--mute);font-size:10.5px;line-height:1.35}
+  .row input[type=number]{width:100%;background:#080c12;color:#fff;border:1px solid var(--line);
+                          border-radius:5px;padding:3px 6px;font:12px Consolas,monospace}
+  .row input[type=number]:focus{outline:none;border-color:var(--acc)}
+  .row input[type=checkbox]{width:15px;height:15px;accent-color:var(--acc)}
+  .row.dirty input[type=number]{border-color:var(--warn);background:#1d1a10}
+  .row.pending .lbl::after{content:"待重启";margin-left:6px;font-size:10px;color:#12181f;
+    background:var(--warn);border-radius:4px;padding:0 5px;font-weight:700}
+  .footbar{display:flex;gap:8px;align-items:center;padding:8px 10px;
+           border-top:1px solid var(--line);background:var(--card2);flex-wrap:wrap}
+  .footbar select{background:#080c12;color:var(--fg);border:1px solid var(--line);
+                  border-radius:6px;padding:5px 8px;font-size:12px}
+  .memo{font-size:11px;color:var(--mute);margin-left:auto}
+
+  /* decisions */
+  .feed{overflow:auto;padding:6px 8px;flex:1;min-height:0}
+  .ev{display:grid;grid-template-columns:44px 1fr;gap:7px;padding:5px 6px;border-radius:6px;
+      border-left:2px solid var(--line);margin-bottom:4px;background:#101620}
+  .ev .t{font:11px Consolas,monospace;color:var(--mute);text-align:right;padding-top:1px}
+  .ev .body b{font-size:12px;font-weight:600}
+  .ev .body i{display:block;font-style:normal;font-size:11px;color:var(--dim);margin-top:1px}
+  .ev.yellow{border-left-color:var(--warn)} .ev.yellow b{color:#ffe0a3}
+  .ev.red{border-left-color:var(--bad)} .ev.red b{color:#ffb4b4}
+  .ev.digit{border-left-color:var(--purple)} .ev.digit b{color:#d7c4ff}
+  .ev.state{border-left-color:var(--acc)} .ev.state b{color:#b8dbff}
+  .ev.safety{border-left-color:#ff8a3d} .ev.safety b{color:#ffc39f}
+  .ev.mux{border-left-color:#4a5a6e} .ev.mux b{color:#b6c4d4}
+  .ev.param{border-left-color:var(--ok)} .ev.param b{color:#a9f0c8}
+  .empty{color:var(--mute);font-size:12px;padding:14px;text-align:center}
+
+  /* logs */
+  .logcard{height:190px}
+  .logbar{display:flex;gap:10px;align-items:center;padding:6px 10px;
+          border-bottom:1px solid var(--line);font-size:11.5px;color:var(--dim);flex-wrap:wrap}
+  .logbar select,.logbar input[type=text]{background:#080c12;color:var(--fg);
+          border:1px solid var(--line);border-radius:5px;padding:3px 7px;font-size:11.5px}
+  .logbar input[type=text]{width:140px}
+  .logbar label{display:flex;align-items:center;gap:4px;cursor:pointer}
+  #log{flex:1;overflow:auto;padding:5px 10px;font:11.5px/1.5 Consolas,monospace;
+       white-space:pre-wrap;word-break:break-all;background:#070b10}
+  #log .dec{color:#78e0a2} #log .err{color:#ff9b9b} #log .hl{background:#3b3410}
+  #log .pe{color:#ffd166;font-weight:700}
+
+  /* modal */
+  .mask{position:fixed;inset:0;background:rgba(3,6,10,.82);display:none;
+        align-items:center;justify-content:center;padding:24px;z-index:50}
+  .mask.show{display:flex}
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:12px;
+         max-width:820px;width:100%;max-height:86vh;overflow:auto;padding:20px 24px}
+  .modal h3{margin:0 0 10px;font-size:16px}
+  .modal h4{margin:16px 0 6px;font-size:13px;color:var(--acc)}
+  .modal p,.modal li{font-size:12.5px;color:#c4d0e0;line-height:1.65}
+  .modal table{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}
+  .modal th,.modal td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}
+  .modal th{color:var(--dim);font-weight:600}
+  .modal code{background:#0a1018;padding:1px 5px;border-radius:4px;
+              font-family:Consolas,monospace;color:#8fe3ff}
+  .toast{position:fixed;right:16px;bottom:16px;background:var(--card2);border:1px solid var(--line);
+         border-left:3px solid var(--acc);padding:10px 15px;border-radius:7px;max-width:430px;
+         opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none;font-size:12.5px;
+         box-shadow:0 8px 26px rgba(0,0,0,.5)}
+  .toast.show{opacity:1;transform:none}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:#2b3746;border-radius:4px}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">RDK X5<small>智能车面板</small></div>
+  <div class="lights" id="lights"></div>
+  <div class="round" id="round">第 1 轮</div>
+  <div class="spacer"></div>
+  <div class="clock" id="clock">00:00.0</div>
+  <button class="icon" id="btnHelp" title="指标说明">?</button>
+  <button class="ghost" id="btnReset" title="清零本轮计时与计数（不控制车）">重置本轮</button>
+  <button class="estop" id="estop">立即停车</button>
+</header>
+
+<main>
+  <!-- 四张概览卡 -->
+  <section class="stats">
+    <div class="stat s1">
+      <div class="k">黄线进度</div>
+      <div class="v" id="stYellow">0 / 4</div>
+      <div class="sub" id="stYellowSub">停车线计数</div>
+    </div>
+    <div class="stat s2">
+      <div class="k">车辆状态</div>
+      <div class="v" id="stState">未发车</div>
+      <div class="sub" id="stStateSub">等待空格</div>
+    </div>
+    <div class="stat s3">
+      <div class="k">识别数字</div>
+      <div class="v" id="stDigit">-</div>
+      <div class="sub" id="stDigitSub">最近一次转向</div>
+    </div>
+    <div class="stat s4">
+      <div class="k">生效参数</div>
+      <div class="v" id="stParam">kp -</div>
+      <div class="sub" id="stParamSub">与 YAML 是否一致</div>
+    </div>
+  </section>
+
+  <section class="cols">
+    <!-- 图像 -->
+    <div class="card">
+      <h2>图像<span class="tag" id="fpsTag">6 fps</span></h2>
+      <div class="imgs">
+        <div class="imgwrap">
+          <span class="lbl">巡线调试图</span>
+          <img id="imgDebug" alt="巡线调试图">
+        </div>
+        <div class="imgwrap">
+          <span class="lbl">YOLO 数字检测</span>
+          <img id="imgYolo" alt="YOLO 检测图">
+        </div>
+      </div>
+    </div>
+
+    <!-- 参数 -->
+    <div class="card">
+      <h2>参数<span class="tag" id="paramTag">-</span></h2>
+      <div class="params" id="params"></div>
+      <div class="footbar">
+        <select id="mapSel">
+          <option value="fork">岔路 fork</option>
+          <option value="roundabout">环岛 roundabout</option>
+        </select>
+        <button class="primary" id="btnSaveRestart">保存并重启巡线</button>
+        <button id="btnSave">仅保存</button>
+        <span class="memo" id="memo">未修改</span>
+      </div>
+    </div>
+
+    <!-- 决策流 -->
+    <div class="card">
+      <h2>决策流 <span class="tag">[DEC] 实时</span></h2>
+      <div class="feed" id="feed"><div class="empty">还没有决策事件</div></div>
+    </div>
+  </section>
+
+  <!-- 日志 -->
+  <section class="card logcard">
+    <h2>原始日志<span class="tag" id="logTag">-</span></h2>
+    <div class="logbar">
+      <select id="logFile">
+        <option value="follow">④巡线+仲裁</option>
+        <option value="base">①底盘</option>
+        <option value="camera">②相机</option>
+        <option value="yolo">③YOLO</option>
+        <option value="start">⑤发车</option>
+        <option value="panel">⑥面板</option>
+        <option value="safety">⑦兜底</option>
+        <option value="collector">⑧DEC汇总</option>
+      </select>
+      <label><input type="checkbox" id="onlyDec" checked> 只看决策</label>
+      <input type="text" id="search" placeholder="搜索关键字">
+      <label><input type="checkbox" id="autoscroll" checked> 自动滚动</label>
+      <button id="btnClear">清屏</button>
+    </div>
+    <div id="log"></div>
+  </section>
+</main>
+
+<!-- 帮助 / 指标说明 -->
+<div class="mask" id="mask">
+  <div class="modal">
+    <h3>面板怎么读</h3>
+
+    <h4>一、[DEC] 是什么</h4>
+    <p><code>DEC</code> = <b>Decision（决策）</b>。它是我们给代码里所有"做判断"的地方加的统一标记。
+       普通日志里混着 <code>cv_bridge</code>、BPU、launch 的噪声，加了 <code>[DEC]</code> 之后
+       就能一键过滤出"车在这一刻做了什么决定"。</p>
+    <p>格式统一为：<code>[DEC] 区域 事件 键=值 键=值</code>，同时会汇总成 <code>events.csv</code>，
+       一行一个事件，带相对时间，可以和录像时间轴对齐。</p>
+
+    <h4>二、常见决策事件</h4>
+    <table>
+      <tr><th>事件</th><th>含义</th><th>对应规则</th></tr>
+      <tr><td>yellow stop_begin</td><td>看到黄线，开始刹车</td><td>停车线必须完全停住</td></tr>
+      <tr><td>yellow temp_stop</td><td>停 N 秒后继续</td><td>—</td></tr>
+      <tr><td>yellow final_stop</td><td>第 4 根黄线，永久停（完赛）</td><td>终点</td></tr>
+      <tr><td>state change</td><td>巡线状态切换：tracking / lost / yellow_line_detected</td><td>—</td></tr>
+      <tr><td>red avoid_on</td><td>检测到路锥/红线，开始绕行（side=左还是右）</td><td>碰撞 +10s</td></tr>
+      <tr><td>digit turn</td><td>识别到数字，按数值决定转向</td><td>Bonus −5s/个</td></tr>
+      <tr><td>mux change</td><td>速度仲裁切换：follower → detection → stop</td><td>—</td></tr>
+      <tr><td>safety deadman_on</td><td>上游全静默，兜底发零速救车</td><td>防失控</td></tr>
+      <tr><td>param effective</td><td>节点启动时真正加载的参数值</td><td>判断改参数是否生效</td></tr>
+      <tr><td>panel param_write</td><td>面板把参数写进了 YAML</td><td>—</td></tr>
+    </table>
+
+    <h4>三、比赛指标怎么算</h4>
+    <table>
+      <tr><th>指标</th><th>规则</th></tr>
+      <tr><td>基本计时得分</td><td>从起跑到完全停住的总秒数，越短越好</td></tr>
+      <tr><td>停车线未停稳</td><td><b>+15 s</b> / 次（最高频扣分）</td></tr>
+      <tr><td>闯入红色禁行区</td><td><b>+30 s</b> / 次</td></tr>
+      <tr><td>碰撞红色路锥</td><td><b>+10 s</b> / 次</td></tr>
+      <tr><td>压线</td><td><b>+15 s</b> / 次；持续压线按每秒 1 次算</td></tr>
+      <tr><td>Bonus 数字</td><td>完全覆盖数字即得分，<b>每个 −5 s</b></td></tr>
+    </table>
+    <p><b>综合得分 = 时间 + 罚时 − 5 × Bonus</b>，分数越低排名越高。
+       所以：<b>一次违规 ≈ 3~6 个 Bonus 的收益</b>，稳比快重要。</p>
+
+    <h4>四、面板上的数字</h4>
+    <table>
+      <tr><td>黄线进度 2/4</td><td>已通过几根停车线，第 4 根之后就是终点</td></tr>
+      <tr><td>计时器</td><td>发车自动开始，永久停车自动停；也可手动「重置本轮」</td></tr>
+      <tr><td>生效参数</td><td>节点<b>实际</b>加载的值。和 YAML 不一致就说明要重启巡线</td></tr>
+    </table>
+
+    <h4>五、为什么改了参数车没变</h4>
+    <p>代码里大部分参数是<b>启动时读一次</b>存进变量的，运行中改 YAML 不会回头重读。
+       所以正确流程是：<b>改参数 → 保存 → 重启巡线节点</b>。点「保存并重启巡线」会自动做这两步，
+       重启后在「生效参数」卡片和日志 <code>[DEC] param effective</code> 行里能看到新值。</p>
+    <p style="text-align:right;margin-top:18px">
+      <button onclick="document.getElementById('mask').classList.remove('show')">知道了</button>
+    </p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const PROC_LABEL = {base:'底盘', camera:'相机', yolo:'YOLO', follow:'巡线', start:'发车'};
+const STATE_CN = {tracking:'正常巡线', lost:'丢线', yellow_line_detected:'停车中', unknown:'未发车'};
+const EV_CN = {
+  'yellow|stop_begin':   ['检测到黄线', '开始减速停车'],
+  'yellow|temp_stop':    ['临时停车',   '停稳后继续'],
+  'yellow|stop_end':     ['停车结束',   '恢复巡线'],
+  'yellow|final_stop':   ['终点停车',   '第 N 根黄线，完赛'],
+  'state|change':        ['状态切换',   ''],
+  'red|avoid_on':        ['避让红色目标','路锥或红线，开始绕行'],
+  'mux|change':          ['速度仲裁',   '切换到新的控制源'],
+  'digit|turn':          ['识别数字',   '按数值决定转向'],
+  'safety|deadman_on':   ['兜底刹车',   '上游静默，自动发零速'],
+  'param|effective':     ['参数生效',   '节点启动加载值'],
+  'panel|param_write':   ['写入参数',   '已保存到 YAML'],
+  'panel|round_reset':   ['重置本轮',   ''],
+  'panel|restart':       ['重启进程',   ''],
+  'panel|estop':         ['急停',       ''],
+  'proc_down':           ['进程异常',   '准备重启'],
+  'proc_exit':           ['进程退出',   ''],
+  'follow_nodes_missing':['节点缺失',   '巡线子节点不见了'],
+};
+
+let logOffset = 0, logFile = 'follow', lastStarted = null;
+let paramsState = null, dirty = false, lastEff = {}, effMismatch = false;
+
+function toast(msg, bad){
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.borderLeftColor = bad ? 'var(--bad)' : 'var(--acc)';
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(()=>t.classList.remove('show'), 3000);
+}
+function fmt(s){ if(s<0)s=0; const m=Math.floor(s/60); return String(m).padStart(2,'0')+':'+(s-m*60).toFixed(1).padStart(4,'0'); }
+
+// ---------------- 状态
+async function pollStatus(){
+  try{
+    const d = await (await fetch('/api/status',{cache:'no-store'})).json();
+    if(!d.ok) return;
+
+    // 灯
+    const ks = Object.keys(PROC_LABEL);
+    if($('lights').children.length !== ks.length){
+      $('lights').innerHTML = ks.map(k=>`<span class="light" id="L-${k}"><span class="dot"></span>${PROC_LABEL[k]}</span>`).join('');
+    }
+    ks.forEach(k=>{
+      const p = (d.procs||{})[k]||{};
+      const el = $('L-'+k);
+      el.className = 'light' + (p.alive ? ' on' : (d.global==='running' ? ' bad' : ''));
+      el.title = `${k}: 存活=${p.alive} 重启=${p.restarts||0} 退出码=${p.exit_code ?? '-'}`;
+    });
+
+    // 计时
+    const c = $('clock');
+    c.textContent = fmt(d.timer.elapsed);
+    c.className = 'clock' + (d.timer.final ? ' final' : (d.timer.running ? ' run' : ''));
+    $('round').textContent = '第 ' + d.round + ' 轮';
+
+    // 卡1 黄线
+    const yc = d.yellow.count, yp = d.yellow.permanent;
+    $('stYellow').textContent = `${yc} / ${yp}`;
+    $('stYellowSub').textContent = yc>=yp ? '已到终点线' : `还差 ${yp-yc} 根到终点`;
+
+    // 卡2 状态
+    $('stState').textContent = d.started ? (STATE_CN[d.track_state]||d.track_state) : '未发车';
+    $('stStateSub').textContent = d.started ? '运行中' : '在 ⑤发车窗口按空格';
+
+    // 卡3 数字
+    const dg = (d.events||[]).filter(e=>e.area==='digit').slice(-1)[0];
+    if(dg){
+      const m = /best=(\d+)/.exec(dg.kv||'');
+      $('stDigit').textContent = m ? m[1] : '-';
+      $('stDigitSub').textContent = 't=' + Number(dg.t).toFixed(1) + 's';
+    } else { $('stDigit').textContent='-'; $('stDigitSub').textContent='最近一次转向'; }
+
+    // 卡4 生效参数
+    lastEff = d.effective || {};
+    const kpEff = lastEff.kp;
+    $('stParam').textContent = (kpEff!==undefined) ? ('kp ' + kpEff) : 'kp -';
+    $('stParamSub').textContent = (kpEff!==undefined)
+      ? (effMismatch ? '与 YAML 不一致，需重启' : '与 YAML 一致')
+      : '节点未启动或未上报';
+    $('stParam').style.color = effMismatch ? 'var(--warn)' : '';
+
+    // 决策流
+    renderFeed(d.events||[]);
+
+    // 锁
+    if(d.started !== lastStarted){ lastStarted = d.started; setLocked(!!d.started); }
+    $('paramTag').textContent = d.params_file ? ('当前 ' + d.params_file) : '-';
+    $('logTag').textContent = d.run_id || '-';
+  }catch(e){}
+}
+
+function renderFeed(evs){
+  const box = $('feed');
+  if(!evs.length){ box.innerHTML = '<div class="empty">还没有决策事件</div>'; return; }
+  box.innerHTML = evs.slice().reverse().map(e=>{
+    const key = (e.area+'|'+e.event);
+    const cn = EV_CN[key];
+    let title = cn ? cn[0] : (e.area+' '+e.event);
+    let desc = cn ? cn[1] : '';
+    const kv = (e.kv||'').trim();
+    if(e.area==='state' && kv){ const m=/from=(\S+) to=(\S+)/.exec(kv); if(m) desc = (STATE_CN[m[1]]||m[1])+' → '+(STATE_CN[m[2]]||m[2]); }
+    if(e.area==='yellow' && kv){ desc = kv.replace(/count=/,'第').replace('/4',' 根').replace(/dur=/,'停 '); }
+    if(e.area==='red' && kv){ desc = kv.replace(/side=L/,'障碍在左→向右避').replace(/side=R/,'障碍在右→向左避'); }
+    if(e.area==='digit' && kv){ desc = kv.replace(/best=/,'数字 ').replace(/yaw=/,' 角速度 '); }
+    if(e.area==='safety'){ desc = kv || '上游静默，自动发零速'; }
+    return `<div class="ev ${e.area}">
+      <div class="t">${Number(e.t).toFixed(1)}</div>
+      <div class="body"><b>${title}</b>${(desc||kv)?`<i>${desc || kv}</i>`:''}</div>
+    </div>`;
+  }).join('');
+}
+
+function setLocked(running){
+  $('btnSave').disabled = running;
+  $('btnSaveRestart').disabled = running;
+  document.querySelectorAll('#params input').forEach(el=>{ el.disabled = running; });
+  if(running) toast('已发车：参数已锁定（赛规禁止赛中调车）');
+}
+
+// ---------------- 参数
+async function loadParams(map){
+  const d = await (await fetch('/api/params?map='+encodeURIComponent(map),{cache:'no-store'})).json();
+  paramsState = d;
+  const box = $('params');
+  box.innerHTML = '';
+  d.groups.forEach((g,gi)=>{
+    const det = document.createElement('details');
+    det.className='grp'; det.open = gi<3;
+    const sum = document.createElement('summary'); sum.textContent = g.group; det.appendChild(sum);
+    g.items.forEach(it=>{
+      const row = document.createElement('div');
+      row.className='row'; row.dataset.section=g.section; row.dataset.key=it.key;
+      row.dataset.type=it.type; row.dataset.orig=String(it.value);
+      const lab = document.createElement('label');
+      lab.className='lbl';
+      lab.innerHTML = `${it.label}<span class="hint">${it.help||''}</span>`;
+      let inp;
+      if(it.type==='bool'){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=!!it.value; }
+      else { inp=document.createElement('input'); inp.type='number';
+             inp.min=it.min; inp.max=it.max; inp.step=it.step; inp.value=it.value; }
+      inp.addEventListener('input',()=>{
+        const cur = inp.type==='checkbox' ? String(inp.checked) : String(parseFloat(inp.value));
+        const changedRow = cur !== String(it.type==='bool'?it.value:parseFloat(it.value));
+        row.classList.toggle('dirty', changedRow);
+        dirty = !!document.querySelector('#params .row.dirty');
+        $('memo').textContent = dirty ? '有未保存修改' : '未修改';
+      });
+      row.appendChild(lab); row.appendChild(inp); det.appendChild(row);
+    });
+    box.appendChild(det);
+  });
+  markPending();
+  $('memo').textContent = '已加载';
+  setLocked(lastStarted===true);
+}
+
+// 对比 YAML 与节点实际生效值，不一致的行标「待重启」
+function markPending(){
+  effMismatch = false;
+  const map = {target_speed:'target_speed', kp:'kp', max_speed:'max_speed',
+               max_yaw_rate:'max_yaw_rate', yellow_stop_duration:'yellow_stop_dur',
+               red_near_ratio:'red_near', red_very_close_ratio:'red_close',
+               line_lost_forward_speed:'lost_speed'};
+  document.querySelectorAll('#params .row').forEach(row=>{
+    const key = row.dataset.key, effKey = map[key];
+    row.classList.remove('pending');
+    if(!effKey || lastEff[effKey] === undefined) return;
+    const cur = parseFloat(row.dataset.orig);
+    if(Math.abs(cur - lastEff[effKey]) > 1e-6){
+      row.classList.add('pending');
+      effMismatch = true;
+    }
+  });
+}
+
+async function saveParams(thenRestart){
+  if(!paramsState) return;
+  const values = {};
+  document.querySelectorAll('#params .row').forEach(row=>{
+    const sec=row.dataset.section, key=row.dataset.key, typ=row.dataset.type;
+    const inp=row.querySelector('input'); if(!inp||inp.disabled) return;
+    let v = typ==='bool' ? inp.checked : (typ==='int'?parseInt(inp.value||'0',10):parseFloat(inp.value||'0'));
+    (values[sec] = values[sec]||{})[key]=v;
+  });
+  const map = $('mapSel').value;
+  const r = await fetch('/api/params',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({map, values})});
+  const d = await r.json();
+  if(!d.ok){ toast('保存失败：'+(d.error||d.msg), true); return; }
+  if(d.msg==='no change'){ toast('参数没有变化'); }
+  else { toast('已写入 YAML：' + d.msg); }
+  dirty=false; $('memo').textContent='已保存';
+  if(thenRestart){ await restartProc('follow', true); }
+  else { toast('已保存。参数要重启巡线才生效，点「保存并重启巡线」'); }
+}
+
+async function restartProc(name, silent){
+  const r = await fetch('/api/restart/'+name,{method:'POST'});
+  const d = await r.json();
+  if(d.ok){
+    if(!silent) toast(d.msg||'已请求重启');
+    setTimeout(()=>{ loadParams($('mapSel').value); }, 6000);
+  } else toast('失败：'+d.error, true);
+}
+
+// ---------------- 日志
+async function pollLogs(){
+  try{
+    const url = `/api/logs?f=${encodeURIComponent(logFile)}&dec=${$('onlyDec').checked?1:0}&offset=${logOffset}`;
+    const d = await (await fetch(url,{cache:'no-store'})).json();
+    if(!d.lines || !d.lines.length){ if(typeof d.offset==='number') logOffset=d.offset; return; }
+    logOffset = d.offset;
+    const box=$('log'), q=$('search').value.trim(), stick=$('autoscroll').checked;
+    const frag=document.createDocumentFragment();
+    d.lines.forEach(ln=>{
+      const div=document.createElement('div');
+      div.textContent=ln;
+      if(ln.includes('[DEC] param effective')||ln.includes('[DEC] panel param_write')) div.className='pe';
+      else if(ln.includes('[DEC]')) div.className='dec';
+      else if(/error|fail|exception|traceback/i.test(ln)) div.className='err';
+      if(q&&ln.includes(q)) div.classList.add('hl');
+      frag.appendChild(div);
+    });
+    box.appendChild(frag);
+    while(box.childNodes.length>1200) box.removeChild(box.firstChild);
+    if(stick) box.scrollTop=box.scrollHeight;
+  }catch(e){}
+}
+
+// ---------------- 事件
+$('btnSave').addEventListener('click',()=>saveParams(false));
+$('btnSaveRestart').addEventListener('click',()=>saveParams(true));
+$('mapSel').addEventListener('change',()=>{ logOffset=0; loadParams($('mapSel').value); });
+$('logFile').addEventListener('change',()=>{ logFile=$('logFile').value; logOffset=0; $('log').innerHTML=''; });
+$('btnClear').addEventListener('click',()=>{ $('log').innerHTML=''; });
+$('btnHelp').addEventListener('click',()=>$('mask').classList.add('show'));
+$('mask').addEventListener('click',e=>{ if(e.target.id==='mask') $('mask').classList.remove('show'); });
+$('btnReset').addEventListener('click',async()=>{
+  const d = await (await fetch('/api/round/reset',{method:'POST'})).json();
+  toast(d.ok?d.msg:('失败：'+d.error), !d.ok);
+  if(d.ok){ logOffset=0; $('log').innerHTML=''; }
+});
+$('estop').addEventListener('click',async()=>{
+  const d = await (await fetch('/api/estop',{method:'POST'})).json();
+  toast(d.ok?'已发送 30 帧零速（约 1.5s）':('失败：'+d.error), !d.ok);
+});
+$('imgDebug').src='/api/stream/debug';
+$('imgYolo').src='/api/stream/yolo';
+
+loadParams('fork');
+pollStatus(); pollLogs();
+setInterval(pollStatus,500);
+setInterval(pollLogs,700);
+</script>
+</body>
+</html>
