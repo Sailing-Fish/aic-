@@ -1,0 +1,1870 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>白色路面上的 8 个进程 · RDK X5 智能车视觉规划赛 工程全景</title>
+<style>
+:root{
+  --bg:#f5f4ef; --panel:#fffefb; --ink:#15171c; --ink2:#4b5059; --ink3:#858b96;
+  --line:#e3ded2; --line2:#efeae0;
+  --accent:#c2410c; --accent-soft:#fdece4;
+  --cam:#0e7490; --perc:#15803d; --dec:#b45309; --act:#6d28d9; --ok:#166534; --bad:#b91c1c;
+  --code-bg:#15171c; --code-ink:#d8dbe3;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --w:1040px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+  font-size:16px; line-height:1.72; -webkit-font-smoothing:antialiased;
+  background-image:linear-gradient(rgba(0,0,0,.022) 1px,transparent 1px);
+  background-size:100% 32px;
+}
+#prog{position:fixed;top:0;left:0;height:3px;background:var(--accent);width:0;z-index:100;transition:width .1s linear}
+
+/* ---------- 布局 ---------- */
+.wrap{display:grid;grid-template-columns:250px minmax(0,1fr);gap:0;max-width:1400px;margin:0 auto}
+nav{
+  position:sticky;top:0;height:100vh;overflow-y:auto;padding:28px 18px 60px 24px;
+  border-right:1px solid var(--line);font-size:13.5px;
+}
+nav .brand{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
+nav .brand2{font-weight:700;font-size:15px;line-height:1.35;margin-bottom:18px}
+nav a{display:block;color:var(--ink2);text-decoration:none;padding:4px 8px;border-left:2px solid transparent;border-radius:0 4px 4px 0;line-height:1.4}
+nav a:hover{color:var(--ink);background:#efeadf}
+nav a.on{color:var(--accent);border-left-color:var(--accent);background:var(--accent-soft);font-weight:600}
+nav a .n{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-right:6px}
+nav a.on .n{color:var(--accent)}
+main{padding:0 56px 140px;max-width:calc(var(--w) + 112px)}
+@media(max-width:920px){
+  .wrap{grid-template-columns:1fr}
+  nav{position:static;height:auto;border-right:none;border-bottom:1px solid var(--line);padding:18px 20px}
+  nav .links{display:flex;flex-wrap:wrap;gap:2px}
+  nav a{font-size:12.5px;padding:3px 7px}
+  main{padding:0 18px 100px}
+}
+
+/* ---------- 排版 ---------- */
+h1{font-size:clamp(30px,4.4vw,50px);line-height:1.1;letter-spacing:-.02em;margin:10px 0 18px;font-weight:800}
+h2{font-size:27px;line-height:1.25;letter-spacing:-.01em;margin:0 0 6px;font-weight:750;scroll-margin-top:20px}
+h3{font-size:18.5px;margin:34px 0 10px;font-weight:700}
+h4{font-size:15px;margin:22px 0 8px;font-weight:700;color:var(--ink)}
+p{margin:10px 0}
+a{color:var(--accent)}
+strong{font-weight:700}
+code{font-family:var(--mono);font-size:.88em;background:#eae6dc;padding:1px 5px;border-radius:4px;color:#3b2f24}
+hr{border:0;border-top:1px solid var(--line);margin:44px 0}
+
+.sec{padding-top:56px}
+.sechead{margin-bottom:22px;padding-bottom:16px;border-bottom:2px solid var(--ink)}
+.kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.lead{font-size:17.5px;color:var(--ink2);margin-top:8px}
+.small{font-size:13.5px;color:var(--ink3)}
+.mono{font-family:var(--mono)}
+
+/* ---------- hero ---------- */
+.hero{padding:64px 0 20px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink3)}
+.heroline{display:flex;gap:14px;flex-wrap:wrap;align-items:baseline;margin-top:22px}
+.tag{font-family:var(--mono);font-size:11.5px;padding:3px 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink2)}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin:26px 0 6px}
+.metric{background:var(--panel);padding:14px 16px}
+.metric b{display:block;font-family:var(--mono);font-size:24px;font-weight:650;letter-spacing:-.02em;line-height:1.1}
+.metric span{font-size:12px;color:var(--ink3)}
+
+/* ---------- 引用块 ---------- */
+.box{border:1px solid var(--line);border-left:3px solid var(--ink);background:var(--panel);padding:14px 18px;margin:18px 0;border-radius:0 6px 6px 0}
+.box.warn{border-left-color:var(--bad);background:#fdf3f1}
+.box.tip{border-left-color:var(--ok);background:#f1f7f2}
+.box.plain{border-left-color:var(--accent);background:var(--accent-soft)}
+.box .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);display:block;margin-bottom:4px}
+.box p:first-of-type{margin-top:0}.box p:last-child{margin-bottom:0}
+
+.translate{border-left:3px solid var(--accent);padding:2px 0 2px 14px;margin:14px 0;color:var(--ink2)}
+.translate b{color:var(--ink);font-weight:700}
+
+/* ---------- 表格 ---------- */
+table{width:100%;border-collapse:collapse;margin:18px 0;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
+th{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);border-bottom:1px solid var(--line);font-weight:600;white-space:nowrap}
+tbody tr:hover{background:#faf8f2}
+td code{white-space:nowrap}
+
+/* ---------- 代码 ---------- */
+pre{
+  background:var(--code-bg);color:var(--code-ink);padding:16px 18px;border-radius:8px;overflow-x:auto;
+  font-family:var(--mono);font-size:12.6px;line-height:1.62;margin:14px 0;border:1px solid #22252c;
+}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.k{color:#c792ea}.s{color:#c3e88d}.n{color:#f78c6c}.c{color:#697098;font-style:italic}.f{color:#82aaff}
+.filelbl{
+  font-family:var(--mono);font-size:11px;color:var(--ink3);margin:16px 0 -10px;padding-left:2px;letter-spacing:.02em
+}
+
+/* ---------- 参数卡 ---------- */
+.params{display:grid;grid-template-columns:repeat(auto-fit,minmax(292px,1fr));gap:14px;margin:18px 0 6px}
+.param{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;position:relative}
+.param .ph{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.param .pname{font-family:var(--mono);font-size:13.5px;font-weight:650;color:var(--ink)}
+.param .pval{font-family:var(--mono);font-size:12px;padding:1px 7px;border-radius:4px;background:var(--accent-soft);color:var(--accent);font-weight:600}
+.param .punit{font-size:11px;color:var(--ink3);font-family:var(--mono)}
+.param .pbody{font-size:13.6px;color:var(--ink2);line-height:1.62}
+.param .pd{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px;font-size:12.4px}
+.param .pd div{background:#f7f4ec;border-radius:5px;padding:6px 8px;color:var(--ink2)}
+.param .pd b{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+.param .pm{margin-top:9px;font-family:var(--mono);font-size:10.5px;color:var(--ink3);border-top:1px dashed var(--line);padding-top:7px}
+.param.hot .pval{background:#e6f3ea;color:var(--ok)}
+
+/* ---------- 图 ---------- */
+.fig{margin:22px 0;border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:16px 16px 10px;overflow-x:auto}
+.fig svg{display:block;max-width:100%;height:auto}
+.figcap{font-size:12.5px;color:var(--ink3);margin-top:8px;padding-top:8px;border-top:1px solid var(--line2)}
+
+/* ---------- 节点图交互 ---------- */
+#graph{width:100%;min-width:820px}
+#graph .node{cursor:pointer}
+#graph .node rect{fill:#fff;stroke:#c9c3b5;stroke-width:1.4;transition:all .18s}
+#graph .node:hover rect{stroke:var(--ink);stroke-width:2}
+#graph .node text.t1{font-family:var(--mono);font-size:13px;fill:var(--ink);font-weight:600}
+#graph .node text.t2{font-family:var(--sans);font-size:11px;fill:var(--ink3)}
+#graph .node.ms rect{stroke:var(--cam);stroke-width:2}
+#graph .node.mp rect{stroke:var(--perc);stroke-width:2}
+#graph .node.md rect{stroke:var(--dec);stroke-width:2}
+#graph .node.ma rect{stroke:var(--act);stroke-width:2}
+#graph .edge{fill:none;stroke:#b7b1a3;stroke-width:1.8;transition:all .18s}
+#graph .edge.dash{stroke-dasharray:5 4;stroke:#c4beb0}
+#graph .elabel{font-family:var(--mono);font-size:10.5px;fill:#6b7078;paint-order:stroke;stroke:#fffefb;stroke-width:4;stroke-linejoin:round}
+#graph.dim .node rect{opacity:.22}
+#graph.dim .edge{opacity:.13}
+#graph.dim .elabel{opacity:.15}
+#graph .node.hl rect{opacity:1;stroke-width:2.6;filter:drop-shadow(0 2px 8px rgba(0,0,0,.14))}
+#graph .edge.hl{opacity:1;stroke:#c2410c;stroke-width:2.6}
+#graph .elabel.hl{opacity:1;fill:#c2410c;font-weight:700}
+#inspect{margin-top:12px;font-size:13.5px;color:var(--ink2);border-top:1px dashed var(--line);padding-top:10px;min-height:2.6em}
+#inspect b{color:var(--ink)}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--ink3);margin-top:10px}
+.legend i{display:inline-block;width:22px;height:0;border-top:2px solid #b7b1a3;vertical-align:middle;margin-right:6px}
+.legend i.d{border-top-style:dashed}
+
+/* ---------- P 演示 ---------- */
+.demo{display:grid;grid-template-columns:340px minmax(0,1fr);gap:22px;align-items:start}
+@media(max-width:760px){.demo{grid-template-columns:1fr}}
+.demo .stage{background:#12141a;border-radius:10px;padding:0;overflow:hidden}
+.demo .read{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
+.demo .read div{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:9px 12px}
+.demo .read b{display:block;font-family:var(--mono);font-size:19px;line-height:1.25}
+.demo .read span{font-size:11px;color:var(--ink3);letter-spacing:.04em}
+.slider{display:grid;grid-template-columns:104px 1fr 62px;gap:10px;align-items:center;font-size:13px;margin:9px 0}
+.slider label{font-family:var(--mono);font-size:12px;color:var(--ink2)}
+.slider output{font-family:var(--mono);font-size:12.5px;text-align:right;color:var(--ink)}
+input[type=range]{-webkit-appearance:none;appearance:none;height:4px;background:var(--line);border-radius:2px;outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid #fff}
+
+/* ---------- 搜索表 ---------- */
+.searchbar{display:flex;gap:10px;align-items:center;margin:16px 0 10px;flex-wrap:wrap}
+.searchbar input{flex:1;min-width:180px;padding:9px 13px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font-family:var(--mono);font-size:13px;outline:none}
+.searchbar input:focus{border-color:var(--accent)}
+.searchbar .cnt{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+#ptable{font-size:13px}
+#ptable td:first-child{font-family:var(--mono);white-space:nowrap;font-weight:600}
+#ptable td:nth-child(2){font-family:var(--mono);white-space:nowrap}
+.chip{font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:99px;border:1px solid var(--line);color:var(--ink3);white-space:nowrap}
+.chip.hot{border-color:#bcd9c5;color:var(--ok);background:#f0f8f2}
+
+/* ---------- 问题卡 ---------- */
+.issue{border:1px solid var(--line);border-left:3px solid var(--ink3);background:var(--panel);border-radius:0 7px 7px 0;padding:13px 16px;margin:12px 0}
+.issue.s1{border-left-color:var(--bad)}
+.issue.s2{border-left-color:#d97706}
+.issue.s3{border-left-color:#8b8b8b}
+.issue .ih{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.issue .ih b{font-size:15px}
+.issue .where{font-family:var(--mono);font-size:11px;color:var(--ink3);flex-basis:100%;margin-top:3px}
+.issue p{font-size:14px;color:var(--ink2);margin:6px 0 0}
+.sev{font-family:var(--mono);font-size:10px;padding:1px 7px;border-radius:99px;font-weight:600}
+.sev.a{background:#fbe9e7;color:var(--bad)}
+.sev.b{background:#fdf1de;color:#b45309}
+.sev.c{background:#eeece6;color:#5f6268}
+
+ol,ul{padding-left:22px}
+li{margin:5px 0}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:2px 14px;font-size:14px;margin:14px 0}
+.kv dt{font-family:var(--mono);font-size:12.5px;color:var(--ink3);padding-top:2px}
+.kv dd{margin:0}
+footer{border-top:2px solid var(--ink);margin-top:70px;padding-top:18px;font-size:12.5px;color:var(--ink3);font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div id="prog"></div>
+<div class="wrap">
+
+<nav>
+  <div class="brand">2026 AIC · 复赛</div>
+  <div class="brand2">白色路面上的<br>8 个进程</div>
+  <div class="links">
+    <a href="#s0"><span class="n">00</span>90 秒看懂</a>
+    <a href="#s1"><span class="n">01</span>这场比赛在考什么</a>
+    <a href="#s2"><span class="n">02</span>全局数据流</a>
+    <a href="#s3"><span class="n">03</span>启动时序</a>
+    <a href="#s4"><span class="n">04</span>眼睛：相机</a>
+    <a href="#s5"><span class="n">05</span>找路：图像→误差</a>
+    <a href="#s6"><span class="n">06</span>打方向：P 控制</a>
+    <a href="#s7"><span class="n">07</span>例外规则栈</a>
+    <a href="#s8"><span class="n">08</span>副脑：数字识别</a>
+    <a href="#s9"><span class="n">09</span>抢方向盘</a>
+    <a href="#s10"><span class="n">10</span>落地：串口协议</a>
+    <a href="#s11"><span class="n">11</span>兜底与安全</a>
+    <a href="#s12"><span class="n">12</span>参数总表</a>
+    <a href="#s13"><span class="n">13</span>当前问题</a>
+    <a href="#s14"><span class="n">14</span>调参速查</a>
+    <a href="#s15"><span class="n">15</span>附录</a>
+  </div>
+</nav>
+
+<main>
+
+<!-- ============ HERO ============ -->
+<section class="hero">
+  <div class="eyebrow">RDK X5 · ROS 2 · 单目视觉 · 阿克曼底盘</div>
+  <h1>这辆车不「认识」路。<br>它只是不停地问：<span style="color:var(--accent)">白色的路，现在偏我左边还是右边？</span></h1>
+  <p class="lead">
+    这是一个跑在 RDK X5 上的 8 进程 ROS 2 系统。它用一颗摄像头看地面，把"路中心偏离画面中心多少"换算成一个
+    −1 到 +1 的数，再用一根比例弹簧把它变成方向盘转角，交给下位机。整套决策里没有地图、没有定位、没有 PID，
+    也没有"环岛算法"——所有复杂行为，都是从这一个数加若干条优先级规则里长出来的。
+  </p>
+  <div class="heroline">
+    <span class="tag">8 个进程</span><span class="tag">11 条话题</span><span class="tag">30 fps</span>
+    <span class="tag">640×480</span><span class="tag">115200 8N1</span><span class="tag">0.4 m/s</span>
+    <span class="tag">纯 P 控制</span><span class="tag">零外部依赖</span>
+  </div>
+
+  <div class="metrics">
+    <div class="metric"><b>2</b><span>张地图 / 各 500×300 cm</span></div>
+    <div class="metric"><b>8</b><span>根黄线 = 8 次必须停稳</span></div>
+    <div class="metric"><b>0.267<small style="font-size:13px"> m</small></b><span>满舵转弯半径（赛规下限 0.3 m）</span></div>
+    <div class="metric"><b>±0.61</b><span>误差达到此值即打满舵</span></div>
+    <div class="metric"><b>11 / 24</b><span>下行 / 上行串口字节数</span></div>
+    <div class="metric"><b>0.3<small style="font-size:13px"> s</small></b><span>上位机失联的救命窗口</span></div>
+  </div>
+</section>
+
+<!-- ============ 00 ============ -->
+<section class="sec" id="s0">
+  <div class="sechead">
+    <div class="kicker">00 / 摘要</div>
+    <h2>90 秒看懂：它在做什么</h2>
+  </div>
+
+  <p>把这辆车当成一个上班的人，它每天只干三件事，按固定优先级排队：</p>
+
+  <table>
+    <thead><tr><th style="width:70px">优先级</th><th style="width:180px">看到什么</th><th>就干什么</th><th style="width:150px">谁负责</th></tr></thead>
+    <tbody>
+      <tr><td><b>1</b></td><td>画面里有一大片黄色</td><td>立刻刹停，停 1 秒；第 4 次遇到黄线则<b>永远停</b>（比赛结束）</td><td><code>line_follower</code></td></tr>
+      <tr><td><b>2</b></td><td>车前有红锥 / 红线</td><td>往反方向让一点，同时减速，但<b>绝不停车</b>（红锥没有停车权）</td><td><code>line_follower</code></td></tr>
+      <tr><td><b>3</b></td><td>数字出现且快被车压到</td><td>朝数字打一把方向，<b>把数字压在轮子底下</b></td><td><code>detection_turn_controller</code></td></tr>
+      <tr><td><b>4</b></td><td>白色路面</td><td>跟着白路走，偏多少就反打多少</td><td><code>line_follower</code></td></tr>
+      <tr><td><b>5</b></td><td>什么都没有（丢线）</td><td>不慌，按上一帧的方向继续低速蹭 0.8 秒</td><td><code>line_follower</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="translate">
+    <b>翻译：</b>这不是一个"自动驾驶"系统，而是一个<b>反射式状态机</b>。它没有"我要去哪"的概念，
+    只有"此刻眼前是什么，按规矩该反应什么"。所以它跑得稳，但换个场地就得重调阈值。
+  </div>
+
+  <h3>三个数字，决定了它全部的性格</h3>
+  <div class="params">
+    <div class="param">
+      <div class="ph"><span class="pname">kp = 2.45</span><span class="punit">无量纲</span></div>
+      <div class="pbody">路面中心偏出半个画面宽时，它想要 2.45 rad/s 的转速——这已经超过车的物理极限，所以实际上偏到 61% 就打满舵。这是"急脾气"。</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">target_speed = 0.4</span><span class="punit">m/s</span></div>
+      <div class="pbody">1.44 km/h，大约是人类散步速度的三分之一。500 cm 的赛道理论上 12.5 秒跑完，实际上因为 8 次停车，会拖到分钟级。</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">max_yaw_rate = 1.5</span><span class="punit">rad/s</span></div>
+      <div class="pbody">86°/s。和 0.4 m/s 一起，恰好算出 0.267 m 的转弯半径——正好卡在赛规"最小转弯半径 0.3 m"的物理边缘上。</div>
+    </div>
+  </div>
+
+  <div class="box tip">
+    <span class="lbl">为什么这个洞察重要</span>
+    <p>0.4 ÷ 1.5 = 0.267 m。这说明参数不是拍脑袋填的，而是反推出来的：<b>先用赛规的最小转弯半径定死底盘极限，
+    再用速度去凑这个极限</b>。任何"把 target_speed 提到 0.6"的调参，都会让满舵半径变成 0.4 m，
+    在 500 cm 的小场地上直接切进内道压线（压线一次 +15 s）。</p>
+  </div>
+</section>
+
+<!-- ============ 01 ============ -->
+<section class="sec" id="s1">
+  <div class="sechead">
+    <div class="kicker">01 / 背景</div>
+    <h2>这场比赛到底在考什么</h2>
+    <p class="lead">先看规则，才能理解代码为什么长成这样。很多"奇怪的设计"，答案都在赛规里。</p>
+  </div>
+
+  <dl class="kv">
+    <dt>赛道</dt><dd>单起点、单终点<b>有向无环图</b>（DAG），两张地图：岔路、环岛，各 500 × 300 cm。</dd>
+    <dt>五大环节</dt><dd>分叉 → 汇合 → 避障 → 规则遵守 → 奖励获取。</dd>
+    <dt>地面</dt><dd><b>白色路面</b> + <b>黑色边界线</b>。出黑线即"冲出赛道"，成绩无效。</dd>
+    <dt>计分</dt><dd>综合得分 = 计时得分 + 总罚时 − 5 × Bonus。<b>分数越低排名越高</b>。</dd>
+    <dt>评分方式</dt><dd>每张地图跑 3 次，<b>取最好的一次</b>。两次都翻车，第三次才有意义。</dd>
+  </dl>
+
+  <h3>场地上的四样东西，对应代码里的四段逻辑</h3>
+  <table>
+    <thead><tr><th style="width:130px">场地要素</th><th style="width:150px">规格</th><th>罚则</th><th style="width:190px">代码对策</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>黄色停车线</b></td><td>33 × 2 cm，每图 4 根</td>
+        <td>未完全停稳 <b>+15 s</b>（最高频违规）</td>
+        <td>HSV 找黄 → 占比 ≥ 2% 触发 → 停 1 s → 第 4 根永久停</td>
+      </tr>
+      <tr>
+        <td><b>红色禁行区</b></td><td>1 cm 红线围成 24 × 13 cm</td>
+        <td>闯入/越线 <b>+30 s</b>（最重）</td>
+        <td>红掩膜 + 长宽比 ≥ 3 判为"线" → 侧向斥力绕开</td>
+      </tr>
+      <tr>
+        <td><b>红色路锥</b></td><td>底 13.5 × 13.5，高 23 cm</td>
+        <td>碰撞 <b>+10 s</b></td>
+        <td>红掩膜 + 长宽比 &lt; 3 判为"锥" → 按距离动态加斥力</td>
+      </tr>
+      <tr>
+        <td><b>Bonus 数字</b></td><td>1–8，岔路口 2 张（间隔 15 cm）、直道 2 张手写（10 cm）</td>
+        <td>覆盖即 <b>−5 s</b>，错认不罚</td>
+        <td>YOLOv8 检测 → 与路中心纵向对齐后朝数字打方向</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="box plain">
+    <span class="lbl">赛规里藏着的一条"战略结论"</span>
+    <p>停稳一次 15 s，撞一个锥 10 s，压一次线 15 s（而且是<b>每持续 1 秒算一次</b>，不足 1 秒向上取整）。
+    一个 Bonus 才 −5 s。换算下来：<b>为了多拿一个数字而冒撞锥风险，是稳亏的买卖</b>。
+    这就是代码里"红锥只减速不让行、丢线不停车、宁可慢慢蹭"这一整套保守策略的由来——
+    不是技术上做不到更快，是<b>算分算出来不该更快</b>。</p>
+  </div>
+
+  <h3>于是代码的形态被这三条约束锁死了</h3>
+  <ol>
+    <li><b>必须能"看见黄线就停"</b> → 需要一路独立于巡线的颜色检测，且优先级最高、能覆盖一切。</li>
+    <li><b>不能压线</b> → 需要一个稳定的横向误差，且弯道必须减速（高速 + 大转角 = 切内道）。</li>
+    <li><b>不能撞锥</b> → 需要"越近推力越大"的软避障，而不是"看到就急转"（急转本身就是压线）。</li>
+  </ol>
+</section>
+
+<!-- ============ 02 ============ -->
+<section class="sec" id="s2">
+  <div class="sechead">
+    <div class="kicker">02 / 全景</div>
+    <h2>全局数据流：谁把什么交给谁</h2>
+    <p class="lead">点击任意方块，会高亮它参与的链路，并在下方给出输入/输出/频率/源码位置。</p>
+  </div>
+
+  <div class="fig">
+    <svg id="graph" viewBox="0 0 1300 700" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#b7b1a3"/>
+        </marker>
+        <marker id="arh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+        </marker>
+      </defs>
+
+      <!-- ===== edges (先画，压在节点下面) ===== -->
+      <path class="edge" data-e="start-lf"   d="M120,82 L120,150 L300,150" marker-end="url(#ar)"/>
+      <path class="edge" data-e="cam-lf"     d="M210,205 L300,193" marker-end="url(#ar)"/>
+      <path class="edge" data-e="cam-yolo"   d="M120,232 L120,378 L300,378" marker-end="url(#ar)"/>
+      <path class="edge" data-e="lf-det"     d="M510,178 L550,178 L550,378 L590,378" marker-end="url(#ar)"/>
+      <path class="edge" data-e="lf-mux"     d="M510,148 L820,148 L820,205 L890,205" marker-end="url(#ar)"/>
+      <path class="edge dash" data-e="lf-stop" d="M430,268 L430,290 L950,290 L950,266" marker-end="url(#ar)"/>
+      <path class="edge" data-e="yolo-det"   d="M510,378 L590,378" marker-end="url(#ar)"/>
+      <path class="edge" data-e="det-mux"    d="M810,378 L855,378 L855,232 L890,232" marker-end="url(#ar)"/>
+      <path class="edge" data-e="mux-robot"  d="M985,266 L985,400" marker-end="url(#ar)"/>
+      <path class="edge dash" data-e="mux-safe" d="M890,250 L830,250 L830,520 L810,520" marker-end="url(#ar)"/>
+      <path class="edge dash" data-e="safe-robot" d="M700,500 L700,458 L890,458" marker-end="url(#ar)"/>
+      <path class="edge" data-e="robot-hw"   d="M960,486 L960,556" marker-end="url(#ar)"/>
+      <path class="edge dash" data-e="hw-robot" d="M1040,556 L1040,486" marker-end="url(#ar)"/>
+      <path class="edge dash" data-e="robot-ekf" d="M890,443 L510,520" marker-end="url(#ar)"/>
+
+      <!-- ===== edge labels ===== -->
+      <text class="elabel" data-e="start-lf" x="128" y="120">start_cmd · Bool</text>
+      <text class="elabel" data-e="cam-lf" x="214" y="188">/image_raw</text>
+      <text class="elabel" data-e="cam-yolo" x="128" y="300">/image_raw</text>
+      <text class="elabel" data-e="lf-det" x="556" y="300">centroid + state</text>
+      <text class="elabel" data-e="lf-mux" x="600" y="140">/cmd_vel_follower</text>
+      <text class="elabel" data-e="lf-stop" x="600" y="284">/cmd_vel_stop</text>
+      <text class="elabel" data-e="yolo-det" x="512" y="370">hobot_dnn</text>
+      <text class="elabel" data-e="det-mux" x="862" y="320">/cmd_vel_detection</text>
+      <text class="elabel" data-e="mux-robot" x="994" y="330">/cmd_vel</text>
+      <text class="elabel" data-e="mux-safe" x="838" y="430">监听三路</text>
+      <text class="elabel" data-e="safe-robot" x="706" y="452">兜底零速</text>
+      <text class="elabel" data-e="robot-hw" x="872" y="530">串口 11 字节</text>
+      <text class="elabel" data-e="hw-robot" x="1046" y="530">24 字节回传</text>
+      <text class="elabel" data-e="robot-ekf" x="600" y="500">/odom /imu（不被巡线使用）</text>
+
+      <!-- ===== nodes ===== -->
+      <g class="node md" data-n="start">
+        <rect x="30" y="28" width="180" height="54" rx="7"/>
+        <text class="t1" x="46" y="51">start_toggle</text>
+        <text class="t2" x="46" y="68">发车开关 · 10 Hz</text>
+      </g>
+      <g class="node ms" data-n="camera">
+        <rect x="30" y="178" width="180" height="54" rx="7"/>
+        <text class="t1" x="46" y="201">camera.py</text>
+        <text class="t2" x="46" y="218">V4L2 · MJPG · 30 fps</text>
+      </g>
+      <g class="node mp" data-n="lf">
+        <rect x="300" y="110" width="210" height="96" rx="7"/>
+        <text class="t1" x="316" y="136">line_follower_node</text>
+        <text class="t2" x="316" y="155">巡线 · 黄线 · 红锥</text>
+        <text class="t2" x="316" y="172">主控制律在这里</text>
+        <text class="t2" x="316" y="189">C++ · 30 Hz 跟随图像</text>
+      </g>
+      <g class="node mp" data-n="yolo">
+        <rect x="300" y="330" width="210" height="96" rx="7"/>
+        <text class="t1" x="316" y="356">bpu_yolov8_node</text>
+        <text class="t2" x="316" y="375">BPU 推理 · 数字 1–8</text>
+        <text class="t2" x="316" y="392">Python</text>
+        <text class="t2" x="316" y="409">输出 bbox + 置信度</text>
+      </g>
+      <g class="node md" data-n="det">
+        <rect x="590" y="330" width="220" height="96" rx="7"/>
+        <text class="t1" x="606" y="356">detection_turn_controller</text>
+        <text class="t2" x="606" y="375">数字对齐 → 打一把方向</text>
+        <text class="t2" x="606" y="392">定时 50 ms 持续发布</text>
+        <text class="t2" x="606" y="409">C++</text>
+      </g>
+      <g class="node md" data-n="mux">
+        <rect x="890" y="180" width="190" height="86" rx="7"/>
+        <text class="t1" x="906" y="206">cmd_mux_node</text>
+        <text class="t2" x="906" y="225">三选一仲裁</text>
+        <text class="t2" x="906" y="242">stop &gt; detection &gt; follower</text>
+      </g>
+      <g class="node ma" data-n="robot">
+        <rect x="880" y="400" width="210" height="86" rx="7"/>
+        <text class="t1" x="896" y="426">wheeltec_robot_node</text>
+        <text class="t2" x="896" y="445">Twist → 串口帧</text>
+        <text class="t2" x="896" y="462">同时回传 odom / imu / 电压</text>
+      </g>
+      <g class="node ma" data-n="hw">
+        <rect x="880" y="556" width="240" height="86" rx="7"/>
+        <text class="t1" x="896" y="582">STM32 下位机</text>
+        <text class="t2" x="896" y="601">阿克曼：双电机 + 单舵机</text>
+        <text class="t2" x="896" y="618">固件闭源 · 无指令超时</text>
+      </g>
+      <g class="node ma" data-n="safe">
+        <rect x="590" y="500" width="220" height="80" rx="7"/>
+        <text class="t1" x="606" y="526">safety_node</text>
+        <text class="t2" x="606" y="545">看门狗：0.3 s 无指令 → 刹</text>
+        <text class="t2" x="606" y="562">Python · 20 Hz</text>
+      </g>
+      <g class="node ma" data-n="ekf">
+        <rect x="300" y="490" width="210" height="62" rx="7" style="stroke-dasharray:4 3"/>
+        <text class="t1" x="316" y="514">ekf / imu_filter</text>
+        <text class="t2" x="316" y="532">旁路：仅记录，不参与控制</text>
+      </g>
+    </svg>
+    <div id="inspect">点一下上面的方块 —— 会显示它在整条链路里的位置、输入输出、以及对应的源码文件。</div>
+    <div class="legend">
+      <span><i></i>实线 = 控制链路（缺一个就开不动）</span>
+      <span><i class="d"></i>虚线 = 旁路 / 回传 / 兜底</span>
+      <span>颜色：<b style="color:var(--cam)">传感</b> · <b style="color:var(--perc)">感知</b> · <b style="color:var(--dec)">决策</b> · <b style="color:var(--act)">执行</b></span>
+    </div>
+    <div class="figcap">图 2-1　8 个进程的完整拓扑。注意 <code>line_follower</code> 同时往三处发：自己的速度指令、停车指令、以及给数字模块的"路中心在哪"。</div>
+  </div>
+
+  <h3>全部话题一览</h3>
+  <table>
+    <thead><tr><th style="width:230px">话题</th><th style="width:200px">消息类型</th><th>内容 / 单位</th></tr></thead>
+    <tbody>
+      <tr><td><code>/image_raw</code></td><td><code>sensor_msgs/Image</code></td><td>640×480 bgr8，30 Hz。全系统的唯一信息来源。</td></tr>
+      <tr><td><code>/hobot_dnn_detection</code></td><td><code>ai_msgs/PerceptionTargets</code></td><td>检测框：类别名（就是数字字符）、置信度、像素 bbox。</td></tr>
+      <tr><td><code>line_follower/centroid</code></td><td><code>geometry_msgs/Point</code></td><td>路中心，<b>已归一化到 0–1</b>：x = 质心/宽，y = (ROI 顶 + 质心)/高。</td></tr>
+      <tr><td><code>line_follower/track_state</code></td><td><code>std_msgs/String</code></td><td><code>tracking</code> / <code>lost</code> / <code>yellow_line_detected</code>，只在状态变化时发。</td></tr>
+      <tr><td><code>line_follower/start_cmd</code></td><td><code>std_msgs/Bool</code></td><td>发车开关，<b>10 Hz 持续发</b>（不是一次性事件）。</td></tr>
+      <tr><td><code>/cmd_vel_follower</code></td><td><code>geometry_msgs/Twist</code></td><td>巡线输出：<code>linear.x</code> m/s，<code>angular.z</code> rad/s。</td></tr>
+      <tr><td><code>/cmd_vel_detection</code></td><td><code>Twist</code></td><td>数字转向输出，只在"正在转"的 0.38 s 内有消息。</td></tr>
+      <tr><td><code>/cmd_vel_stop</code></td><td><code>Twist</code></td><td>黄线停车专用，全零速度。带"保鲜期"，过了 0.5 s 失效。</td></tr>
+      <tr><td><code>/cmd_vel</code></td><td><code>Twist</code></td><td>仲裁后的最终指令，<b>唯一被底盘接受的速度话题</b>。</td></tr>
+      <tr><td><code>/odom</code> <code>/imu/data_raw</code></td><td><code>Odometry</code> / <code>Imu</code></td><td>底盘积分位姿与原始 IMU。<b>巡线完全不用</b>，只给 rviz 和记录。</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box">
+    <span class="lbl">一个容易被忽略的设计</span>
+    <p><code>line_follower</code> 同时扮演三个角色：① 主控制器的发布方；② 把"路在哪"告诉数字模块的<b>服务方</b>；
+    ③ 唯一有停车权的节点。它挂掉，整辆车就不动了——这是整个系统唯一的单点故障。</p>
+  </div>
+</section>
+
+<!-- ============ 03 ============ -->
+<section class="sec" id="s3">
+  <div class="sechead">
+    <div class="kicker">03 / 上电</div>
+    <h2>启动时序：为什么必须一个等一个</h2>
+    <p class="lead">这不是仪式感。ROS 2 的话题是先发布后订阅就会丢，摄像头设备号可能还没枚举完，串口可能还没打开。</p>
+  </div>
+
+  <p>比赛用的不是 <code>ros2 launch</code> 一条命令，而是 <code>tools/start.sh</code>。它的核心逻辑很朴素：
+  <b>启动一个，等它的日志里出现某句话，再启动下一个</b>。</p>
+
+  <div class="filelbl">tools/start.sh（精简）</div>
+  <pre><code data-lang="sh">start_proc  "base"    ros2 launch turn_on_wheeltec_robot ...
+wait_log    "serial port opened"        # 串口没开，后面全是空转
+
+start_proc  "camera"  python3 src/camera/camera.py
+wait_log    "摄像头已成功启动"            # /dev/video0 可能还没就绪
+
+start_proc  "yolo"    python3 src/yolov8/bpu_yolov8_node.py
+wait_log    "视觉检测节点就绪"            # BPU 模型加载要几百毫秒
+
+start_proc  "follow"  ros2 launch line_follower line_follower_with_detection.launch.py \
+                      params_file:='$PARAMS_FILE'
+wait_log    "Line follower subscribing"  # 订阅建立，图像不会白丢
+
+start_proc  "start"   ros2 run line_follower start_toggle_node   # 最后才给发车开关
+start_proc  "panel" / "safety" / "collector"</code></pre>
+
+  <div class="translate">
+    <b>翻译：</b>这就是"开机自检"。每一步都在确认上一步<b>真的活着</b>，而不是"命令发出去了"。
+    因为如果相机晚启动 2 秒，巡线节点会以为"没路"，一开始就按丢线逻辑乱走。
+  </div>
+
+  <h3>两个细节，看得出是踩过坑改出来的</h3>
+  <ul>
+    <li><b>发车开关是 10 Hz 持续发的，不是按一次发一次。</b>因为 <code>start_cmd</code> 没有用 <code>transient_local</code>（易失 QoS），
+    后启动的订阅者收不到历史消息。持续发，等于用"刷屏"来保证对方一定能收到。</li>
+    <li><b>参数只从 <code>tools/config/*.yaml</code> 注入。</b>包里自带的 <code>config/line_follower_params.yaml</code> 只是模板，
+    <code>start.sh</code> 用 <code>params_file:=$PARAMS_FILE</code> 覆盖了它。所以<b>改包里的 yaml 不生效</b>，这是最常见的"改了没用"。</li>
+  </ul>
+
+  <table>
+    <thead><tr><th style="width:120px">阶段</th><th style="width:150px">等待的日志</th><th>在等什么</th></tr></thead>
+    <tbody>
+      <tr><td>① 底盘</td><td><code>serial port opened</code></td><td><code>/dev/wheeltec_controller</code> 的 udev 规则生效 + DTR/RTS 拉高（这块下位机不拉高就不上报）</td></tr>
+      <tr><td>② 相机</td><td><code>摄像头已成功启动</code></td><td><code>/dev/video0</code> 完成枚举，V4L2 打开成功</td></tr>
+      <tr><td>③ YOLO</td><td><code>视觉检测节点就绪</code></td><td>BPU 模型加载完成（约几百 ms）</td></tr>
+      <tr><td>④ 巡线</td><td><code>Line follower subscribing</code></td><td>三个 C++ 节点订阅建立完毕</td></tr>
+      <tr><td>⑤ 开关</td><td>—</td><td>发车开关启动，此时才允许动</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box warn">
+    <span class="lbl">顺序反了会怎样</span>
+    <p>如果先起巡线、后起相机：巡线收不到图 → <code>line_detected=false</code> → 走"丢线"分支 →
+    以 0.3 m/s <b>直着冲出去</b>（<code>line_lost_forward_speed</code> 被调成了 0.3）。所以安全的第一道防线，其实是启动顺序。</p>
+  </div>
+</section>
+
+<!-- ============ 04 ============ -->
+<section class="sec" id="s4">
+  <div class="sechead">
+    <div class="kicker">04 / 传感</div>
+    <h2>眼睛：一颗 30 块钱的 USB 摄像头</h2>
+    <p class="lead">整辆车对世界的全部认知，来自这一路图像。没有雷达、没有定位、没有里程计参与决策。</p>
+  </div>
+
+  <div class="filelbl">src/camera/camera.py</div>
+  <pre><code data-lang="py">self.cap = cv2.VideoCapture(device, cv2.CAP_V4L2)      # 直接走内核 V4L2，不经 GStreamer
+self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # 关键：MJPEG
+self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+self.cap.set(cv2.CAP_PROP_FPS, 30.0)
+
+# 用定时器读帧，而不是回调：节奏可控，读失败就跳过这一拍
+def timer_callback(self):
+    ret, frame = self.cap.read()
+    if not ret: return
+    msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")   # OpenCV BGR → ROS Image
+    msg.header.frame_id = "camera_link"
+    self.publisher_.publish(msg)</code></pre>
+
+  <h3>为什么是 MJPEG，不是 YUYV</h3>
+  <p>USB 2.0 的带宽只有约 480 Mbps，实际可用 280 Mbps 左右。640×480×30 fps 的未压缩 YUYV 需要
+  <code>640×480×2×30 ≈ 18.4 MB/s ≈ 147 Mbps</code>，跑得动，但一旦分辨率或帧率提高就会掉帧。
+  MJPEG 每帧压缩成 JPEG（约 1/10 体积），带宽降到十几 Mbps，代价是 <b>每一帧都要解压</b>——这笔 CPU 开销由 RDK X5 承担，很划算。</p>
+
+  <div class="translate">
+    <b>物理意义：</b>MJPG 就像"把每帧照片存成 jpg 再传"，YUYV 是"原样传"。用画质换带宽和稳定性，在嵌入式上几乎总是对的。
+  </div>
+
+  <h3>参数</h3>
+  <div class="params">
+    <div class="param">
+      <div class="ph"><span class="pname">video_device</span><span class="pval">/dev/video0</span></div>
+      <div class="pbody">摄像头设备节点。换 USB 口可能变成 <code>/dev/video1</code>，此时相机打不开，必须先 <code>v4l2-ctl --list-devices</code> 确认。</div>
+      <div class="pm">camera.py:16 · 启动时读取</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">framerate</span><span class="pval">30.0</span><span class="punit">Hz</span></div>
+      <div class="pbody">同时决定两件事：摄像头出帧率、发布定时器周期（33 ms）。<b>它也是整个系统的"心跳"</b>——下游所有逻辑都隐含假设"大约每 33 ms 有一帧"。</div>
+      <div class="pm">camera.py:19 · 启动时读取</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">image_width / height</span><span class="pval">640 × 480</span></div>
+      <div class="pbody">后面所有"像素 → 比例"的换算都以它为基准。<b>改分辨率必须同步改</b> <code>det_frame_width/height</code>，否则数字模块的坐标全错。</div>
+      <div class="pm">camera.py:17-18</div>
+    </div>
+  </div>
+
+  <div class="box">
+    <span class="lbl">一个隐性的耦合</span>
+    <p>相机话题默认名是 <code>/image_raw</code>，但 <code>line_follower_node</code> 的<b>代码默认值</b>是
+    <code>/ascamera/camera_publisher/rgb/image0</code>（原厂相机的话题）。真正让它俩对上的，是
+    <code>tools/config/fork.yaml</code> 里的 <code>image_topic: /image_raw</code>。
+    所以：<b>脱离 launch 单独 <code>ros2 run</code> 起巡线节点，会一条图像都收不到</b>，而日志只会不断打印 "not started"。</p>
+  </div>
+</section>
+
+<!-- ============ 05 ============ -->
+<section class="sec" id="s5">
+  <div class="sechead">
+    <div class="kicker">05 / 感知</div>
+    <h2>找路：从 640×480 的图里，提取一个数</h2>
+    <p class="lead">这一步的全部目标只有一个：算出「路中心离画面中心多远」，输出 −1 到 +1。</p>
+  </div>
+
+  <div class="fig">
+    <svg viewBox="0 0 440 300" xmlns="http://www.w3.org/2000/svg">
+      <rect x="20" y="10" width="360" height="270" fill="#1a1c22" rx="3"/>
+
+      <!-- ROI 底色 -->
+      <rect x="20" y="104" width="360" height="122" fill="#15803d" opacity="0.08"/>
+
+      <!-- 白色路面：向左弯，整体偏在画面右侧 -->
+      <path d="M205,280 L215,190 L180,120 L145,10 L185,10 L225,120 L285,190 L305,280 Z" fill="#f4f3ee"/>
+      <path d="M205,280 L215,190 L180,120 L145,10" fill="none" stroke="#0d0f14" stroke-width="2"/>
+      <path d="M305,280 L285,190 L225,120 L185,10" fill="none" stroke="#0d0f14" stroke-width="2"/>
+
+      <!-- 两条采样带 -->
+      <rect x="20" y="145" width="360" height="27" fill="#0e7490" opacity="0.20"/>
+      <rect x="20" y="180" width="360" height="31" fill="#b45309" opacity="0.20"/>
+
+      <!-- ROI 边界 -->
+      <line x1="20" y1="104" x2="380" y2="104" stroke="#15803d" stroke-width="1.4" stroke-dasharray="5 3"/>
+      <line x1="20" y1="226" x2="380" y2="226" stroke="#15803d" stroke-width="1.4" stroke-dasharray="5 3"/>
+
+      <!-- 画面中心线 -->
+      <line x1="200" y1="104" x2="200" y2="280" stroke="#c2410c" stroke-width="1" stroke-dasharray="4 4"/>
+
+      <!-- 三个关键点 -->
+      <circle cx="228" cy="158" r="3.6" fill="#0e7490"/>
+      <circle cx="250" cy="195" r="3.6" fill="#b45309"/>
+      <line x1="228" y1="158" x2="250" y2="195" stroke="#c9c3b5" stroke-width="1" stroke-dasharray="3 3"/>
+      <circle cx="243" cy="184" r="6" fill="none" stroke="#c2410c" stroke-width="2"/>
+      <path d="M243,184 m-11,0 h22 M243,184 m0,-11 v22" stroke="#c2410c" stroke-width="1"/>
+
+      <!-- 引线 + 右侧标签 -->
+      <path d="M232,157 L295,152" stroke="#0e7490" stroke-width="0.8"/>
+      <path d="M250,181 L295,179" stroke="#c2410c" stroke-width="0.8"/>
+      <path d="M254,197 L295,205" stroke="#b45309" stroke-width="0.8"/>
+      <text x="298" y="155" font-size="9.5" fill="#0e7490" font-family="monospace">far_center</text>
+      <text x="298" y="182" font-size="9.5" fill="#c2410c" font-family="monospace">target</text>
+      <text x="298" y="208" font-size="9.5" fill="#b45309" font-family="monospace">near_center</text>
+
+      <!-- 左侧说明 -->
+      <text x="26" y="99" font-size="9.5" fill="#15803d" font-family="monospace">roi_top 168 px · 35%</text>
+      <text x="26" y="162" font-size="9.5" fill="#0e7490" font-family="monospace">far 带 34–56%</text>
+      <text x="26" y="200" font-size="9.5" fill="#b45309" font-family="monospace">near 带 62–88%</text>
+      <text x="26" y="241" font-size="9.5" fill="#15803d" font-family="monospace">roi_bottom 384 px · 80%</text>
+      <text x="252" y="99" font-size="9.5" fill="#c2410c" font-family="monospace">画面中心 x=320</text>
+
+      <!-- 误差 -->
+      <path d="M200,266 L240,266" stroke="#c2410c" stroke-width="2"/>
+      <path d="M200,266 l4,-4 M200,266 l4,4 M240,266 l-4,-4 M240,266 l-4,4" stroke="#c2410c" stroke-width="1.4"/>
+      <text x="246" y="270" font-size="9.5" fill="#c2410c" font-family="monospace">error = +0.23</text>
+    </svg>
+    <div class="figcap">图 5-1　一张图被切成三层：先砍出只含地面的横带（ROI），再在两条带里各找一次白路中心（<b style="color:#0e7490">far</b> / <b style="color:#b45309">near</b>），最后按 7:3 加权成 <b style="color:#c2410c">target</b>。误差就是 target 离画面中心多远。注意 target 明显更靠近 near —— 这就是 70% 权重的效果。</div>
+  </div>
+
+  <h3>六步流水线</h3>
+
+  <h4>① 砍 ROI：把注意力收窄到"车头前方"</h4>
+  <div class="filelbl">line_follower_node.cpp:1019</div>
+  <pre><code data-lang="cpp">// 只保留画面 35%~80% 高度这一横条
+const int roi_top    = height * (1.0 - roi_top_ratio_);   // 480*(1-0.65)=168
+const int roi_bottom = height - height * roi_bottom_ratio_; // 480-96=384
+const cv::Mat roi = frame_bgr(cv::Rect(0, roi_top, width, roi_height));</code></pre>
+  <p>上面 35% 是天花板/远处（对判断当前方向没帮助，还会混进墙上的白色），下面 20% 是车头自己和地面反光。
+  砍掉两头，噪声直接少一半。</p>
+
+  <h4>② 模糊 + 转 HSV</h4>
+  <pre><code data-lang="cpp">cv::GaussianBlur(roi, blurred, cv::Size(5,5), 0);  // 去 CMOS 噪点，避免白路上出现"麻点"
+cv::cvtColor(blurred, hsv, cv::COLOR_BGR2HSV);      // 换成"色调/饱和度/亮度"，比 RGB 更好切颜色</code></pre>
+
+  <h4>③ 找白色：不是"亮度高"，是"亮且不鲜艳"</h4>
+  <pre><code data-lang="cpp">//                 H 0~180（任意色调）  S ≤ 45（低饱和=接近灰/白）  V ≥ 80（别太暗=排除阴影）
+cv::inRange(hsv, Scalar(0, 0, white_v_min), Scalar(180, 45, 255), binary);</code></pre>
+  <div class="translate">
+    <b>物理意义：</b>白色在 HSV 里的特征是 <b>S 低、V 高</b>。用 S ≤ 45 一刀砍掉所有"有颜色"的东西（黄线、红锥、绿桌布），
+    用 V ≥ 80 砍掉阴影和黑线。<b>这比单纯用灰度阈值稳得多</b>——因为灰度阈值分不清"白色路面"和"浅黄色路面"。
+  </div>
+
+  <h4>④ 形态学：先擦掉小污点，再补上裂缝</h4>
+  <pre><code data-lang="cpp">cv::morphologyEx(binary, binary, MORPH_OPEN,  kernel, Point(-1,-1), 1);            // 开运算：去掉孤立白点
+cv::morphologyEx(binary, binary, MORPH_CLOSE, kernel, Point(-1,-1), morph_iterations); // 闭运算：把断开的白路连起来</code></pre>
+  <p>反光点、水渍、地上的纸屑，在开运算里会被"腐蚀掉"。而阳光在地面形成的细缝，会被闭运算"填平"。
+  <code>morph_iterations=2</code> 表示补两次，补得越狠越连贯，但也越容易把两条相邻的路"补成一条"。</p>
+
+  <h4>⑤ 在横带里找"通道"：这是全项目最聪明的一段</h4>
+  <p>它<b>没有</b>用"整块白色区域的质心"——因为那样一来，岔路口的白路面积变大，质心会被拽偏。
+  它改成：<b>在一条横带里，逐列数白色像素，把连续的白色列看成一条"通道"，选离参考点最近的那条</b>。</p>
+  <pre><code data-lang="cpp">// 一列里至少 30% 是白的，才算"道路列"
+const int min_white = band_height * 0.30;
+for (int x = 0; x &lt; cols; ++x)
+    if (countNonZero(band.col(x)) &gt;= min_white) active[x] = 1;
+
+// 连续的 active 列构成一个 run，宽度至少 20 px 才认（太窄是反光/噪声）
+if (run_width &gt;= 20) {
+    double center = 0.5 * (run_start + run_end);
+    // 离 reference_x 最近的 run 胜出
+    if (distance &lt; best_distance) best_center = center;
+}
+
+// near 带以画面中心为参考；far 带以 near 的中心为参考（这样远处不会跳到别的路上）
+near_center = find_band_center(near_y0, near_y1, image_center_x);
+far_center  = find_band_center(far_y0,  far_y1,  near_center.value_or(image_center_x));</code></pre>
+  <div class="translate">
+    <b>翻译：</b>想象你蒙着眼睛摸一条走廊。你不是"算出整片地面的重心"，
+    而是<b>伸手横着扫一遍，找到一条连续不断、宽度够、而且离你最近的那条通道</b>。
+    这样即使旁边还有一条岔路，只要它不连续、不够宽、或者比主路远，就不会被误选。
+  </div>
+
+  <h4>⑥ 7:3 加权 → 得到误差</h4>
+  <pre><code data-lang="cpp">target_x = 0.70 * near_center + 0.30 * far_center;   // 近处为主，远处做提前量
+result.error = (target_x - image_center_x) / image_center_x;  // 归一化到 [-1, 1]
+result.error = std::clamp(result.error, -1.0, 1.0);</code></pre>
+  <div class="translate">
+    <b>物理意义：</b>7:3 就是<b>"看脚下为主，瞄远处为辅"</b>。只看脚下，进弯会晚；只看远处，直道会画龙。
+    0.7/0.3 是无数轮试出来的手感。
+  </div>
+
+  <h3>参数</h3>
+  <div class="params">
+    <div class="param">
+      <div class="ph"><span class="pname">roi_top_ratio</span><span class="pval">0.65</span><span class="punit">比例</span></div>
+      <div class="pbody">从画面高度的 35% 处开始看。<b>调大</b>（如 0.75）→ 看得更近更狠，反应快但入弯晚；<b>调小</b>（如 0.5）→ 看得更远，能提前预判，但容易把远处别的路当成本路。</div>
+      <div class="pd"><div><b>调大</b>更贴近脚下，抗干扰强，但迟钝</div><div><b>调小</b>看得远，但容易"看花眼"</div></div>
+      <div class="pm">line_follower_node.cpp:136 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">roi_bottom_ratio</span><span class="pval">0.20</span><span class="punit">比例</span></div>
+      <div class="pbody">砍掉画面最下面 20%。这一段是车头、地面反光、自己的影子。<b>调大</b>→ 看不见紧贴车头的路，压线风险上升；<b>调小</b>→ 容易把车头误认成路。</div>
+      <div class="pm">line_follower_node.cpp:137 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">white_s_max</span><span class="pval">45</span><span class="punit">0–255</span></div>
+      <div class="pbody">饱和度的上限。<b>调大</b>→ 偏黄偏灰的路面也认成白色（在暖光下有用）；<b>调小</b>→ 只认纯白，但黄线附近的过渡区会被排除。</div>
+      <div class="pd"><div><b>调大</b>包容性强，但会吃进浅色干扰</div><div><b>调小</b>干净，但在地板偏黄时"看不见路"</div></div>
+      <div class="pm">line_follower_node.cpp:147 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">white_v_min</span><span class="pval">80</span><span class="punit">0–255</span></div>
+      <div class="pbody">亮度的下限。它同时兼任"黑边界线过滤器"：黑线 V 很低，直接被排除。调高 → 阴影里的路也看不见；调低 → 灰地砖可能被当成路。</div>
+      <div class="pm">line_follower_node.cpp:148 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">morph_iterations</span><span class="pval">2</span><span class="punit">次</span></div>
+      <div class="pbody">闭运算补缝的次数。调大 → 白路更连贯（适合地面有纹理），但两条挨得近的路会被"糊"成一条，岔路口尤其危险。</div>
+      <div class="pm">line_follower_node.cpp:141 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">binary_threshold</span><span class="pval">160.0</span><span class="punit">灰度</span></div>
+      <div class="pbody"><b>当前根本没生效。</b>只有在 <code>use_white_filter=false</code> 时才会走"灰度阈值"这条路；现在配置里是 true，所以这个 160 是摆设。</div>
+      <div class="pm">line_follower_node.cpp:139 · 仅在 use_white_filter=false 时使用</div>
+    </div>
+  </div>
+
+  <div class="box warn">
+    <span class="lbl">写死在代码里、没做成参数的常量</span>
+    <p>三个关键常量<b>不在 yaml 里</b>，想改必须改代码重新编译：① 每列 30% 白像素才算道路列（<code>:1209</code>）；
+    ② 通道最小宽度 20 px（<code>:1224</code>）；③ near/far 带的 62–88% / 34–56% 与 7:3 权重（<code>:1285-1289, :1409</code>）。
+    换场地、换镜头高度时，这三个数往往比 yaml 里那 90 个参数更该先调。</p>
+  </div>
+</section>
+
+<!-- ============ 06 ============ -->
+<section class="sec" id="s6">
+  <div class="sechead">
+    <div class="kicker">06 / 决策</div>
+    <h2>打方向：一根弹簧，没有 PID</h2>
+    <p class="lead">全车的核心公式只有一行。它没有积分项、没有微分项，也没有抗饱和处理。</p>
+  </div>
+
+  <div class="filelbl">line_follower_node.cpp:745</div>
+  <pre><code data-lang="cpp">// 唯一的控制律：误差 → 角速度（纯比例）
+const double yaw_cmd = clamp(-(kp_ * result.error), -max_yaw_rate_, max_yaw_rate_);
+
+// 速度只做一件事：偏得越多越慢（弯道减速）
+const double speed_scale = 1.0 - speed_gain_damping_ * std::min(1.0, std::abs(result.error));
+double speed_cmd = clamp(target_speed_ * speed_scale, min_speed_, max_speed_);</code></pre>
+
+  <div class="translate">
+    <b>翻译：</b><code>error &gt; 0</code> 表示路偏在画面右边，所以要做的是<b>向右打</b>；而 ROS 里 <code>angular.z &gt; 0</code> 是<b>左转</b>。
+    所以公式前面必须有那个负号。<b>这个负号搞反，车就会朝偏的方向冲出去</b>——这是这类项目最常见的翻车点。
+  </div>
+
+  <h3>动手拧一下</h3>
+  <p>下面这个模型和车上的代码<b>完全同构</b>：三个滑块分别对应 <code>error</code>、<code>kp</code>、<code>target_speed</code>，
+  右边实时算出 <code>yaw</code>、<code>v</code>，以及由此推出的<b>转弯半径</b>。</p>
+
+  <div class="demo">
+    <div>
+      <div class="stage">
+        <svg viewBox="0 0 340 300" xmlns="http://www.w3.org/2000/svg" width="100%">
+          <rect width="340" height="300" fill="#12141a"/>
+          <!-- 白路（带一点透视） -->
+          <path d="M 78,300 L 130,40 L 210,40 L 262,300 Z" fill="#e9e7e0"/>
+          <path d="M 78,300 L 130,40" stroke="#000" stroke-width="2"/>
+          <path d="M 262,300 L 210,40" stroke="#000" stroke-width="2"/>
+          <!-- 中心虚线 -->
+          <line x1="170" y1="300" x2="170" y2="40" stroke="#b9b5ab" stroke-width="1.5" stroke-dasharray="8 8"/>
+          <!-- 目标点 -->
+          <g id="tgt">
+            <circle cx="170" cy="86" r="7" fill="none" stroke="#c2410c" stroke-width="2.5"/>
+            <path d="M170,86 m-13,0 h26 M170,86 m0,-13 v26" stroke="#c2410c" stroke-width="1.4"/>
+          </g>
+          <!-- 车 -->
+          <g id="car" transform="translate(170,258)">
+            <g id="carrot">
+              <path d="M0,-12 L-24,-102 L24,-102 Z" fill="#c2410c" opacity="0.11"/>
+              <line x1="0" y1="-30" x2="0" y2="-95" stroke="#c2410c" stroke-width="2" stroke-dasharray="7 6"/>
+              <path d="M0,-104 l-6,12 h12 z" fill="#c2410c"/>
+            </g>
+            <rect x="-27" y="-30" width="9" height="17" rx="3" fill="#0b0d11"/>
+            <rect x="18" y="-30" width="9" height="17" rx="3" fill="#0b0d11"/>
+            <rect x="-27" y="11" width="9" height="17" rx="3" fill="#0b0d11"/>
+            <rect x="18" y="11" width="9" height="17" rx="3" fill="#0b0d11"/>
+            <rect x="-19" y="-29" width="38" height="56" rx="8" fill="#2c303a" stroke="#9aa0ad" stroke-width="1.4"/>
+            <rect x="-12" y="-23" width="24" height="12" rx="3" fill="#545b68"/>
+            <path d="M-6,-27 L0,-33 L6,-27 Z" fill="#c2410c"/>
+          </g>
+          <text x="14" y="24" font-family="monospace" font-size="10.5" fill="#5c6270">俯视图 · 上 = 车头方向</text>
+        </svg>
+      </div>
+      <div class="small" style="margin-top:8px">红色虚线 = 车此刻被"要求"的转向方向；橙色圈 = 白路中心实际在哪。</div>
+    </div>
+
+    <div>
+      <div class="read">
+        <div><span>error 归一化误差</span><b id="o-err">+0.30</b></div>
+        <div><span>yaw 角速度</span><b id="o-yaw">-0.74 <small>rad/s</small></b></div>
+        <div><span>v 线速度</span><b id="o-spd">0.32 <small>m/s</small></b></div>
+        <div><span>r 转弯半径</span><b id="o-rad">0.43 <small>m</small></b></div>
+      </div>
+
+      <div class="slider"><label>error</label><input id="i-err" type="range" min="-100" max="100" value="30"><output>+0.30</output></div>
+      <div class="slider"><label>kp</label><input id="i-kp" type="range" min="50" max="400" value="245"><output>2.45</output></div>
+      <div class="slider"><label>target_speed</label><input id="i-spd" type="range" min="10" max="80" value="40"><output>0.40</output></div>
+
+      <canvas id="curve" width="640" height="300" style="width:100%;height:auto;margin-top:12px"></canvas>
+      <div class="small">曲线：<code>yaw = clamp(−kp·error, ±1.5)</code>。斜线的<b>斜率就是 kp</b>，两头被 <code>max_yaw_rate</code> 削平——那两段"平顶"意味着<b>再偏也不会转得更快</b>。</div>
+    </div>
+  </div>
+
+  <h3>三个物理量的真实尺度</h3>
+  <table>
+    <thead><tr><th style="width:170px">量</th><th style="width:150px">数值</th><th>换算成人话</th></tr></thead>
+    <tbody>
+      <tr><td><code>target_speed</code></td><td>0.4 m/s</td><td>1.44 km/h ≈ 每秒走 40 cm。车身 30 cm，相当于<b>每秒走一个多车身</b>。</td></tr>
+      <tr><td><code>max_yaw_rate</code></td><td>1.5 rad/s</td><td>86°/s ≈ <b>4.2 秒转一整圈</b>。不算快，但足够在 3 m 宽的场里拐弯。</td></tr>
+      <tr><td>满舵半径</td><td>0.267 m</td><td><code>r = v/ω = 0.4/1.5</code>。赛规要求底盘最小转弯半径 ≤ 0.3 m，<b>这里正好贴着底线</b>。</td></tr>
+      <tr><td>饱和误差</td><td>±0.61</td><td><code>1.5/2.45</code>。偏离超过画面半宽的 61%，转向就"打满"，再偏也没用——车只能靠减速硬扛。</td></tr>
+      <tr><td>弯道最低速</td><td>0.14 m/s</td><td><code>0.4×(1−0.65×1)</code>。最大偏差时速度只剩 <b>35%</b>，此时转弯半径降到 0.093 m。</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box">
+    <span class="lbl">为什么"没有 PID"反而可能是对的</span>
+    <p>PID 的 I（积分）用来消除稳态误差，D（微分）用来抑制超调。但这套系统的输入每 33 ms 就换一次，
+    而且误差本身就是<b>有噪声的</b>（游程中心会随反光轻微跳动）。加 D 项等于把噪声放大，
+    加 I 项在弯道会产生"积分饱和"——出弯后车会朝反方向甩一下，直接压线。
+    <b>纯 P 在慢速场合是性价比最高的选择</b>：简单、可预测、不会积累。</p>
+  </div>
+</section>
+
+<!-- ============ 07 ============ -->
+<section class="sec" id="s7">
+  <div class="sechead">
+    <div class="kicker">07 / 例外</div>
+    <h2>例外规则栈：五种情况抢同一个方向盘</h2>
+    <p class="lead">巡线只是"默认行为"。真正的复杂度，在于谁能在什么条件下把它覆盖掉。</p>
+  </div>
+
+  <div class="fig">
+    <svg viewBox="0 0 760 250" xmlns="http://www.w3.org/2000/svg">
+      <g font-family="monospace" font-size="12">
+        <rect x="10" y="10" width="740" height="40" rx="5" fill="#fbe9e7" stroke="#b91c1c" stroke-width="1.4"/>
+        <text x="26" y="35" fill="#b91c1c" font-weight="700">① 黄线锁存</text>
+        <text x="150" y="35" fill="#7f1d1d">permanent_stop 或 黄线后 1 s 内 → 全零 + 发 /cmd_vel_stop（最高优先级，谁都盖不住）</text>
+
+        <rect x="10" y="58" width="740" height="40" rx="5" fill="#fdf1de" stroke="#b45309" stroke-width="1.4"/>
+        <text x="26" y="83" fill="#b45309" font-weight="700">② 红锥柔性避障</text>
+        <text x="150" y="83" fill="#7c2d12">投票确认 + 进入走廊 + 足够近 → 加斥力、减速，但速度下限 0.15 m/s（绝不停车）</text>
+
+        <rect x="10" y="106" width="740" height="40" rx="5" fill="#f2f0e9" stroke="#78716c" stroke-width="1.4" stroke-dasharray="5 3"/>
+        <text x="26" y="131" fill="#57534e" font-weight="700">③ 岔路探针</text>
+        <text x="150" y="131" fill="#57534e">enable_intersection_probe = false（默认关闭，等于没有）</text>
+
+        <rect x="10" y="154" width="740" height="40" rx="5" fill="#eaf3ee" stroke="#15803d" stroke-width="1.4"/>
+        <text x="26" y="179" fill="#15803d" font-weight="700">④ 正常巡线</text>
+        <text x="150" y="179" fill="#14532d">yaw = −kp·error，速度随偏差衰减（主路径，90% 的时间走这里）</text>
+
+        <rect x="10" y="202" width="740" height="40" rx="5" fill="#eef2f7" stroke="#475569" stroke-width="1.4"/>
+        <text x="26" y="227" fill="#475569" font-weight="700">⑤ 丢线</text>
+        <text x="150" y="227" fill="#334155">沿用上一帧转向的 85%，以 0.3 m/s 继续前进（不停车，避免被判停滞）</text>
+      </g>
+    </svg>
+    <div class="figcap">图 7-1　优先级从上到下。实现方式不是 <code>switch</code>，而是一串 <code>if/else</code> 依次覆盖 <code>linear_speed</code> 和 <code>yaw_rate</code> 两个局部变量，最后统一发布。</div>
+  </div>
+
+  <h3>① 黄线：唯一有停车权的规则</h3>
+  <pre><code data-lang="cpp">// 在 ROI 里数黄色像素，占比 ≥ 2% 就算"看到黄线"
+yellow_area_ratio = countNonZero(yellow_mask) / yellow_mask.total();
+if (yellow_area_ratio &gt;= 0.02) { /* 记一次 */ }
+
+// 连续 4 帧确认后开始停；停满 1 s 松开
+if (yellow_line_detection_count_ &gt;= yellow_permanent_count_) {
+    permanent_stop_ = true;          // 第 4 根：永久停，比赛结束
+} else {
+    yellow_line_stop_active_ = true; // 前 3 根：停 1 s 后继续
+}</code></pre>
+  <div class="translate">
+    <b>为什么是 2%：</b>33 × 2 cm 的黄线，在 ROI 那一条横带里大约占 1.5%~3% 的面积。
+    阈值定 2%，等于"<b>看到黄线的一角就准备停</b>"。宁可错停（罚 0 秒，只是慢了），不可漏停（罚 15 秒）。
+  </div>
+  <div class="params">
+    <div class="param">
+      <div class="ph"><span class="pname">yellow_area_ratio_threshold</span><span class="pval">0.02</span><span class="punit">比例</span></div>
+      <div class="pbody">黄像素占 ROI 的比例门槛。<b>调小</b>→ 更早发现（远处的一角就停），但地面偏黄时可能误停；<b>调大</b>→ 更保守，可能冲过线（+15 s）。</div>
+      <div class="pm">line_follower_node.cpp:155 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">yellow_stop_duration</span><span class="pval">1.0</span><span class="punit">s</span></div>
+      <div class="pbody">每根线停多久。赛规要求"完全停稳"，1 s 是给裁判看的保险时间。<b>调小</b>到 0.3 有被判"未停稳"的风险。</div>
+      <div class="pm">line_follower_node.cpp:156 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">yellow_permanent_count</span><span class="pval">4</span><span class="punit">根</span></div>
+      <div class="pbody">第几根线永久停车。<b>必须与赛规一致</b>：每张地图正好 4 根黄线，所以第 4 根停完就是终点。</div>
+      <div class="pm">line_follower_node.cpp:157 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">yellow_clear_frames</span><span class="pval">10</span><span class="punit">帧</span></div>
+      <div class="pbody">连续 10 帧（约 0.33 s）看不到黄色，才解除"已看到"的锁存。防的是<b>一帧误检导致重复计数</b>——少数一根，就会在前面多停一次。</div>
+      <div class="pm">line_follower_node.cpp:158 · 构造时快照</div>
+    </div>
+  </div>
+
+  <h3>② 红锥：越近推得越狠，但永不刹车</h3>
+  <p>这是全项目最复杂的 60 行代码。核心思想可以写成一句话：<b>把"危险程度"压缩成 0–1 的 <code>risk</code>，
+  再用它同时调制"推多少"和"多慢"</b>。</p>
+  <pre><code data-lang="cpp">// risk：红锥底部在画面里的高度 → 离车多近。0=刚进入视野，1=贴脸
+risk = clamp((bottom_ratio - 0.38) / (0.72 - 0.38), 0, 1);
+
+// 推力：基础值 × (1 + 1.5·risk)。越近，推得越狠
+repulsion = |red_soft_yaw| * (1.0 + 1.5 * risk);
+
+// 如果巡线正在朝红锥方向打方向，先削弱它（最多削到 40%），避免"自己往锥上撞"
+if (red_on_left &amp;&amp; yaw_rate &gt; 0) yaw_rate *= lane_keep_factor;
+
+yaw_rate -= repulsion;                    // 锥在左 → 向右推（负=右）
+yaw_rate  = clamp(yaw_rate, ±max_yaw_rate);
+
+// 速度：risk=0 → 0.25 m/s；risk=1 → 0.15 m/s。永远不低于 red_min_forward_speed
+linear_speed = max(0.15, min(linear_speed, 0.25 * (1 - 0.6*risk)));</code></pre>
+  <div class="translate">
+    <b>物理意义：</b>这不是"避障"，是<b>"软约束排斥场"</b>。红锥像一个带弹簧的柱子：
+    离得远时弹簧不发力，你正常走；越靠近，弹簧把你往旁边推的力越大，同时你的油门被自动收小。
+    <b>它永远不会为了避障而停下</b>——因为停下来的代价（判停滞 30 s 终止）比撞锥（10 s）更糟。
+  </div>
+  <table>
+    <thead><tr><th style="width:230px">参数</th><th style="width:80px">值</th><th>物理意义</th></tr></thead>
+    <tbody>
+      <tr><td><code>red_near_ratio</code></td><td>0.38</td><td>红锥底部到达画面 38% 高度时开始警觉（约 1.5 m 外）</td></tr>
+      <tr><td><code>red_very_close_ratio</code></td><td>0.72</td><td>到达 72% 高度时 risk 拉满（约 0.4 m，一个车身内）</td></tr>
+      <tr><td><code>red_repulsion_gain</code></td><td>1.5</td><td>risk 从 0 到 1，推力放大到 2.5 倍</td></tr>
+      <tr><td><code>red_corridor_half_width_ratio</code></td><td>0.35</td><td>"行驶走廊"半宽 = 画面 35%。锥在走廊内才避，走廊外的不管——防止为远处的锥乱打方向</td></tr>
+      <tr><td><code>red_line_fallback_direction</code></td><td>−1</td><td>判定不了红线在左还是右时，默认<b>从右边绕</b></td></tr>
+      <tr><td><code>red_vote_frames</code></td><td>3</td><td>连续 3 帧方向一致才动手。防的是一次误检就把车拽偏</td></tr>
+    </tbody>
+  </table>
+
+  <h3>③ 岔路探针：一个"存在但没开"的功能</h3>
+  <pre><code data-lang="cpp">// 逻辑本身很简单：ROI 最上面 50 行如果"几乎全黑"，说明前方的路断了 → 打一把固定方向
+black_ratio = 1.0 - countNonZero(band) / band.total();
+if (black_ratio &gt;= intersection_dark_ratio_threshold_) {
+    intersection_active_ = true;                     // 然后以 0.2 m/s、1.8 rad/s 转 2 秒
+}</code></pre>
+  <div class="box warn">
+    <span class="lbl">这个功能目前等于不存在</span>
+    <p>配置里 <code>enable_intersection_probe: false</code>，所以整段代码被跳过。
+    即使打开，<code>intersection_dark_ratio_threshold: 1.0</code> 意味着<b>要求那一横带里白像素数为 0</b>——
+    在真实画面里几乎不可能满足（总会有几个反光点）。这个参数的正确量级应该是 0.6–0.9。</p>
+  </div>
+  <div class="translate">
+    <b>那么岔路口是怎么过的？</b>靠第 5 节那个"通道最近者优先"。到了岔路口，主路仍然连续、仍离参考点最近，
+    所以车会<b>默认走直行的那一支</b>；只有当主路真的断开，才会 fallback 到"最大白块质心"。
+    <b>环岛同理</b>——没有任何环岛专用逻辑，靠的是白路本身是连通的圆形，加上 P 控制在弯道上自然跟着走。
+  </div>
+
+  <h3>④ 丢线：不停车，是刻意的</h3>
+  <pre><code data-lang="cpp">// 短时间丢线：沿用上一帧的转向，打折后继续
+yaw_rate = clamp(g_motion.last_yaw * 0.85, ±max_yaw_rate);
+linear_speed = 0.3;             // 注意：不是 0
+// 超过 line_lost_stop_time(0.8s) 才把状态标成 LOST —— 但速度依然是 0.3
+publish_stop_cmd = false;       // 关键：不发停车指令</code></pre>
+  <div class="translate">
+    <b>为什么不停：</b>赛规有一条"<b>连续 30 秒无状态变化</b>即终止比赛"。如果一丢线就停，
+    在地面反光导致连续丢线的场景里，车会停在那儿直接出局。<b>宁可以 0.3 m/s 直着冲过去再找回线，也不停</b>——
+    这是用"可能压线（15 s）"去换"可能终止比赛"。0.85 的系数则是说：方向记住，但别记太死，要给自己留修正余地。
+  </div>
+</section>
+
+<!-- ============ 08 ============ -->
+<section class="sec" id="s8">
+  <div class="sechead">
+    <div class="kicker">08 / 副脑</div>
+    <h2>数字识别：它不是在认路，是在"瞄准压线"</h2>
+    <p class="lead">这一节是整份文档里最容易理解错的地方。看完你会知道，为什么"识别出是数字几"其实不影响车怎么走。</p>
+  </div>
+
+  <div class="box plain">
+    <span class="lbl">先看代码到底用数字做了什么</span>
+    <p>转向公式里<b>没有出现数字的值</b>：<code>yaw = clamp(-1 · x_diff · 1.6, ±1.3)</code>。
+    数字识别结果只被用于两件事：① 打日志（<code>best=%d</code>）；② 多个候选框时挑一个记录。
+    <b>真正决定往哪转的，是数字的 x 坐标相对于路中心的位置。</b></p>
+  </div>
+
+  <div class="translate">
+    <b>结论：</b>这不是"看到 3 号数字就往第 3 个路口走"的决策系统。
+    它做的事是——<b>发现地上有个数字，而且快要被车压到了，于是朝它打一把方向，把它压到轮子底下</b>。
+    对应赛规的 Bonus 规则："小车完全覆盖数字即触发"。
+  </div>
+
+  <h3>三个"同时满足"才动手</h3>
+  <ol>
+    <li><b>置信度够</b>：<code>confidence ≥ 0.1</code>（这个值被调得极低，宁可错认——因为错认不罚分）。</li>
+    <li><b>纵向对齐</b>：<code>|数字 y − 路中心 y| ≤ 0.01</code>，即数字已经在车的正前方不远处。
+    <b>这一条是核心</b>：远处看到的数字不动手，等它快被压到才动。</li>
+    <li><b>累计够帧</b>：连续 <code>frame_window=2</code> 帧都存在，才触发一次。</li>
+  </ol>
+
+  <pre><code data-lang="cpp">double y_diff = det_y_norm - last_centroid_norm_y_;      // 纵向差
+if (std::abs(y_diff) &lt;= 0.01) {                          // 只有"对齐"了才考虑
+    double x_diff = det_x_norm - last_centroid_norm_x_;  // 数字在路中心的左边还是右边
+    if (chosen.conf &gt; best_conf_) { best_x_diff_ = x_diff; ... }
+}
+
+// 触发：朝数字方向转（负号 = 图像坐标右正 → 车体坐标右负）
+double yaw = clamp(-1.0 * best_x_diff_ * 1.6, -1.3, 1.3);
+
+// 转 0.38 秒，然后进入 0.8 秒冷却期，期间忽略一切数字
+turning_end_time_   = now + 0.38s;
+turn_cooldown_until_ = turning_end_time_ + 0.8s;</code></pre>
+
+  <div class="translate">
+    <b>为什么必须"纵向对齐"：</b>因为摄像头是斜着往前的，画面里的 <b>y 坐标 ≈ 距离</b>。
+    y 大 = 靠下 = 离车近。要求数字的 y 和"路中心的 y"接近，等于在问：
+    <b>"这个数字是不是正好在我即将经过的位置？"</b>——是，才值得打方向；不是，等它靠近点再说。
+  </div>
+
+  <h3>一次数字转向的完整时序</h3>
+  <table>
+    <thead><tr><th style="width:140px">阶段</th><th style="width:130px">时长</th><th>发生了什么</th></tr></thead>
+    <tbody>
+      <tr><td>发现</td><td>—</td><td>YOLO 出框，但 y 差太大 → 只记录，不动手</td></tr>
+      <tr><td>对齐</td><td>—</td><td><code>|y_diff| ≤ 0.01</code>：数字已进入"即将压到"的区域</td></tr>
+      <tr><td>累计</td><td>2 帧 ≈ 67 ms</td><td>连续两帧都有，防止单帧误检</td></tr>
+      <tr><td><b>转向</b></td><td><b>0.38 s</b></td><td>以 0.2 m/s、最多 1.3 rad/s 转 —— 约转过 <b>28°</b></td></tr>
+      <tr><td>冷却</td><td>0.8 s</td><td>期间完全无视数字，防止同一条数字被触发两次</td></tr>
+      <tr><td>重置</td><td>—</td><td>遇到黄线（<code>yellow_line_detected</code>）时清空会话，允许下一段重新识别</td></tr>
+    </tbody>
+  </table>
+
+  <div class="params">
+    <div class="param">
+      <div class="ph"><span class="pname">y_align_tolerance</span><span class="pval">0.01</span><span class="punit">画面比例</span></div>
+      <div class="pbody">纵向对齐容差。0.01 = 画面高度的 1% ≈ <b>5 像素</b>。调大到 0.05（代码默认值）→ 远处就动手，转早了压不到；调小到 0.005 → 更精准但可能错过。</div>
+      <div class="pd"><div><b>调大</b>更早触发，容易转早扑空</div><div><b>调小</b>更准，但可能一帧都没对齐上</div></div>
+      <div class="pm">detection_turn_controller.cpp:52 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">yaw_gain</span><span class="pval">1.6</span><span class="punit">(rad/s)/归一化</span></div>
+      <div class="pbody">数字偏出画面中心 10%，就要求 0.16 rad/s。偏 50% → 0.8 rad/s。上限被 <code>max_yaw_rate=1.3</code> 卡住。</div>
+      <div class="pm">detection_turn_controller.cpp:50 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">turn_duration</span><span class="pval">0.38</span><span class="punit">s</span></div>
+      <div class="pbody">一把方向持续多久。<b>0.38 s × 1.3 rad/s ≈ 28°</b>。这是"一把"的物理含义：转到 28° 就回正。</div>
+      <div class="pd"><div><b>调大</b>转得更狠，可能转向过度</div><div><b>调小</b>压不到数字</div></div>
+      <div class="pm">detection_turn_controller.cpp:48 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">turn_linear</span><span class="pval">0.20</span><span class="punit">m/s</span></div>
+      <div class="pbody">转的时候速度减半（0.4 → 0.2）。因为 0.2 m/s + 1.3 rad/s 的转弯半径只有 0.15 m，能在原地"抠"一个小弯。</div>
+      <div class="pm">detection_turn_controller.cpp:49 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">turn_cooldown</span><span class="pval">0.8</span><span class="punit">s</span></div>
+      <div class="pbody">转完之后 0.8 s 内不再认数字。因为车还在数字上方，YOLO 会持续出框，不冷却就会<b>反复触发</b>。</div>
+      <div class="pm">detection_turn_controller.cpp:47 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">confidence_threshold</span><span class="pval">0.1</span><span class="punit">0–1</span></div>
+      <div class="pbody">置信度门槛，被<b>从默认 0.6 一路调到 0.1</b>。这是典型的"收益不对称"调参：错认不罚分，漏认丢 5 秒，所以宁可瞎认。</div>
+      <div class="pm">detection_turn_controller.cpp:43 · 构造时快照</div>
+    </div>
+    <div class="param">
+      <div class="ph"><span class="pname">turn_direction_sign</span><span class="pval">-1.0</span><span class="punit">±1</span></div>
+      <div class="pbody">方向取反开关。图像坐标 x 向右为正，车体 <code>angular.z</code> 左转为正，两者差一个符号。<b>如果车"朝反方向躲数字"，改这个的符号就行</b>，不用动别处。</div>
+      <div class="pm">detection_turn_controller.cpp:53 · 构造时快照</div>
+    </div>
+  </div>
+
+  <div class="box warn">
+    <span class="lbl">这里有一个真实的坑</span>
+    <p><code>detection_turn_controller</code> 只在"正在转"的 0.38 s 内发布速度。但 <code>cmd_mux</code> 会
+    <b>记住最后一条指令并在 <code>high_timeout</code> 内继续转发</b>。而 launch 里这个超时被写成 <b>0.5 s</b>
+    （yaml 里写的是 0.12，被 launch 覆盖了）。结果是：<b>每次数字转向结束后，还会多飞 0.5 s 的转向指令</b>，
+    转弯实际持续 0.38 + 0.5 ≈ 0.88 s，转过约 65°。见第 13 节问题 #3。</p>
+  </div>
+</section>
+
+<!-- ============ 09 ============ -->
+<section class="sec" id="s9">
+  <div class="sechead">
+    <div class="kicker">09 / 仲裁</div>
+    <h2>抢方向盘：<code>cmd_mux</code> 的三级优先</h2>
+    <p class="lead">三路指令抢同一个 <code>/cmd_vel</code>。规则只有三条，但它决定了车"听谁的"。</p>
+  </div>
+
+  <div class="filelbl">cmd_mux_node.cpp:135（低优先级路径上做的判断）</div>
+  <pre><code data-lang="cpp">void low_callback(const Twist::SharedPtr msg) {   // 巡线指令到了（30 Hz）
+    // ① 停车最优先：最近 0.5 s 内收到过 stop，就一直发 stop
+    if (has_stop_ &amp;&amp; (now - last_stop_time_) &lt;= stop_timeout_) {
+        publish(last_stop_msg_);  return;
+    }
+    // ② 其次：最近 0.5 s 内收到过数字转向指令，继续用它
+    if (has_high_ &amp;&amp; (now - last_high_time_) &lt;= high_timeout_) {
+        publish(last_high_msg_);  return;
+    }
+    // ③ 都没有，才用巡线
+    publish(msg);
+}</code></pre>
+
+  <div class="translate">
+    <b>翻译：</b>这是一个 <b>"话题级"的优先级仲裁</b>，不是"投票"，也不是"加权平均"。
+    谁在有效期内，就<b>独占</b>方向盘。所以不存在"巡线和数字各转一点"这种混合——一定是其中一个说了算。
+  </div>
+
+  <h3>为什么不直接让 <code>cmd_vel_stop</code> 覆盖？</h3>
+  <p>因为 ROS 2 的 topic 没有"优先级"概念，三个发布者往同一个 topic 发，接的人只会收到最新的那条，
+  顺序完全取决于调度。<b>必须有一个中间人来做"选谁"</b>，这个中间人就是 <code>cmd_mux</code>。</p>
+
+  <table>
+    <thead><tr><th style="width:110px">优先级</th><th style="width:210px">话题</th><th style="width:140px">保鲜期</th><th>失效后会怎样</th></tr></thead>
+    <tbody>
+      <tr><td>最高</td><td><code>/cmd_vel_stop</code></td><td>0.5 s</td><td>按零速再飞 0.5 s，之后交还下一级</td></tr>
+      <tr><td>中</td><td><code>/cmd_vel_detection</code></td><td><b>0.5 s</b>（launch 覆盖）</td><td>回到巡线——但注意，这 0.5 s 是"白飞"的</td></tr>
+      <tr><td>低</td><td><code>/cmd_vel_follower</code></td><td>无（默认路径）</td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box warn">
+    <span class="lbl">"保鲜期"这个概念，是这套系统的灵魂</span>
+    <p>所有优先级都是<b>基于时间</b>而不是基于事件。这意味着：<b>任何一路突然死掉，系统都会在超时后自动降级</b>，
+    而不是卡死。代价是——超时期间车在用"过期数据"开车。所以超时值既是"安全垫"，也是"盲开时长"。<br>
+    赛规里的"连续 30 s 无状态变化即终止"，对应的就是这个机制的下限。</p>
+  </div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section class="sec" id="s10">
+  <div class="sechead">
+    <div class="kicker">10 / 执行</div>
+    <h2>落地：11 个字节怎么变成轮子的转动</h2>
+    <p class="lead">从 <code>/cmd_vel</code> 到轮子，中间只隔一个串口和一块闭源固件。</p>
+  </div>
+
+  <h3>下行帧：11 字节</h3>
+  <div class="filelbl">wheeltec_robot.cpp:57 Send_Velocity()</div>
+  <pre><code data-lang="cpp">Send_Data.tx[0] = 0x7B;                      // 帧头
+Send_Data.tx[1] = AutoRecharge;              // 0=正常行驶，1/2/3=回充模式
+Send_Data.tx[2] = 0;                         // 预留
+transition = vx * 1000;                      // 0.4 m/s → 400 (mm/s)
+Send_Data.tx[4] = transition;                // 低字节
+Send_Data.tx[3] = transition &gt;&gt; 8;           // 高字节
+transition = vz * 1000;                      // 1.5 rad/s → 1500 (mrad/s)
+Send_Data.tx[8] = transition;
+Send_Data.tx[7] = transition &gt;&gt; 8;
+Send_Data.tx[9]  = Check_Sum(9, 1);          // 前 9 字节 XOR 校验
+Send_Data.tx[10] = 0x7D;                     // 帧尾</code></pre>
+
+  <div class="fig">
+    <svg viewBox="0 0 760 120" xmlns="http://www.w3.org/2000/svg" font-family="monospace" font-size="10">
+      <g>
+        <rect x="0"   y="30" width="60" height="42" fill="#c2410c" opacity=".85"/>
+        <text x="30" y="56" fill="#fff" text-anchor="middle" font-size="12" font-weight="700">0x7B</text>
+        <text x="30" y="88" fill="#6b7078" text-anchor="middle">帧头</text>
+
+        <rect x="62"  y="30" width="52" height="42" fill="#3f434d"/>
+        <text x="88" y="56" fill="#d8dbe3" text-anchor="middle" font-size="12">mode</text>
+        <text x="88" y="88" fill="#6b7078" text-anchor="middle">回充</text>
+
+        <rect x="116" y="30" width="52" height="42" fill="#3f434d"/>
+        <text x="142" y="56" fill="#d8dbe3" text-anchor="middle" font-size="12">—</text>
+        <text x="142" y="88" fill="#6b7078" text-anchor="middle">预留</text>
+
+        <rect x="170" y="30" width="80" height="42" fill="#0e7490" opacity=".8"/>
+        <text x="210" y="56" fill="#fff" text-anchor="middle" font-size="12">vx 高/低</text>
+        <text x="210" y="88" fill="#0e7490" text-anchor="middle">mm/s · 400</text>
+
+        <rect x="252" y="30" width="80" height="42" fill="#3f434d"/>
+        <text x="292" y="56" fill="#d8dbe3" text-anchor="middle" font-size="12">vy 高/低</text>
+        <text x="292" y="88" fill="#6b7078" text-anchor="middle">阿克曼恒 0</text>
+
+        <rect x="334" y="30" width="80" height="42" fill="#0e7490" opacity=".8"/>
+        <text x="374" y="56" fill="#fff" text-anchor="middle" font-size="12">vz 高/低</text>
+        <text x="374" y="88" fill="#0e7490" text-anchor="middle">mrad/s · 1500</text>
+
+        <rect x="416" y="30" width="60" height="42" fill="#6d28d9" opacity=".8"/>
+        <text x="446" y="56" fill="#fff" text-anchor="middle" font-size="12">BCC</text>
+        <text x="446" y="88" fill="#6d28d9" text-anchor="middle">XOR</text>
+
+        <rect x="478" y="30" width="60" height="42" fill="#c2410c" opacity=".85"/>
+        <text x="508" y="56" fill="#fff" text-anchor="middle" font-size="12">0x7D</text>
+        <text x="508" y="88" fill="#6b7078" text-anchor="middle">帧尾</text>
+
+        <text x="556" y="50" fill="#4b5059" font-size="11">共 11 字节，115200 8N1</text>
+        <text x="556" y="68" fill="#858b96" font-size="10.5">按 30 Hz 发送，每帧约 1 ms</text>
+      </g>
+    </svg>
+    <div class="figcap">图 10-1　下行帧结构。注意 <b>vz 的单位是 mrad/s</b>——串口协议把浮点数全部乘 1000 转成整数，因为定点数在小端 MCU 上解析最省事。</div>
+  </div>
+
+  <div class="translate">
+    <b>为什么要 ×1000：</b>整形数据传输不需要协商字节序和浮点格式，<b>协议更简单、更抗错</b>。
+    代价是精度只有 1 mm/s 和 1 mrad/s —— 对 0.4 m/s 的车来说完全够用（0.25% 的分辨率）。
+  </div>
+
+  <h3>上行帧：24 字节</h3>
+  <pre><code data-lang="cpp">rx[0]        0x7B
+rx[2..3]     vx    mm/s      → /1000 → m/s，用于积分出 /odom
+rx[4..5]     vy    mm/s      （阿克曼用不到）
+rx[6..7]     vz    mrad/s
+rx[8..13]    IMU 加速度 X/Y/Z   （÷1671.84 → m/s²）
+rx[14..19]   IMU 角速度 X/Y/Z   （×0.00026644 → rad/s）
+rx[20..21]   电池电压 mV        → /1000 → V
+rx[22]       BCC 校验           = rx[0..21] 逐字节 XOR
+rx[23]       0x7D</code></pre>
+
+  <div class="box plain">
+    <span class="lbl">上层拿到 <code>angular.z</code> 之后，谁负责把它变成舵机角度？</span>
+    <p><b>是下位机固件，而且固件闭源。</b>上位机<b>完全没有</b>"角速度 → 前轮转角"的换算，也没有
+    "线速度 → 电机 PWM"的换算。它只是把 rad/s 原样塞进串口。<br>
+    阿克曼的横摆角速度与转角的关系是 <code>ω = v·tan(δ)/L</code>（L 为轴距），
+    这个 <code>tan(δ)</code> 由下位机按自己的标定表完成。<b>这意味着：换底盘、换轮胎、改轴距时，上位机的参数全都不用动</b>——
+    这是这套架构最省事的地方，也是最"黑盒"的地方。</p>
+  </div>
+</section>
+
+<!-- ============ 11 ============ -->
+<section class="sec" id="s11">
+  <div class="sechead">
+    <div class="kicker">11 / 兜底</div>
+    <h2>如果上位机突然死掉，车会怎样</h2>
+    <p class="lead">答案：如果不加 <code>safety_node</code>，它会保持最后一次的速度，一路撞到东西为止。</p>
+  </div>
+
+  <div class="box warn">
+    <span class="lbl">一个真实的硬件缺陷</span>
+    <p>这块下位机固件<b>没有指令超时保护</b>。也就是说，它收到 "0.4 m/s 直行" 之后就<b>一直执行</b>，
+    直到收到下一条指令。上位机进程崩溃、SSH 掉线、USB 松动——任何一种情况都会让车"永动"。</p>
+  </div>
+
+  <h3>软件层的补丁：看门狗</h3>
+  <div class="filelbl">tools/safety_node.py</div>
+  <pre><code data-lang="py"># 20 Hz 检查：如果三路速度指令都超过 0.3 s 没更新，就自己发一条零速
+if now - last_seen &gt; silence_timeout:      # silence_timeout = 0.30
+    pub.publish(Twist())                   # 全零：linear.x = 0, angular.z = 0</code></pre>
+
+  <div class="translate">
+    <b>为什么是 0.3 s：</b>正常指令流是 30 Hz（33 ms 一条）。0.3 s 相当于<b>连续丢了 9 条</b>。
+    再短容易误判（网络抖动）；再长，车已经多跑了 12 cm（按 0.4 m/s 算）。
+  </div>
+
+  <div class="box">
+    <span class="lbl">但这里有个结构性矛盾</span>
+    <p><code>safety_node</code> 自己也是个 ROS 节点。如果它和巡线节点在同一个进程组里、或者整机供电挂了，
+    <b>它也会一起死</b>。所以它只能防"单个节点崩溃"，防不了"整机断电"或"USB 摄像头掉线导致的连锁失败"。
+    真正意义上的物理急停（继电器 / 遥控器）目前没有。</p>
+  </div>
+
+  <h3>另外两道闸</h3>
+  <ul>
+    <li><b>发车闸</b>：<code>line_follower</code> 启动后 <code>start_enabled_=false</code>，
+    在收到 <code>start_cmd=true</code> 之前<b>只发零速</b>。这是防"上电就冲"的（赛规里叫抢跑，直接判无效）。</li>
+    <li><b>永久停车闸</b>：第 4 根黄线之后 <code>permanent_stop_=true</code>，此后任何控制都盖不住，
+    连重新发车也不会解除（除非重启节点）。这是防"跑完还在场上乱转"。</li>
+  </ul>
+</section>
+
+<!-- ============ 12 ============ -->
+<section class="sec" id="s12">
+  <div class="sechead">
+    <div class="kicker">12 / 附录 A</div>
+    <h2>参数总表</h2>
+    <p class="lead">全部生效值来自 <code>tools/config/fork.yaml</code>（比赛实际使用的文件）。"生效方式"决定你改完要不要重启。</p>
+  </div>
+
+  <div class="searchbar">
+    <input id="q" type="search" placeholder="搜索参数名 / 中文关键词，例如：黄色、速度、kp">
+    <span class="cnt" id="qc"></span>
+  </div>
+  <table id="ptable">
+    <thead><tr><th style="width:250px">参数</th><th style="width:80px">当前值</th><th style="width:110px">单位</th><th>作用</th><th style="width:100px">生效方式</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="small">注：<span class="chip hot">热读</span> 表示每帧都会重新读参数，改完<b>立刻</b>生效（需要有人调用 <code>ros2 param set</code>）；
+  <span class="chip">快照</span> 表示只在节点构造时读一次，<b>必须重启节点</b>。</p>
+</section>
+
+<!-- ============ 13 ============ -->
+<section class="sec" id="s13">
+  <div class="sechead">
+    <div class="kicker">13 / 慎入</div>
+    <h2>当前问题清单</h2>
+    <p class="lead">以下每一条都在源码里核对过，标注了文件与行号。<b>有些会直接吃罚时，有些只是会误导读代码的人。</b></p>
+  </div>
+
+  <h3>A 类 · 会直接影响比赛成绩</h3>
+
+  <div class="issue s1">
+    <div class="ih"><span class="sev a">A1</span><b>数字转向结束后，车会"多飞" 0.5 秒</b><span class="where">detection_turn_controller.cpp:48 / line_follower_with_detection.launch.py:105 / cmd_mux_node.cpp:22</span></div>
+    <p>转弯指令只持续 <code>turn_duration=0.38 s</code>，但 <code>cmd_mux</code> 会在 <code>high_timeout</code> 内
+    <b>持续重发最后一条指令</b>，而 launch 把这个值硬编码成了 <b>0.5 s</b>（yaml 里写的 0.12 被覆盖，改 yaml 无效）。
+    实际转弯时长 ≈ 0.88 s，转过约 <b>65°</b> 而不是设计的 28°。后果：压完数字后车头明显偏出，需要 P 控制拉回来，
+    期间极易压线（+15 s）。<br>
+    <b>建议</b>：把 launch 里的 <code>high_timeout</code> 改成 0.12–0.15，或让 <code>detection</code> 在结束转弯时主动发一条零速。</p>
+  </div>
+
+  <div class="issue s1">
+    <div class="ih"><span class="sev a">A2</span><b>岔路探针等于没有，且阈值量级错了</b><span class="where">line_follower_node.cpp:159, 698</span></div>
+    <p><code>enable_intersection_probe=false</code>（未启用），且 <code>intersection_dark_ratio_threshold=1.0</code>
+    要求顶部横带<b>零个白像素</b>才触发——真实画面几乎不可能满足。<br>
+    <b>影响</b>：所有"岔路"行为实际上完全依赖白路的连通性，没有任何"识别到路口 → 主动转向"的能力。
+    如果赛题的岔路需要选支，这一块是空的。<br>
+    <b>建议</b>：先明确"岔路是否需要选向"。不需要 → 把这段死代码和参数删掉，减少误导；需要 → 阈值改 0.6–0.9 并打开。</p>
+  </div>
+
+  <div class="issue s1">
+    <div class="ih"><span class="sev a">A3</span><b>两张地图的调参文件只差一个速度值</b><span class="where">tools/config/fork.yaml vs roundabout.yaml</span></div>
+    <p>逐项对比，<b>唯一差异是 <code>target_speed</code>：0.4（岔路）vs 0.3（环岛）</b>。
+    没有任何环岛专用参数、没有环岛专用代码路径。<br>
+    <b>影响</b>：对外说"针对环岛做了专门调参"与代码不符；评委比对源码时会对不上。
+    同时也说明环岛目前是"靠白路连通性硬跑"，风险集中在这一个场景。<br>
+    <b>建议</b>：要么老实说明"环岛靠连通性 + 降速通过"，要么补真正的环岛逻辑（识别环岛入口 → 固定弧线绕行）。</p>
+  </div>
+
+  <div class="issue s1">
+    <div class="ih"><span class="sev a">A4</span><b>下位机没有指令超时保护</b><span class="where">src/rdkx5.md:177-190；wheeltec_robot.cpp 全篇</span></div>
+    <p>固件收到速度指令后会一直执行，直到下一条。上位机崩溃 = 车失控。<br>
+    <b>现状</b>：靠 <code>tools/safety_node.py</code>（0.3 s 静默 → 零速）兜底，但它同样依赖上位机活着。<br>
+    <b>建议</b>：加物理急停（继电器串联驱动电源 / 遥控接收机接管）。这是唯一能防"整机死机"的手段。</p>
+  </div>
+
+  <div class="issue s1">
+    <div class="ih"><span class="sev a">A5</span><b>相机话题默认值与实际不一致</b><span class="where">line_follower_node.cpp:122</span></div>
+    <p>节点默认订阅 <code>/ascamera/camera_publisher/rgb/image0</code>（原厂相机），实际由 yaml 改成 <code>/image_raw</code>。
+    单独 <code>ros2 run</code> 起节点会<b>一帧都收不到</b>，而日志只反复打印 "not started"，很难定位。<br>
+    <b>建议</b>：把代码默认值改成 <code>/image_raw</code>，或在 README 顶部用红字标注"必须走 launch"。</p>
+  </div>
+
+  <div class="issue s1">
+    <div class="ih"><span class="sev a">A6</span><b>旧启动脚本写死了不存在的路径</b><span class="where">src/scripts/start_camera_yolo_car.sh:33,51,67</span></div>
+    <p>脚本里是 <code>/home/sunrise/ws_rdkx5</code>，当前工作区是 <code>ws_rdkx5_1</code>。直接执行必定失败，
+    但它看起来"像是"官方启动脚本，容易在赛前慌乱时被误用。</p>
+  </div>
+
+  <h3>B 类 · 会误导读代码 / 改参数的人</h3>
+
+  <div class="issue s2">
+    <div class="ih"><span class="sev b">B1</span><b>文档若写"PID 循迹"与代码不符</b><span class="where">line_follower_node.cpp:745</span></div>
+    <p>只有 P 项。没有积分、没有微分、没有抗饱和。答辩时被问到"你的 D 项怎么处理的"会很难看。<br>
+    <b>建议</b>：主动说明"为什么选纯 P"（噪声放大 + 积分饱和 + 慢速场景），这反而是加分项。</p>
+  </div>
+
+  <div class="issue s2">
+    <div class="ih"><span class="sev b">B2</span><b>存在 33.8 KB 未编译的死代码</b><span class="where">line_follower_digit_node.cpp（未在 CMakeLists 中）</span></div>
+    <p>它包含了"巡线 + 数字识别"合一的旧实现，但没有被编译、也没有被任何 launch 引用。功能已被
+    <code>detection_turn_controller</code> + <code>cmd_mux</code> 取代。评委翻源码时容易误以为有两套逻辑。</p>
+  </div>
+
+  <div class="issue s2">
+    <div class="ih"><span class="sev b">B3</span><b>三个自定义 msg 全部无人使用</b><span class="where">wheeltec_robot_msg/msg/{Data,Supersonic}.msg、turn_on_wheeltec_robot/msg/Position.msg</span></div>
+    <p><code>distance_publisher</code> 只声明未创建，<code>Publish_distance()</code> 未实现 —— <b>超声波话题实际不存在</b>。
+    但 msg 文件和声明都在，看上去像"有超声波能力"。</p>
+  </div>
+
+  <div class="issue s2">
+    <div class="ih"><span class="sev b">B4</span><b>改了不生效的参数</b><span class="where">cmd_mux_node.cpp（无 declare）/ base_serial.launch.py:18-28</span></div>
+    <p><code>session_cooldown: 2.0</code> 在 yaml 里有、代码里没声明；launch 传给底盘节点的
+    <code>cmd_vel</code>、<code>akm_cmd_vel</code>、<code>product_number</code> 也都没声明。
+    改这些参数<b>不会有任何效果，也不会报错</b>——最消耗调试时间的那类坑。</p>
+  </div>
+
+  <div class="issue s2">
+    <div class="ih"><span class="sev b">B5</span><b>参数改动是否需要重启，没有统一规则</b><span class="where">line_follower_node.cpp 多处 get_parameter</span></div>
+    <p>约 20 个参数是<b>每帧热读</b>（红锥、弯道、丢线相关），其余 70 多个是<b>构造时快照</b>。
+    面板保存参数后必须重启 ④ 号进程才能全部生效，但界面上没有提示。</p>
+  </div>
+
+  <div class="issue s2">
+    <div class="ih"><span class="sev b">B6</span><b>GUI 面板的"保存"会覆盖比赛配置</b><span class="where">tools/panel/server.py:285-323</span></div>
+    <p>保存时直接 <code>yaml.safe_dump</code> 重写 <code>tools/config/&lt;map&gt;.yaml</code>（先备份 .bak）。
+    如果赛前在面板上随手改了一下再保存，比赛用的就是改过的值，而且<b>备份只有一份</b>，第二次保存会覆盖第一次的备份。</p>
+  </div>
+
+  <h3>C 类 · 代码卫生</h3>
+
+  <div class="issue s3">
+    <div class="ih"><span class="sev c">C1</span><b>关键常量写死，不是参数</b><span class="where">line_follower_node.cpp:1209, 1224, 1285-1289, 1409</span></div>
+    <p>每列 30% 白像素、通道最小宽 20 px、near/far 带位置、7:3 权重——这四个决定了"看得懂不懂路"的核心量，
+    全都不在 yaml 里，改一次要重新编译。换场地/换镜头高度时，它们比那 90 个参数更该先调。</p>
+  </div>
+
+  <div class="issue s3">
+    <div class="ih"><span class="sev c">C2</span><b>代码默认值与 yaml 值不一致</b><span class="where">yellow_area_ratio_threshold、line_lost_forward_speed、high_timeout</span></div>
+    <p>例如 <code>line_lost_forward_speed</code>：代码默认 0.06，yaml 是 0.3（<b>5 倍</b>）。
+    只看代码会严重低估丢线时的危险程度。</p>
+  </div>
+
+  <div class="issue s3">
+    <div class="ih"><span class="sev c">C3</span><b>未启用的节点仍留在包里</b><span class="where">detection_listener、image_resizer_node</span></div>
+    <p>编译了、装了，但两个 launch 都不启动。属于调试残留，可以删。</p>
+  </div>
+
+  <div class="issue s3">
+    <div class="ih"><span class="sev c">C4</span><b>全局变量 + 单文件 1800 行</b><span class="where">line_follower_node.cpp:1854 行</span></div>
+    <p><code>g_motion</code>、<code>g_curve_assist</code>、<code>g_red_avoid</code> 是文件级全局状态，
+    在回调间传递。加了多线程执行器就会出竞态；目前靠"默认单线程执行器"侥幸安全。</p>
+  </div>
+</section>
+
+<!-- ============ 14 ============ -->
+<section class="sec" id="s14">
+  <div class="sechead">
+    <div class="kicker">14 / 附录 B</div>
+    <h2>调参速查：症状 → 改哪个</h2>
+    <p class="lead">按"看到的现象"查，不要按"参数名字"查。改一个，跑一次，记一次。</p>
+  </div>
+
+  <table>
+    <thead><tr><th style="width:230px">现象</th><th style="width:230px">最可能的原因</th><th>先动哪个</th></tr></thead>
+    <tbody>
+      <tr><td>直道左右画龙、车头抖</td><td>P 太硬，或近处带噪声大</td><td><code>kp</code> 往下（2.45→1.8）；无效则 <code>gaussian_kernel</code> 5→7</td></tr>
+      <tr><td>入弯晚，切内道压线</td><td>看得太近 / 减速不够</td><td><code>roi_top_ratio</code> 调小（0.65→0.55），或 <code>speed_gain_damping</code> 上调</td></tr>
+      <tr><td>弯道冲出去</td><td>速度太快，横摆跟不上</td><td><code>target_speed</code> 降 0.05；再看 <code>max_yaw_rate</code> 是否被底盘限制</td></tr>
+      <tr><td>过岔路口被拽向支路</td><td>两条白路被形态学连成一条 / 通道选错</td><td><code>morph_iterations</code> 2→1；<code>roi_top_ratio</code> 调大（看近点）</td></tr>
+      <tr><td>黄线没停（+15 s）</td><td>阈值太高 / 光照偏黄</td><td><code>yellow_area_ratio_threshold</code> 0.02→0.012；<code>yellow_v_min</code> 120→90</td></tr>
+      <tr><td>地面偏黄导致误停</td><td>黄色判定太宽</td><td><code>yellow_s_min</code> 80→110；<code>yellow_v_min</code> 上调</td></tr>
+      <tr><td>红锥绕得太猛反而压线</td><td>斥力过大 / 走廊太宽</td><td><code>red_repulsion_gain</code> 1.5→1.0；<code>red_corridor_half_width_ratio</code> 0.35→0.28</td></tr>
+      <tr><td>红锥完全没反应</td><td>投票没过 / 走廊判定太严</td><td><code>red_vote_frames</code> 3→2；<code>red_near_ratio</code> 0.38→0.30</td></tr>
+      <tr><td>数字压不到</td><td>转得太晚或太短</td><td><code>y_align_tolerance</code> 0.01→0.02；<code>turn_duration</code> 0.38→0.5</td></tr>
+      <tr><td>压完数字后甩出赛道</td><td><b>mux 的超时过长（A1）</b></td><td>改 launch 的 <code>high_timeout</code> 0.5→0.12，这一条比调任何 P 都有效</td></tr>
+      <tr><td>丢线后直冲撞墙</td><td>丢线速度太高</td><td><code>line_lost_forward_speed</code> 0.3→0.1；<code>line_lost_stop_time</code> 0.8→0.5</td></tr>
+      <tr><td>参数改了没反应</td><td>改错文件 / 需要重启 / 参数未声明</td><td>确认改的是 <code>tools/config/*.yaml</code>；重启 ④；查第 13 节 B4</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box tip">
+    <span class="lbl">调参的纪律</span>
+    <p><b>一次只改一个，改完记下前后值 + 现象。</b>这套系统有 90 个参数，同时改三个，你永远不知道是哪个起的作用。
+    另外：<b>先确认参数真的被读到了</b>——节点启动时会打印一行 <code>[DEC] param effective ...</code>，
+    里面是 kp / target_speed / max_yaw_rate / roi 的实际生效值，<b>先对一眼再开始调</b>。</p>
+  </div>
+</section>
+
+<!-- ============ 15 ============ -->
+<section class="sec" id="s15">
+  <div class="sechead">
+    <div class="kicker">15 / 附录 C</div>
+    <h2>文件地图与术语表</h2>
+  </div>
+
+  <h3>动手修改时该去哪</h3>
+  <table>
+    <thead><tr><th style="width:400px">文件</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td><code>tools/config/fork.yaml</code><br><code>tools/config/roundabout.yaml</code></td><td><b>比赛唯一生效的参数文件</b>。90% 的调参在这里。</td></tr>
+      <tr><td><code>line_follower_node.cpp</code></td><td>巡线 + 黄线 + 红锥 + 丢线，1854 行，全车最重要也最长的文件。</td></tr>
+      <tr><td><code>detection_turn_controller.cpp</code></td><td>数字对齐与转向，320 行，逻辑最清晰。</td></tr>
+      <tr><td><code>cmd_mux_node.cpp</code></td><td>三路仲裁，234 行，读它 5 分钟就能懂优先级。</td></tr>
+      <tr><td><code>wheeltec_robot.cpp</code></td><td>串口协议。改底盘/波特率/帧格式才需要碰。</td></tr>
+      <tr><td><code>tools/start.sh</code></td><td>启动顺序与守护。加节点、改等待条件在这里。</td></tr>
+      <tr><td><code>tools/panel/</code></td><td>Web 面板：看双路视频、改参数、急停。</td></tr>
+    </tbody>
+  </table>
+
+  <h3>术语</h3>
+  <dl class="kv">
+    <dt>ROI</dt><dd>Region of Interest，感兴趣区域。这里指"只看画面中间那一横条"。</dd>
+    <dt>HSV</dt><dd>色相/饱和度/明度。比 RGB 更适合按"颜色"切分，因为白色 = 低饱和 + 高明度，与亮度解耦。</dd>
+    <dt>Twist</dt><dd>ROS 标准速度消息：<code>linear.x</code> 前后 m/s，<code>angular.z</code> 自转 rad/s（<b>逆时针为正</b>）。</dd>
+    <dt>阿克曼</dt><dd>汽车式转向：两个前轮转角不同，绕同一个圆心转。特点是<b>不能原地转</b>，必须有速度才能转向。</dd>
+    <dt>deadman / 看门狗</dt><dd>持续收心跳，收不到就自动刹车。本项目的 <code>safety_node</code> 就是。</dd>
+    <dt>横摆角速度</dt><dd>就是 <code>angular.z</code>，车头绕竖轴旋转的快慢，单位 rad/s。和方向盘角度不是一回事。</dd>
+    <dt>转弯半径</dt><dd><code>r = v / ω</code>。同样打满方向，越快半径越大；想在小场地拐小弯，只能减速。</dd>
+  </dl>
+
+  <footer>
+    <p>本文档所有参数值、行号、话题名均取自 <code>ws_rdkx5_1</code> 工作区当前代码与 <code>tools/config/fork.yaml</code>。<br>
+    单一 HTML 文件 · 无外部依赖 · 断网可用 · 可直接发给他人。</p>
+  </footer>
+</section>
+
+</main>
+</div>
+
+<script>
+/* ========== 1. 代码高亮 ========== */
+(function(){
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function inline(s){
+    return s.replace(/("(?:[^"\\]|\\.)*")|\b(if|else|for|while|return|const|auto|double|int|bool|void|struct|class|public|private|constexpr|static|this|true|false|nullptr|def|import|from|self|None|True|False|let|var|function)\b|\b(\d+\.?\d*)\b/g,
+      (m,str,kw,num)=>{
+        if(str) return '<span class="s">'+str+'</span>';
+        if(kw)  return '<span class="k">'+kw+'</span>';
+        return '<span class="n">'+num+'</span>';
+      });
+  }
+  document.querySelectorAll('pre code').forEach(el=>{
+    const lang = el.dataset.lang || 'cpp';
+    const raw = el.textContent;
+    const cRe = (lang==='cpp'||lang==='js') ? /(\/\/[^\n]*)/g : /(#[^\n]*)/g;
+    const parts = raw.split(cRe);
+    let out = '';
+    parts.forEach((p,i)=>{
+      if(i%2===1){ out += '<span class="c">'+esc(p)+'</span>'; }
+      else { out += inline(esc(p)); }
+    });
+    el.innerHTML = out;
+  });
+})();
+
+/* ========== 2. 滚动进度 + 目录高亮 ========== */
+(function(){
+  const prog = document.getElementById('prog');
+  const links = [...document.querySelectorAll('nav a')];
+  const secs = links.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  function onScroll(){
+    const h = document.documentElement;
+    const p = h.scrollTop / (h.scrollHeight - h.clientHeight) * 100;
+    prog.style.width = p + '%';
+    let idx = 0;
+    const y = h.scrollTop + 120;
+    secs.forEach((s,i)=>{ if(s.offsetTop <= y) idx = i; });
+    links.forEach((a,i)=>a.classList.toggle('on', i===idx));
+  }
+  document.addEventListener('scroll', onScroll, {passive:true});
+  onScroll();
+})();
+
+/* ========== 3. 节点图交互 ========== */
+(function(){
+  const INFO = {
+    camera:{t:'camera.py · 眼睛',
+      h:'<b>角色：</b>唯一的信息来源。V4L2 打开 <code>/dev/video0</code>，用 MJPG 格式吃 640×480@30 帧，转成 ROS 的 <code>sensor_msgs/Image</code> 发布出去。<br><b>输入：</b>USB 摄像头（无 ROS 输入）<br><b>输出：</b><code>/image_raw</code> · Image · 30 Hz<br><b>源码：</b><code>src/camera/camera.py</code>（91 行）<br><b>注意：</b>它一挂，下游全部走"丢线"分支，车会以 0.3 m/s 直冲。'},
+    start:{t:'start_toggle_node · 发车开关',
+      h:'<b>角色：</b>防抢跑。启动后 <code>line_follower</code> 默认只发零速，直到收到 <code>true</code>。<br><b>输入：</b>键盘空格<br><b>输出：</b><code>line_follower/start_cmd</code> · Bool · <b>10 Hz 持续发</b><br><b>为什么持续发：</b>话题没有 latched 语义，后启动的订阅者收不到历史消息。<br><b>源码：</b><code>start_toggle_node.cpp</code>（约 60 行）'},
+    lf:{t:'line_follower_node · 主控制器',
+      h:'<b>角色：</b>全车的大脑，也是单点故障。做四件事：找白路、算误差、跑 P 控制、处理黄线与红锥。<br><b>输入：</b><code>/image_raw</code>、<code>start_cmd</code><br><b>输出：</b><code>/cmd_vel_follower</code>、<code>/cmd_vel_stop</code>、<code>centroid</code>、<code>track_state</code>、<code>debug_image</code><br><b>频率：</b>跟随图像 30 Hz<br><b>源码：</b><code>line_follower_node.cpp</code>（1854 行）'},
+    yolo:{t:'bpu_yolov8_node · 数字识别',
+      h:'<b>角色：</b>在 BPU 上跑 YOLOv8，找出画面里的数字 1–8。<br><b>输入：</b><code>/image_raw</code><br><b>输出：</b><code>/hobot_dnn_detection</code>（PerceptionTargets，含 bbox 与置信度）、<code>/yolo_detection_image</code>（可视化）<br><b>源码：</b><code>src/yolov8/bpu_yolov8_node.py</code><br><b>注意：</b>它<b>不做决策</b>，只报"哪有个数字、多大把握"。'},
+    det:{t:'detection_turn_controller · 数字转向',
+      h:'<b>角色：</b>判断"这个数字我快压到了吗"，是就朝它打一把方向。<br><b>输入：</b><code>hobot_dnn_detection</code>、<code>centroid</code>（知道路在哪）、<code>track_state</code>（遇黄线重置）<br><b>输出：</b><code>/cmd_vel_detection</code> · 50 ms 定时发<br><b>关键：</b>转向只看数字的 <b>x 相对位置</b>，不看它是几号。所以它是在"瞄准压线"，不是在"认路牌"。<br><b>源码：</b><code>detection_turn_controller.cpp</code>（320 行）'},
+    mux:{t:'cmd_mux_node · 仲裁',
+      h:'<b>角色：</b>三路抢一个方向盘，它来决定听谁的。<br><b>输入：</b><code>/cmd_vel_stop</code>（最高）、<code>/cmd_vel_detection</code>、<code>/cmd_vel_follower</code><br><b>输出：</b><code>/cmd_vel</code>（唯一被底盘接受的）<br><b>规则：</b>stop 在 0.5 s 内有效就独占；否则 detection 在 <code>high_timeout</code> 内独占；否则巡线。<br><b>源码：</b><code>cmd_mux_node.cpp</code>（234 行）'},
+    robot:{t:'wheeltec_robot_node · 底盘驱动',
+      h:'<b>角色：</b>把 Twist 塞进串口，同时把传感器数据读回来。<br><b>输入：</b><code>/cmd_vel</code> · Twist<br><b>输出：</b><code>/odom</code>、<code>/imu/data_raw</code>、<code>/PowerVoltage</code><br><b>串口：</b><code>/dev/wheeltec_controller</code> · 115200 8N1 · 下行 11 字节 / 上行 24 字节<br><b>源码：</b><code>wheeltec_robot.cpp</code>'},
+    hw:{t:'STM32 下位机 + 阿克曼底盘',
+      h:'<b>角色：</b>真正让轮子转的东西。上位机只给它"目标速度"，它自己算舵机角度和电机 PWM。<br><b>协议：</b>11 字节下行（0x7B 开头、0x7D 结尾、BCC 异或校验），速度值 ×1000 转定点。<br><b>缺陷：</b>固件<b>没有指令超时保护</b>——上位机死了它还会按最后一条指令一直跑。<br><b>源码：</b>闭源，无源码。'},
+    safe:{t:'safety_node · 看门狗',
+      h:'<b>角色：</b>补下位机那个缺陷。20 Hz 检查三路速度指令，超过 0.3 s 没更新就自己发零速。<br><b>输入：</b>监听 <code>/cmd_vel_follower</code>、<code>/cmd_vel_detection</code>、<code>/cmd_vel_stop</code><br><b>输出：</b><code>/cmd_vel</code>（与 mux 竞争，正常情况下 mux 一直在发，轮不到它）<br><b>源码：</b><code>tools/safety_node.py</code>'},
+    ekf:{t:'ekf / imu_filter · 旁路',
+      h:'<b>角色：</b>把轮速里程计和 IMU 融合成 <code>/odom_combined</code>。<br><b>重要：</b><b>巡线完全不用它</b>。整套控制是纯视觉的，没有任何闭环定位。它只服务于 rviz 观察和日志复盘。<br><b>含义：</b>这意味着"跑丢了自己在哪"对控制没有影响——也意味着系统无法记住路线，每帧都从零开始判断。'}
+  };
+  const EDGES = {
+    camera:['cam-lf','cam-yolo'], start:['start-lf'], lf:['cam-lf','start-lf','lf-det','lf-mux','lf-stop','mux-robot'],
+    yolo:['cam-yolo','yolo-det'], det:['lf-det','yolo-det','det-mux'], mux:['lf-mux','lf-stop','det-mux','mux-robot','mux-safe'],
+    robot:['mux-robot','safe-robot','robot-hw','hw-robot','robot-ekf'], hw:['robot-hw','hw-robot'],
+    safe:['mux-safe','safe-robot'], ekf:['robot-ekf']
+  };
+  const g = document.getElementById('graph');
+  const ins = document.getElementById('inspect');
+  if(!g) return;
+  let cur = null;
+  g.querySelectorAll('.node').forEach(n=>{
+    n.addEventListener('click', ()=>{
+      const id = n.dataset.n;
+      if(cur === id){ reset(); return; }
+      cur = id;
+      g.classList.add('dim');
+      g.querySelectorAll('.node').forEach(x=>x.classList.remove('hl'));
+      g.querySelectorAll('.edge').forEach(x=>x.classList.remove('hl'));
+      g.querySelectorAll('.elabel').forEach(x=>x.classList.remove('hl'));
+      n.classList.add('hl');
+      (EDGES[id]||[]).forEach(e=>{
+        g.querySelectorAll('[data-e="'+e+'"]').forEach(p=>{
+          p.classList.add('hl');
+          if(p.tagName === 'path') p.setAttribute('marker-end','url(#arh)');
+        });
+      });
+      ins.innerHTML = '<b>'+INFO[id].t+'</b>　—　'+INFO[id].h;
+      ins.style.borderLeft = '3px solid var(--accent)';
+      ins.style.paddingLeft = '12px';
+    });
+  });
+  g.addEventListener('click', e=>{ if(e.target === g || e.target.tagName==='svg') reset(); });
+  function reset(){
+    cur = null; g.classList.remove('dim');
+    g.querySelectorAll('.node').forEach(x=>x.classList.remove('hl'));
+    g.querySelectorAll('.edge').forEach(x=>{
+      x.classList.remove('hl');
+      x.setAttribute('marker-end','url(#ar)');
+    });
+    g.querySelectorAll('.elabel').forEach(x=>x.classList.remove('hl'));
+    ins.innerHTML = '点一下上面的方块 —— 会显示它在整条链路里的位置、输入输出、以及对应的源码文件。';
+    ins.style.borderLeft='none'; ins.style.paddingLeft='0';
+  }
+})();
+
+/* ========== 4. P 控制器演示 ========== */
+(function(){
+  const iErr = document.getElementById('i-err');
+  const iKp  = document.getElementById('i-kp');
+  const iSpd = document.getElementById('i-spd');
+  if(!iErr) return;
+  const oErr = document.getElementById('o-err');
+  const oYaw = document.getElementById('o-yaw');
+  const oSpd = document.getElementById('o-spd');
+  const oRad = document.getElementById('o-rad');
+  const carrot = document.getElementById('carrot');
+  const tgt = document.getElementById('tgt');
+  const cv = document.getElementById('curve');
+  const ctx = cv.getContext('2d');
+
+  const MAXY = 1.5;   // max_yaw_rate, 固定（演示里不开放）
+  function calc(){
+    const e  = +iErr.value / 100;
+    const kp = +iKp.value / 100;
+    const v0 = +iSpd.value / 100;
+    const yawRaw = -kp * e;
+    const yaw = Math.max(-MAXY, Math.min(MAXY, yawRaw));
+    const v   = Math.max(0, Math.min(v0, v0 * (1 - 0.65 * Math.min(1, Math.abs(e)))));
+    const r   = Math.abs(yaw) < 1e-6 ? Infinity : v / Math.abs(yaw);
+    return {e,kp,v0,yawRaw,yaw,v,r};
+  }
+  function render(){
+    const {e,kp,v0,yawRaw,yaw,v,r} = calc();
+    oErr.textContent = (e>=0?'+':'') + e.toFixed(2);
+    oYaw.innerHTML = (yaw>=0?'+':'') + yaw.toFixed(2) + ' <small>rad/s</small>';
+    oSpd.innerHTML = v.toFixed(2) + ' <small>m/s</small>';
+    oRad.innerHTML = (isFinite(r) ? r.toFixed(2) : '∞') + ' <small>m</small>';
+    oRad.style.color = (isFinite(r) && r < 0.3) ? 'var(--bad)' : 'inherit';
+
+    // 目标点：error 映射到 ±120px
+    const tx = 170 + e * 120;
+    tgt.setAttribute('transform','translate('+(tx-170)+',0)');
+    // 车头方向：yaw 正向=左转；SVG rotate 正=顺时针，所以取负
+    const deg = -yaw * 57.2958;
+    carrot.setAttribute('transform','rotate('+deg.toFixed(1)+' 0 -1)');
+    drawCurve(e,kp,yawRaw,yaw);
+  }
+  function drawCurve(e,kp,yawRaw,yaw){
+    const dpr = window.devicePixelRatio || 1;
+    const W = cv.clientWidth || 640, H = 200;
+    cv.width = W*dpr; cv.height = H*dpr; cv.style.height = H+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,W,H);
+
+    const padL=44, padR=14, padT=14, padB=28;
+    const x0=padL, x1=W-padR, y0=padT, y1=H-padB;
+    const X = v => x0 + (v+1)/2*(x1-x0);
+    const Y = v => (y0+y1)/2 - v/(MAXY*1.08)*(y1-y0)/2;
+
+    // 网格
+    ctx.strokeStyle='#e8e3d8'; ctx.lineWidth=1;
+    ctx.font='11px ui-monospace,monospace'; ctx.fillStyle='#9aa0a8';
+    for(let i=-1;i<=1;i+=0.5){
+      ctx.beginPath(); ctx.moveTo(X(i),y0); ctx.lineTo(X(i),y1); ctx.stroke();
+      ctx.fillText(i.toFixed(1), X(i)-10, y1+15);
+    }
+    [-1.5,0,1.5].forEach(v=>{
+      ctx.beginPath(); ctx.moveTo(x0,Y(v)); ctx.lineTo(x1,Y(v)); ctx.stroke();
+      ctx.fillText(v.toFixed(1), 8, Y(v)+4);
+    });
+    // 饱和区底色：|error| > max_yaw_rate/kp 之后，曲线被削平
+    const eSat = MAXY / (kp || 1);
+    if (eSat < 1) {
+      ctx.fillStyle='rgba(194,65,12,.07)';
+      ctx.fillRect(X(eSat), y0, x1-X(eSat), y1-y0);
+      ctx.fillRect(x0, y0, X(-eSat)-x0, y1-y0);
+    }
+
+    // 曲线
+    ctx.strokeStyle='#c2410c'; ctx.lineWidth=2.4; ctx.beginPath();
+    let first=true;
+    for(let px=x0; px<=x1; px+=1){
+      const v = (px-x0)/(x1-x0)*2-1;
+      const yv = Math.max(-MAXY, Math.min(MAXY, -kp*v));
+      const py = Y(yv);
+      first ? (ctx.moveTo(px,py), first=false) : ctx.lineTo(px,py);
+    }
+    ctx.stroke();
+
+    // 当前点
+    const cx = X(e), cy = Y(yaw);
+    ctx.beginPath(); ctx.arc(cx,cy,6,0,7); ctx.fillStyle='#15171c'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx,cy,11,0,7); ctx.strokeStyle='rgba(21,23,28,.25)'; ctx.lineWidth=1.5; ctx.stroke();
+
+    // 标注
+    ctx.fillStyle='#6b7078';
+    ctx.fillText('yaw', 8, 12);
+    ctx.fillText('error', x1-34, H-4);
+    if(Math.abs(yawRaw)>MAXY+1e-6){
+      ctx.fillStyle='#b91c1c';
+      ctx.fillText('已饱和 · kp 再大也不会更快', x0+8, y0+14);
+    }
+  }
+  [iErr,iKp,iSpd].forEach(el=>el.addEventListener('input', render));
+  window.addEventListener('resize', render);
+  render();
+})();
+
+/* ========== 5. 参数总表 ========== */
+(function(){
+  const P = [
+    // [参数, 值, 单位, 作用, 生效]
+    ['image_topic','/image_raw','topic','订阅的图像话题（默认值其实是原厂相机话题）','快照'],
+    ['cmd_vel_topic','/cmd_vel_follower','topic','巡线速度输出。该节点不直接控制底盘','快照'],
+    ['stop_cmd_topic','/cmd_vel_stop','topic','黄线停车专用话题，带 0.5 s 保鲜期','快照'],
+    ['line_centroid_topic','line_follower/centroid','topic','路中心（归一化 0–1），给数字模块用','快照'],
+    ['line_state_topic','line_follower/track_state','topic','tracking / lost / yellow_line_detected','快照'],
+    ['start_topic','line_follower/start_cmd','topic','发车开关','快照'],
+    ['debug_image_topic','line_follower/debug_image','topic','可视化图，给面板看','快照'],
+    ['target_speed','0.4','m/s','直道巡航速度；弯道会按误差自动衰减','快照'],
+    ['max_speed','0.4','m/s','速度上限，等于 target_speed，实际不起额外限制','快照'],
+    ['min_speed','0.0','m/s','速度下限','快照'],
+    ['max_yaw_rate','1.5','rad/s','最大横摆角速度（86°/s），决定最小转弯半径','快照'],
+    ['kp','2.45','-','比例增益。误差×kp 就是想要的角速度','快照'],
+    ['speed_gain_damping','0.65','-','弯道减速系数，误差满格时速度只剩 35%','快照'],
+    ['roi_top_ratio','0.65','比例','从画面 35% 高度开始看（越小看得越远）','快照'],
+    ['roi_bottom_ratio','0.20','比例','砍掉画面底部 20%（车头与反光）','快照'],
+    ['gaussian_kernel','5','px','高斯模糊核，去噪点','快照'],
+    ['binary_threshold','160.0','灰度','仅当 use_white_filter=false 时生效','快照'],
+    ['use_white_filter','true','bool','用 HSV 白色掩膜（推荐），而不是灰度阈值','快照'],
+    ['white_h_low / high','0 / 180','°','白色色调范围（全开，靠 S/V 区分）','快照'],
+    ['white_s_max','45','0–255','饱和度上限，越低越"只认纯白"','快照'],
+    ['white_v_min','80','0–255','亮度下限，同时排除黑边界线','快照'],
+    ['morph_kernel','3','px','形态学核大小','快照'],
+    ['morph_iterations','2','次','闭运算补缝次数，越大越容易把两条路糊成一条','快照'],
+    ['min_contour_area','2500','px²','小于此面积的白色块判为噪声','快照'],
+    ['invert_binary','false','bool','仅灰度模式下反转黑白','快照'],
+    ['use_yellow_filter','true','bool','启用黄线检测','快照'],
+    ['yellow_h_low / high','20 / 40','°','黄色色调范围','快照'],
+    ['yellow_s_min','80','0–255','黄色饱和下限','快照'],
+    ['yellow_v_min','120','0–255','黄色亮度下限','快照'],
+    ['yellow_area_ratio_threshold','0.02','比例','黄像素占 ROI ≥ 2% 判定为看到黄线','快照'],
+    ['yellow_stop_duration','1.0','s','每根黄线停多久','快照'],
+    ['yellow_permanent_count','4','根','第 4 根永久停车（对应赛规）','快照'],
+    ['yellow_clear_frames','10','帧','连续 10 帧无黄色才解除锁存','快照'],
+    ['enable_intersection_probe','false','bool','岔路探针（当前关闭 = 无岔路逻辑）','快照'],
+    ['intersection_band_height','50','px','探针检查顶部多少行','快照'],
+    ['intersection_dark_ratio_threshold','1.0','比例','顶部黑色占比门槛（1.0 几乎不可能触发）','快照'],
+    ['intersection_turn_speed','0.2','m/s','探针触发后的前进速度','快照'],
+    ['intersection_turn_yaw_rate','1.8','rad/s','探针触发后的转向角速度','快照'],
+    ['intersection_turn_duration','2.0','s','探针触发后转多久','快照'],
+    ['intersection_cooldown','2.0','s','两次触发的最小间隔','快照'],
+    ['enable_continuous_curve_assist','true','bool','S 弯（反向连续弯）辅助','热读'],
+    ['reverse_curve_min_error','0.12','归一化','判定反向弯的最小单侧偏差','热读'],
+    ['reverse_curve_threshold','0.35','归一化','near 与 far 的差值门槛','热读'],
+    ['reverse_curve_confirm_frames','3','帧','连续几帧确认进入 S 弯','热读'],
+    ['reverse_curve_clear_frames','4','帧','连续几帧确认退出 S 弯','热读'],
+    ['reverse_curve_speed','0.16','m/s','S 弯中的速度上限','热读'],
+    ['sharp_curve_threshold','0.50','归一化','判定为急弯的偏差阈值','热读'],
+    ['sharp_curve_speed','0.20','m/s','急弯速度上限','热读'],
+    ['enable_red_filter','true','bool','启用红色检测','快照'],
+    ['red_h_low_1 / high_1','0 / 10','°','红色第一段色调（红跨 0 度）','快照'],
+    ['red_h_low_2 / high_2','160 / 180','°','红色第二段色调','快照'],
+    ['red_s_min','90','0–255','红色饱和度下限','快照'],
+    ['red_v_min','70','0–255','红色亮度下限','快照'],
+    ['red_divider_angle_deg','8.0','°','"行驶走廊"张角，决定绕行基准线','快照'],
+    ['red_vote_frames','3','帧','连续几帧方向一致才动手','快照'],
+    ['red_line_aspect_ratio_min','3.0','-','长宽比 ≥3 判为"红线"（否则判为锥）','热读'],
+    ['red_line_min_width_ratio','0.30','比例','红线的最小宽度占比','热读'],
+    ['red_line_fallback_direction','-1','±1','分不清左右时从右边绕','热读'],
+    ['red_line_soft_yaw','0.35','rad/s','红线的避让基础推力','热读'],
+    ['red_line_speed','0.12','m/s','遇红线时的速度','热读'],
+    ['red_cone_area_ratio_threshold','0.0006','比例','红锥最小面积占比','热读'],
+    ['red_cone_min_bbox_width / height','4 / 4','px','红锥最小框尺寸','热读'],
+    ['enable_soft_red_avoidance','true','bool','柔性避障模式（不固定时长，按距离动态）','热读'],
+    ['red_soft_yaw','0.15','rad/s','红锥避让的基础推力','热读'],
+    ['red_repulsion_gain','1.5','-','risk 从 0→1 时推力放大的倍数','热读'],
+    ['red_near_ratio','0.38','画面比例','红锥底部到 38% 高度开始警觉','热读'],
+    ['red_very_close_ratio','0.72','画面比例','到 72% 高度 risk 拉满','热读'],
+    ['red_corridor_half_width_ratio','0.35','画面比例','走廊半宽，锥在此范围内才避','热读'],
+    ['red_soft_curve_yaw_limit','0.15','rad/s','S 弯中限制避让幅度，防止冲出白路','热读'],
+    ['red_lane_keep_min_factor','0.40','比例','risk=1 时仍保留 40% 的巡线转向','热读'],
+    ['red_soft_speed','0.25','m/s','避障时的基准速度','热读'],
+    ['red_min_forward_speed','0.15','m/s','避障速度下限（永不停车）','热读'],
+    ['line_lost_stop_time','0.8','s','丢线多久后把状态标成 LOST','快照'],
+    ['line_lost_forward_speed','0.3','m/s','丢线时的前进速度（代码默认仅 0.06）','热读'],
+    ['line_lost_yaw_hold_factor','0.85','比例','丢线时沿用上一帧转向的 85%','热读'],
+    ['publish_debug_image','true','bool','发布调试图','快照'],
+    ['confidence_threshold','0.1','0–1','数字检测置信度门槛（detection 节点）','快照'],
+    ['frame_window','2','帧','累计几帧触发一次转向','快照'],
+    ['y_align_tolerance','0.01','画面比例','数字与路中心的纵向对齐容差（约 5 px）','快照'],
+    ['turn_cooldown','0.8','s','一次转向后的冷却期','快照'],
+    ['turn_duration','0.38','s','一把方向持续时长（≈28°）','快照'],
+    ['turn_linear','0.20','m/s','转向时的前进速度','快照'],
+    ['yaw_gain','1.6','(rad/s)/归一化','数字偏移量 → 角速度的增益','快照'],
+    ['turn_direction_sign','-1.0','±1','方向取反开关','快照'],
+    ['centroid_timeout','0.5','s','路中心数据的保鲜期','快照'],
+    ['high_topic / low_topic','见 yaml','topic','仲裁的高/低优先级输入（mux 节点）','快照'],
+    ['high_timeout','0.5（launch 覆盖）','s','detection 指令保鲜期。yaml 的 0.12 被 launch 改成 0.5','launch'],
+    ['stop_timeout','0.5','s','停车指令保鲜期','快照'],
+    ['video_device','/dev/video0','设备','摄像头设备节点（camera.py）','启动'],
+    ['serial_baud_rate','115200','bps','底盘串口波特率','快照'],
+    ['usart_port_name','/dev/wheeltec_controller','设备','底盘串口设备（udev 固定名）','快照'],
+    ['odom_frame_id / robot_frame_id','odom / base_footprint','tf','里程计与车体坐标系','快照']
+  ];
+  const tb = document.querySelector('#ptable tbody');
+  const q = document.getElementById('q');
+  const qc = document.getElementById('qc');
+  function rowHtml(p){
+    const hot = p[4]==='热读';
+    return '<tr><td>'+p[0]+'</td><td>'+p[1]+'</td><td>'+p[2]+'</td><td>'+p[3]+'</td>'+
+           '<td><span class="chip'+(hot?' hot':'')+'">'+p[4]+'</span></td></tr>';
+  }
+  function draw(kw){
+    const k = (kw||'').trim().toLowerCase();
+    const list = k ? P.filter(p => p.join(' ').toLowerCase().includes(k)) : P;
+    tb.innerHTML = list.map(rowHtml).join('') || '<tr><td colspan="5" style="color:var(--ink3)">没有匹配的参数</td></tr>';
+    qc.textContent = list.length + ' / ' + P.length;
+  }
+  q.addEventListener('input', e=>draw(e.target.value));
+  draw('');
+})();
+</script>
+</body>
+</html>
