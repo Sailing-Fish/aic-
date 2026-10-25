@@ -28,3 +28,7 @@ Thumbs.db
 
 # 嵌套仓库的上游 .git 备份（未纳入版本管理）
 src/car_ws/src/serial_ros2/.git.upstream-backup/
+
+# 运行产物（start.sh 每次运行生成）
+tools/logs/run_*/
+tools/config/*.bak
