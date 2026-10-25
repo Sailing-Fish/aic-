@@ -32,3 +32,4 @@ src/car_ws/src/serial_ros2/.git.upstream-backup/
 # 运行产物（start.sh 每次运行生成）
 tools/logs/run_*/
 tools/config/*.bak
+tools/logs/latest
