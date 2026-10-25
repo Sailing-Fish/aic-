@@ -1,7 +1,8 @@
 # 环岛地图参数（roundabout）
 # 由 src/line_follow_ws/src/line_follower/config/line_follower_params.yaml 拆出。
 # 注意：三个节点段必须都在，缺段会让对应节点退回代码默认值（见 DESIGN.md R19）。
-# 本文件会被面板改写，参数说明在 tools/panel/params_schema.py。
+# 参数说明在 tools/panel/params_schema.py；面板保存会用 yaml.safe_dump 重写本文件，
+# 所以不要在这里写重要注释（会被冲掉，见 R08）。
 
 line_follower_node:
   ros__parameters:

@@ -1,0 +1,145 @@
+ts_iso,t_rel,source,area,event,kv
+2026-10-21T20:01:42.462,35.463,follow,param,effective,target_speed=0.30 max_speed=0.40 kp=2.45 max_yaw_rate=1.50 roi_top=0.65 roi_bottom=0.20 yellow_stop_dur=1.00 yellow_count=4 red_near=0.38 red_close=0.72 lost_speed=0.30
+2026-10-21T20:01:42.964,35.964,follow,mux,change,active=follower
+2026-10-21T20:01:42.964,35.964,follow,mux,change,active=stop
+2026-10-21T20:04:10.828,183.828,panel,panel,param_write,map=fork target_speed:0.3->0.55 max_speed:0.4->0.55
+2026-10-21T20:05:00.446,233.446,follow,state,change,from=lost to=tracking
+2026-10-21T20:05:00.948,233.948,follow,mux,change,active=follower
+2026-10-21T20:05:02.452,235.453,follow,yellow,stop_begin,count=1/4
+2026-10-21T20:05:02.453,235.453,follow,yellow,temp_stop,count=1/4 dur=1.00
+2026-10-21T20:05:02.453,235.453,follow,state,change,from=tracking to=yellow_line_detected
+2026-10-21T20:05:02.453,235.453,follow,mux,change,active=stop
+2026-10-21T20:05:03.456,236.456,follow,yellow,stop_end,dur=1.01
+2026-10-21T20:05:03.456,236.456,follow,state,change,from=yellow_line_detected to=tracking
+2026-10-21T20:05:03.958,236.958,follow,mux,change,active=follower
+2026-10-21T20:05:04.960,237.961,follow,digit,turn,best=5 conf=0.74 xdiff=+0.33 yaw=-0.52 dur=0.38 lin=0.20 frames=2
+2026-10-21T20:05:04.960,237.961,follow,mux,change,active=detection
+2026-10-21T20:05:05.462,238.462,follow,mux,change,active=follower
+2026-10-21T20:05:12.479,245.479,follow,digit,turn,best=3 conf=0.74 xdiff=-0.01 yaw=+0.02 dur=0.38 lin=0.20 frames=2
+2026-10-21T20:05:12.479,245.479,follow,mux,change,active=detection
+2026-10-21T20:05:13.482,246.482,follow,mux,change,active=follower
+2026-10-21T20:05:13.482,246.483,follow,yellow,stop_begin,count=2/4
+2026-10-21T20:05:13.482,246.483,follow,yellow,temp_stop,count=2/4 dur=1.00
+2026-10-21T20:05:13.482,246.483,follow,state,change,from=tracking to=yellow_line_detected
+2026-10-21T20:05:13.482,246.483,follow,mux,change,active=stop
+2026-10-21T20:05:14.485,247.486,follow,yellow,stop_end,dur=1.00
+2026-10-21T20:05:14.485,247.486,follow,state,change,from=yellow_line_detected to=tracking
+2026-10-21T20:05:14.987,247.988,follow,mux,change,active=follower
+2026-10-21T20:05:26.515,259.516,follow,yellow,stop_begin,count=3/4
+2026-10-21T20:05:26.516,259.516,follow,yellow,temp_stop,count=3/4 dur=1.00
+2026-10-21T20:05:26.516,259.516,follow,state,change,from=tracking to=yellow_line_detected
+2026-10-21T20:05:26.516,259.516,follow,mux,change,active=stop
+2026-10-21T20:05:27.528,260.529,follow,yellow,stop_end,dur=1.01
+2026-10-21T20:05:27.528,260.529,follow,state,change,from=yellow_line_detected to=tracking
+2026-10-21T20:05:28.030,261.030,follow,mux,change,active=follower
+2026-10-21T20:05:41.562,274.562,follow,yellow,stop_begin,count=4/4
+2026-10-21T20:05:41.562,274.563,follow,yellow,final_stop,count=4/4
+2026-10-21T20:05:41.562,274.563,follow,state,change,from=tracking to=yellow_line_detected
+2026-10-21T20:05:41.562,274.563,follow,mux,change,active=stop
+2026-10-21T20:06:22.655,315.656,panel,panel,round_reset,
+2026-10-21T20:06:28.670,321.670,panel,panel,round_reset,
+2026-10-21T20:07:15.274,368.275,panel,panel,restart,name=follow
+2026-10-21T20:07:16.779,369.779,safety,safety,deadman_on,silence=0.33s
+2026-10-21T20:07:17.280,370.281,panel,panel,restart,name=follow
+2026-10-21T20:07:25.298,378.299,follow,param,effective,target_speed=0.55 max_speed=0.55 kp=2.45 max_yaw_rate=1.50 roi_top=0.65 roi_bottom=0.20 yellow_stop_dur=1.00 yellow_count=4 red_near=0.38 red_close=0.72 lost_speed=0.30
+2026-10-21T20:07:27.313,380.314,follow,mux,change,active=follower
+2026-10-21T20:07:27.313,380.314,follow,mux,change,active=stop
+2026-10-21T20:07:27.313,380.314,follow,state,change,from=lost to=tracking
+2026-10-21T20:07:27.314,380.314,safety,safety,deadman_off,last_src=/cmd_vel_stop silence=0.03s
+2026-10-21T20:07:27.815,380.815,follow,mux,change,active=follower
+2026-10-21T20:07:27.815,380.816,follow,mux,change,active=follower
+2026-10-21T20:07:28.317,381.318,follow,param,effective,target_speed=0.55 max_speed=0.55 kp=2.45 max_yaw_rate=1.50 roi_top=0.65 roi_bottom=0.20 yellow_stop_dur=1.00 yellow_count=4 red_near=0.38 red_close=0.72 lost_speed=0.30
+2026-10-21T20:07:28.317,381.318,follow,digit,turn,best=6 conf=0.69 xdiff=-0.23 yaw=+0.36 dur=0.38 lin=0.20 frames=2
+2026-10-21T20:07:28.317,381.318,follow,digit,turn,best=6 conf=0.69 xdiff=-0.23 yaw=+0.36 dur=0.38 lin=0.20 frames=2
+2026-10-21T20:07:28.317,381.318,follow,mux,change,active=detection
+2026-10-21T20:07:28.317,381.318,follow,mux,change,active=detection
+2026-10-21T20:07:28.318,381.318,follow,state,change,from=lost to=tracking
+2026-10-21T20:07:29.321,382.322,follow,mux,change,active=follower
+2026-10-21T20:07:29.321,382.322,follow,mux,change,active=follower
+2026-10-21T20:07:35.337,388.338,follow,mux,change,active=stop
+2026-10-21T20:07:35.337,388.338,follow,mux,change,active=stop
+2026-10-21T20:07:44.360,397.361,follow,digit,turn,best=8 conf=0.30 xdiff=+0.12 yaw=-0.18 dur=0.38 lin=0.20 frames=2
+2026-10-21T20:07:44.361,397.361,follow,digit,turn,best=8 conf=0.30 xdiff=+0.12 yaw=-0.18 dur=0.38 lin=0.20 frames=2
+2026-10-21T20:08:30.487,443.488,panel,panel,restart,name=follow
+2026-10-21T20:08:39.510,452.511,follow,param,effective,target_speed=0.55 max_speed=0.55 kp=2.45 max_yaw_rate=1.50 roi_top=0.65 roi_bottom=0.20 yellow_stop_dur=1.00 yellow_count=4 red_near=0.38 red_close=0.72 lost_speed=0.30
+2026-10-21T20:08:40.012,453.013,follow,mux,change,active=follower
+2026-10-21T20:08:40.012,453.013,follow,mux,change,active=stop
+2026-10-21T20:09:06.577,479.578,panel,panel,param_write,map=fork target_speed:0.55->0.6 max_speed:0.55->0.6
+2026-10-21T20:09:14.596,487.596,panel,panel,restart,name=follow
+2026-10-21T20:09:25.626,498.626,follow,param,effective,target_speed=0.60 max_speed=0.60 kp=2.45 max_yaw_rate=1.50 roi_top=0.65 roi_bottom=0.20 yellow_stop_dur=1.00 yellow_count=4 red_near=0.38 red_close=0.72 lost_speed=0.30
+2026-10-21T20:09:25.626,498.627,follow,mux,change,active=follower
+2026-10-21T20:09:25.626,498.627,follow,mux,change,active=stop
+2026-10-21T20:09:35.657,508.657,panel,panel,restart,name=follow
+2026-10-21T20:09:45.181,518.181,follow,mux,change,active=follower
+2026-10-21T20:09:45.181,518.181,follow,mux,change,active=stop
+2026-10-21T20:09:46.183,519.183,follow,param,effective,target_speed=0.60 max_speed=0.60 kp=2.45 max_yaw_rate=1.50 roi_top=0.65 roi_bottom=0.20 yellow_stop_dur=1.00 yellow_count=4 red_near=0.38 red_close=0.72 lost_speed=0.30
+2026-10-21T20:09:48.188,521.189,safety,safety,deadman_on,silence=0.34s
+2026-10-21T20:09:51.700,524.701,follow,mux,change,active=follower
+2026-10-21T20:09:51.700,524.701,follow,mux,change,active=follower
+2026-10-21T20:09:51.701,524.701,follow,mux,change,active=stop
+2026-10-21T20:09:51.701,524.701,follow,mux,change,active=stop
+2026-10-21T20:09:51.701,524.702,safety,safety,deadman_off,last_src=/cmd_vel_stop silence=0.00s
+2026-10-21T20:10:21.273,554.274,follow,mux,change,active=follower
+2026-10-21T20:10:21.274,554.274,follow,mux,change,active=follower
+2026-10-21T20:10:22.778,555.778,follow,yellow,stop_begin,count=1/4
+2026-10-21T20:10:22.778,555.779,follow,yellow,temp_stop,count=1/4 dur=1.00
+2026-10-21T20:10:22.778,555.779,follow,state,change,from=tracking to=yellow_line_detected
+2026-10-21T20:10:22.778,555.779,follow,mux,change,active=stop
+2026-10-21T20:10:22.778,555.779,follow,mux,change,active=stop
+2026-10-21T20:10:23.780,556.781,follow,yellow,stop_end,dur=1.00
+2026-10-21T20:10:23.781,556.781,follow,state,change,from=yellow_line_detected to=tracking
+2026-10-21T20:10:24.282,557.283,follow,mux,change,active=follower
+2026-10-21T20:10:24.283,557.283,follow,mux,change,active=follower
+2026-10-21T20:10:42.824,575.825,follow,mux,change,active=stop
+2026-10-21T20:10:42.825,575.825,follow,mux,change,active=stop
+2026-10-21T20:11:05.883,598.884,safety,safety,deadman_on,silence=0.34s
+2026-10-21T20:11:09.393,602.393,follow,mux,change,active=follower
+2026-10-21T20:11:09.393,602.393,follow,mux,change,active=follower
+2026-10-21T20:11:09.393,602.393,follow,mux,change,active=stop
+2026-10-21T20:11:09.393,602.394,follow,mux,change,active=stop
+2026-10-21T20:11:09.393,602.394,safety,safety,deadman_off,last_src=/cmd_vel_stop silence=0.02s
+2026-10-21T20:12:01.031,654.032,safety,safety,deadman_on,silence=0.34s
+2026-10-21T20:12:02.536,655.536,follow,mux,change,active=follower
+2026-10-21T20:12:02.536,655.536,follow,mux,change,active=follower
+2026-10-21T20:12:02.536,655.536,follow,mux,change,active=stop
+2026-10-21T20:12:02.536,655.536,follow,mux,change,active=stop
+2026-10-21T20:12:02.537,655.537,safety,safety,deadman_off,last_src=/cmd_vel_stop silence=0.02s
+2026-10-21T20:12:18.074,671.074,panel,panel,round_reset,
+2026-10-21T20:12:28.098,681.099,safety,safety,deadman_on,silence=0.34s
+2026-10-21T20:12:32.112,685.112,panel,panel,param_write,map=fork target_speed:0.6->0.4 max_speed:0.6->0.4
+2026-10-21T20:12:33.115,686.116,panel,panel,restart,name=follow
+2026-10-21T20:12:33.617,686.617,follow,mux,change,active=follower
+2026-10-21T20:12:33.617,686.618,follow,mux,change,active=follower
+2026-10-21T20:12:33.617,686.618,follow,mux,change,active=stop
+2026-10-21T20:12:33.617,686.618,follow,mux,change,active=stop
+2026-10-21T20:12:33.618,686.618,safety,safety,deadman_off,last_src=/cmd_vel_stop silence=0.00s
+2026-10-21T20:12:43.160,696.160,follow,mux,change,active=follower
+2026-10-21T20:12:43.160,696.160,follow,mux,change,active=stop
+2026-10-21T20:12:43.160,696.160,follow,param,effective,target_speed=0.40 max_speed=0.40 kp=2.45 max_yaw_rate=1.50 roi_top=0.65 roi_bottom=0.20 yellow_stop_dur=1.00 yellow_count=4 red_near=0.38 red_close=0.72 lost_speed=0.30
+2026-10-21T20:13:24.271,737.271,follow,state,change,from=lost to=tracking
+2026-10-21T20:13:24.271,737.271,follow,mux,change,active=follower
+2026-10-21T20:13:24.271,737.271,follow,mux,change,active=follower
+2026-10-21T20:13:30.790,743.790,follow,mux,change,active=stop
+2026-10-21T20:13:30.790,743.790,follow,mux,change,active=stop
+2026-10-21T20:13:39.824,752.824,panel,panel,restart,name=follow
+2026-10-21T20:13:42.832,755.832,panel,panel,round_reset,
+2026-10-21T20:13:49.851,762.852,follow,mux,change,active=follower
+2026-10-21T20:13:49.851,762.852,follow,mux,change,active=stop
+2026-10-21T20:13:50.353,763.354,follow,param,effective,target_speed=0.40 max_speed=0.40 kp=2.45 max_yaw_rate=1.50 roi_top=0.65 roi_bottom=0.20 yellow_stop_dur=1.00 yellow_count=4 red_near=0.38 red_close=0.72 lost_speed=0.30
+2026-10-21T20:14:08.401,781.402,follow,state,change,from=lost to=tracking
+2026-10-21T20:14:08.904,781.905,follow,mux,change,active=follower
+2026-10-21T20:14:08.904,781.905,follow,mux,change,active=follower
+2026-10-21T20:14:25.444,798.445,follow,mux,change,active=stop
+2026-10-21T20:14:25.445,798.445,follow,mux,change,active=stop
+2026-10-21T20:14:28.958,801.958,panel,panel,round_reset,
+2026-10-21T20:14:32.467,805.468,panel,panel,estop,
+2026-10-21T20:15:18.589,851.590,follow,mux,change,active=follower
+2026-10-21T20:15:24.103,857.104,follow,mux,change,active=stop
+2026-10-21T20:15:24.605,857.606,safety,safety,deadman_on,silence=0.32s
+2026-10-21T20:15:25.107,858.107,safety,safety,deadman_off,last_src=/cmd_vel_stop silence=0.01s
+2026-10-21T20:15:27.113,860.113,safety,safety,deadman_on,silence=0.33s
+2026-10-21T20:15:27.614,860.615,safety,safety,deadman_off,last_src=/cmd_vel_stop silence=0.01s
+2026-10-21T20:15:29.620,862.620,panel,panel,round_reset,
+2026-10-21T20:15:53.176,886.177,follow,mux,change,active=follower
+2026-10-21T20:15:58.188,891.188,follow,mux,change,active=stop
+2026-10-21T20:16:11.220,904.220,safety,safety,deadman_on,silence=0.34s

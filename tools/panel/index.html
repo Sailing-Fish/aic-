@@ -341,7 +341,7 @@ const EV_CN = {
   'follow_nodes_missing':['节点缺失',   '巡线子节点不见了'],
 };
 
-let logOffset = 0, logFile = 'follow', lastStarted = null;
+let logOffset = 0, logFile = 'follow', lastStarted = null, lastLocked = null;
 let paramsState = null, dirty = false, lastEff = {}, effMismatch = false;
 
 function toast(msg, bad){
@@ -407,8 +407,10 @@ async function pollStatus(){
     // 决策流
     renderFeed(d.events||[]);
 
-    // 锁
-    if(d.started !== lastStarted){ lastStarted = d.started; setLocked(!!d.started); }
+    // 锁：只看 locked（重置/急停会解锁），不看 start_cmd 原始值
+    lastStarted = d.started;
+    const lk = !!d.locked;
+    if(lk !== lastLocked){ lastLocked = lk; setLocked(lk); }
     $('paramTag').textContent = d.params_file ? ('当前 ' + d.params_file) : '-';
     $('logTag').textContent = d.run_id || '-';
   }catch(e){}
@@ -476,7 +478,7 @@ async function loadParams(map){
   });
   markPending();
   $('memo').textContent = '已加载';
-  setLocked(lastStarted===true);
+  setLocked(lastLocked===true);
 }
 
 // 对比 YAML 与节点实际生效值，不一致的行标「待重启」
@@ -563,11 +565,15 @@ $('mask').addEventListener('click',e=>{ if(e.target.id==='mask') $('mask').class
 $('btnReset').addEventListener('click',async()=>{
   const d = await (await fetch('/api/round/reset',{method:'POST'})).json();
   toast(d.ok?d.msg:('失败：'+d.error), !d.ok);
-  if(d.ok){ logOffset=0; $('log').innerHTML=''; }
+  if(d.ok){
+    logOffset=0; $('log').innerHTML='';
+    lastLocked = false; setLocked(false);      // 立刻解锁，不等下一次轮询
+  }
 });
 $('estop').addEventListener('click',async()=>{
   const d = await (await fetch('/api/estop',{method:'POST'})).json();
-  toast(d.ok?'已发送 30 帧零速（约 1.5s）':('失败：'+d.error), !d.ok);
+  toast(d.ok?'已停车，参数已解锁':('失败：'+d.error), !d.ok);
+  if(d.ok){ lastLocked = false; setLocked(false); }
 });
 $('imgDebug').src='/api/stream/debug';
 $('imgYolo').src='/api/stream/yolo';

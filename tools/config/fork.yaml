@@ -7,7 +7,7 @@ line_follower_node:
     start_topic: line_follower/start_cmd
     stop_cmd_topic: /cmd_vel_stop
     line_centroid_topic: line_follower/centroid
-    target_speed: 0.3
+    target_speed: 0.4
     max_speed: 0.4
     min_speed: 0.0
     max_yaw_rate: 1.5

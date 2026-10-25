@@ -1,0 +1,38 @@
+ts_iso,t_rel,source,area,event,kv
+2026-10-21T20:16:52.600,30.601,follow,param,effective,target_speed=0.40 max_speed=0.40 kp=2.45 max_yaw_rate=1.50 roi_top=0.65 roi_bottom=0.20 yellow_stop_dur=1.00 yellow_count=4 red_near=0.38 red_close=0.72 lost_speed=0.30
+2026-10-21T20:16:54.605,32.606,follow,mux,change,active=follower
+2026-10-21T20:16:54.605,32.606,follow,mux,change,active=stop
+2026-10-21T20:18:20.814,118.815,follow,state,change,from=lost to=tracking
+2026-10-21T20:18:21.316,119.316,follow,mux,change,active=follower
+2026-10-21T20:18:22.820,120.820,follow,yellow,stop_begin,count=1/4
+2026-10-21T20:18:22.820,120.821,follow,yellow,temp_stop,count=1/4 dur=1.00
+2026-10-21T20:18:22.820,120.821,follow,state,change,from=tracking to=yellow_line_detected
+2026-10-21T20:18:22.820,120.821,follow,mux,change,active=stop
+2026-10-21T20:18:23.824,121.824,follow,yellow,stop_end,dur=1.00
+2026-10-21T20:18:23.824,121.824,follow,state,change,from=yellow_line_detected to=tracking
+2026-10-21T20:18:24.326,122.326,follow,mux,change,active=follower
+2026-10-21T20:18:24.828,122.828,follow,digit,turn,best=5 conf=0.80 xdiff=+0.40 yaw=-0.64 dur=0.38 lin=0.20 frames=2
+2026-10-21T20:18:24.828,122.828,follow,mux,change,active=detection
+2026-10-21T20:18:25.831,123.831,follow,mux,change,active=follower
+2026-10-21T20:18:32.346,130.347,follow,digit,turn,best=3 conf=0.68 xdiff=+0.19 yaw=-0.31 dur=0.38 lin=0.20 frames=2
+2026-10-21T20:18:32.346,130.347,follow,mux,change,active=detection
+2026-10-21T20:18:32.848,130.849,follow,mux,change,active=follower
+2026-10-21T20:18:33.350,131.350,follow,yellow,stop_begin,count=2/4
+2026-10-21T20:18:33.350,131.350,follow,yellow,temp_stop,count=2/4 dur=1.00
+2026-10-21T20:18:33.852,131.852,follow,state,change,from=tracking to=yellow_line_detected
+2026-10-21T20:18:33.852,131.853,follow,mux,change,active=stop
+2026-10-21T20:18:34.855,132.856,follow,yellow,stop_end,dur=1.03
+2026-10-21T20:18:34.855,132.856,follow,state,change,from=yellow_line_detected to=tracking
+2026-10-21T20:18:35.358,133.358,follow,mux,change,active=follower
+2026-10-21T20:18:44.380,142.380,follow,yellow,stop_begin,count=3/4
+2026-10-21T20:18:44.380,142.380,follow,yellow,temp_stop,count=3/4 dur=1.00
+2026-10-21T20:18:44.380,142.380,follow,state,change,from=tracking to=yellow_line_detected
+2026-10-21T20:18:44.380,142.380,follow,mux,change,active=stop
+2026-10-21T20:18:45.383,143.383,follow,yellow,stop_end,dur=1.04
+2026-10-21T20:18:45.383,143.383,follow,state,change,from=yellow_line_detected to=tracking
+2026-10-21T20:18:45.885,143.886,follow,mux,change,active=follower
+2026-10-21T20:18:58.414,156.414,follow,yellow,stop_begin,count=4/4
+2026-10-21T20:18:58.414,156.414,follow,yellow,final_stop,count=4/4
+2026-10-21T20:18:58.414,156.414,follow,state,change,from=tracking to=yellow_line_detected
+2026-10-21T20:18:58.414,156.414,follow,mux,change,active=stop
+2026-10-21T20:19:19.964,177.965,safety,safety,deadman_on,silence=0.31s

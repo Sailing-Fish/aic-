@@ -50,6 +50,7 @@ class Shared:
         self.lock = threading.Lock()
         self.frames = {'debug': None, 'yolo': None}
         self.started = False
+        self.locked = False       # 参数是否锁定：只在"真正发车"的上升沿置位
         self.track_state = 'unknown'
         self.yellow_count = 0
         self.yellow_permanent = 4
@@ -109,9 +110,15 @@ class PanelNode(Node):
 
     def _on_start(self, msg):
         new_val = bool(msg.data)
-        changed = new_val != self._last_started
+
+        # start_toggle 以 10Hz 重复发布同一个值，这里只认跳变沿。
+        # 否则：急停/重置把面板解成"未发车"后，下一条重复的 true 会立刻把它锁回去。
+        if new_val == self._last_started:
+            return
+        self._last_started = new_val
+
         with SH.lock:
-            if new_val and not SH.started:
+            if new_val:
                 # 上升沿 = 发车 → 新的一轮。
                 # 必须把 last_yellow_ts / track_state 也清掉：
                 # 上一轮永久停车后 state 会一直停在 yellow_line_detected，
@@ -123,11 +130,13 @@ class PanelNode(Node):
                 SH.last_yellow_ts = 0.0
                 SH.track_state = 'unknown'
                 SH.round += 1
-            SH.started = new_val
-        self._last_started = new_val
-        # start_toggle 以 10Hz 发布，只在变化时落盘，别每次都写文件
-        if changed:
-            _write_state_file('started', '1' if new_val else '0')
+                SH.started = True
+                SH.locked = True
+            else:
+                SH.started = False
+                SH.locked = False
+
+        _write_state_file('started', '1' if new_val else '0')
 
     def _on_state(self, msg):
         state = msg.data
@@ -344,8 +353,10 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n).decode('utf-8'))
 
     def _is_running(self):
+        # 这里判的是"参数是否锁定"，不是"发车信号是否为真"。
+        # 急停/重置之后允许改参数，所以用 locked 而不是 started。
         with SH.lock:
-            return SH.started
+            return SH.locked
 
     # ---------- routes
     def do_GET(self):
@@ -403,15 +414,20 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/round/reset':
                 # 只重置面板统计，不动车：车跑出赛道后，把它搬回起点、按空格，
                 # 这里清零是为了让计时从 0 重新计。
+                # 同时解除参数锁定——重置说明这一轮已经结束了。
                 with SH.lock:
                     reset_round_locked()
+                    SH.started = False
+                    SH.locked = False
+                _write_state_file('started', '0')
                 print('[DEC] panel round_reset', flush=True)
-                return self._json({'ok': True, 'msg': '本轮已清零，下一次发车重新计时'})
+                return self._json({'ok': True, 'msg': '本轮已清零，参数已解锁'})
 
             if path == '/api/estop':
                 threading.Thread(target=NODE.estop, daemon=True).start()
                 with SH.lock:
                     SH.started = False
+                    SH.locked = False
                 _write_state_file('started', '0')
                 print('[DEC] panel estop', flush=True)
                 return self._json({'ok': True, 'msg': '已发送 30 帧零速'})
@@ -435,6 +451,7 @@ class Handler(BaseHTTPRequestHandler):
         st = read_status()
         with SH.lock:
             started = SH.started
+            locked = SH.locked
             state = SH.track_state
             yc = SH.yellow_count
             yp = SH.yellow_permanent
@@ -456,6 +473,7 @@ class Handler(BaseHTTPRequestHandler):
             'params_file': st.get('params_file'),
             'procs': st.get('procs', {}),
             'started': started,
+            'locked': locked,
             'track_state': state,
             'yellow': {'count': yc, 'permanent': yp},
             'timer': {'elapsed': round(elapsed, 2), 'running': ts is not None and te is None,
