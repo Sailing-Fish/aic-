@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>白色路面上的 8 个进程 · RDK X5 智能车视觉规划赛 工程全景</title>
+<title>一辆小车如何看着白线跑完赛道 · RDK X5 智能车项目说明</title>
 <style>
 :root{
   --bg:#f5f4ef; --panel:#fffefb; --ink:#15171c; --ink2:#4b5059; --ink3:#858b96;
@@ -33,11 +33,13 @@ nav{
 }
 nav .brand{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
 nav .brand2{font-weight:700;font-size:15px;line-height:1.35;margin-bottom:18px}
-nav a{display:block;color:var(--ink2);text-decoration:none;padding:4px 8px;border-left:2px solid transparent;border-radius:0 4px 4px 0;line-height:1.4}
+nav a{display:block;color:var(--ink2);text-decoration:none;padding:5px 8px 5px 9px;border-left:2px solid transparent;border-radius:0 4px 4px 0;line-height:1.4}
 nav a:hover{color:var(--ink);background:#efeadf}
 nav a.on{color:var(--accent);border-left-color:var(--accent);background:var(--accent-soft);font-weight:600}
 nav a .n{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-right:6px}
 nav a.on .n{color:var(--accent)}
+nav a .d{display:block;font-size:10.8px;color:var(--ink3);line-height:1.4;margin-top:1px;font-weight:400}
+nav a.on .d{color:#a8562e}
 main{padding:0 56px 140px;max-width:calc(var(--w) + 112px)}
 @media(max-width:920px){
   .wrap{grid-template-columns:1fr}
@@ -194,6 +196,43 @@ li{margin:5px 0}
 .kv{display:grid;grid-template-columns:150px 1fr;gap:2px 14px;font-size:14px;margin:14px 0}
 .kv dt{font-family:var(--mono);font-size:12.5px;color:var(--ink3);padding-top:2px}
 .kv dd{margin:0}
+/* ---------- 导读路径 ---------- */
+.paths{display:grid;grid-template-columns:repeat(auto-fit,minmax(212px,1fr));gap:12px;margin:28px 0 6px}
+.path{display:block;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:13px 15px 12px;text-decoration:none;color:inherit;transition:border-color .15s,transform .15s}
+.path:hover{border-color:var(--accent);transform:translateY(-1px)}
+.path em{display:block;font-family:var(--mono);font-style:normal;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+.path b{display:block;font-size:14.5px;color:var(--ink);margin-bottom:3px}
+.path span{display:block;font-size:12.8px;color:var(--ink2);line-height:1.5}
+
+/* ---------- 每章一句话 ---------- */
+.oneline{display:flex;gap:12px;align-items:flex-start;background:var(--accent-soft);border-radius:6px;padding:10px 15px;margin:0 0 20px;font-size:14.6px;color:#6b2b0c;line-height:1.62}
+.oneline b{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);padding-top:4px;white-space:nowrap;flex:none}
+
+/* ---------- 问答 ---------- */
+.qa .q{display:flex;gap:9px;font-weight:700;font-size:16.5px;margin:24px 0 5px}
+.qa .q i{font-family:var(--mono);font-style:normal;color:var(--accent);font-size:12px;padding-top:3px;flex:none}
+.qa p{margin:5px 0 0;color:var(--ink2)}
+
+/* ---------- 名词小抄 ---------- */
+.gloss{border-top:1px solid var(--line);margin:16px 0}
+.gloss .row{display:grid;grid-template-columns:158px 1fr;gap:14px;padding:9px 0;border-bottom:1px solid var(--line2);font-size:13.9px}
+.gloss .t{font-family:var(--mono);font-size:12.6px;font-weight:650;color:var(--ink)}
+.gloss .v{color:var(--ink2)}
+.gloss .v b{color:var(--ink)}
+@media(max-width:640px){.gloss .row{grid-template-columns:1fr;gap:2px}}
+
+/* ---------- 步骤 ---------- */
+.steps{counter-reset:st;margin:20px 0 8px}
+.step{position:relative;padding-left:42px;margin-bottom:18px;counter-increment:st}
+.step::before{content:counter(st);position:absolute;left:0;top:0;width:27px;height:27px;border-radius:50%;background:var(--accent);color:#fff;font-family:var(--mono);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.step b{display:block;font-size:15px;margin-bottom:3px}
+.step p{margin:3px 0;color:var(--ink2);font-size:14.2px}
+
+/* ---------- 检查清单 ---------- */
+.check{list-style:none;padding:0;margin:14px 0}
+.check li{position:relative;padding-left:27px;margin:10px 0;font-size:14.3px;color:var(--ink2)}
+.check li::before{content:"";position:absolute;left:0;top:5px;width:13px;height:13px;border:1.6px solid var(--ink3);border-radius:3px}
+
 footer{border-top:2px solid var(--ink);margin-top:70px;padding-top:18px;font-size:12.5px;color:var(--ink3);font-family:var(--mono)}
 </style>
 </head>
@@ -205,22 +244,24 @@ footer{border-top:2px solid var(--ink);margin-top:70px;padding-top:18px;font-siz
   <div class="brand">2026 AIC · 复赛</div>
   <div class="brand2">白色路面上的<br>8 个进程</div>
   <div class="links">
-    <a href="#s0"><span class="n">00</span>90 秒看懂</a>
-    <a href="#s1"><span class="n">01</span>这场比赛在考什么</a>
-    <a href="#s2"><span class="n">02</span>全局数据流</a>
-    <a href="#s3"><span class="n">03</span>启动时序</a>
-    <a href="#s4"><span class="n">04</span>眼睛：相机</a>
-    <a href="#s5"><span class="n">05</span>找路：图像→误差</a>
-    <a href="#s6"><span class="n">06</span>打方向：P 控制</a>
-    <a href="#s7"><span class="n">07</span>例外规则栈</a>
-    <a href="#s8"><span class="n">08</span>副脑：数字识别</a>
-    <a href="#s9"><span class="n">09</span>抢方向盘</a>
-    <a href="#s10"><span class="n">10</span>落地：串口协议</a>
-    <a href="#s11"><span class="n">11</span>兜底与安全</a>
-    <a href="#s12"><span class="n">12</span>参数总表</a>
-    <a href="#s13"><span class="n">13</span>当前问题</a>
-    <a href="#s14"><span class="n">14</span>调参速查</a>
-    <a href="#s15"><span class="n">15</span>附录</a>
+    <a href="#intro"><span class="n">序</span>完全不懂，从这里开始<span class="d">它由什么组成、在场上要干什么</span></a>
+    <a href="#s0"><span class="n">00</span>90 秒看懂<span class="d">五条规则决定它的全部行为</span></a>
+    <a href="#s1"><span class="n">01</span>这场比赛在考什么<span class="d">赛规是怎么变成代码约束的</span></a>
+    <a href="#s2"><span class="n">02</span>全局数据流<span class="d">8 个程序，谁把什么交给谁</span></a>
+    <a href="#s3"><span class="n">03</span>启动时序<span class="d">为什么必须一个等一个</span></a>
+    <a href="#s4"><span class="n">04</span>眼睛：相机<span class="d">一颗三十块钱的 USB 摄像头</span></a>
+    <a href="#s5"><span class="n">05</span>找路：图像→误差<span class="d">640×480 变成一个 −1~+1 的数</span></a>
+    <a href="#s6"><span class="n">06</span>打方向：P 控制<span class="d">一根弹簧，没有 PID</span></a>
+    <a href="#s7"><span class="n">07</span>例外规则栈<span class="d">黄线 / 红锥 / 岔路 / 丢线</span></a>
+    <a href="#s8"><span class="n">08</span>副脑：数字识别<span class="d">它不是认路，是瞄准压线</span></a>
+    <a href="#s9"><span class="n">09</span>抢方向盘<span class="d">三路指令谁说了算</span></a>
+    <a href="#s10"><span class="n">10</span>落地：串口协议<span class="d">11 个字节变成轮子的转动</span></a>
+    <a href="#s11"><span class="n">11</span>兜底与安全<span class="d">上位机突然死了会怎样</span></a>
+    <a href="#s12"><span class="n">12</span>参数总表<span class="d">全部生效值，可搜索</span></a>
+    <a href="#s13"><span class="n">13</span>当前问题<span class="d">会吃罚时的坑都在这</span></a>
+    <a href="#s14"><span class="n">14</span>调参速查<span class="d">看到什么现象改哪个数</span></a>
+    <a href="#s15"><span class="n">15</span>附录：文件与术语<span class="d">改代码该去哪</span></a>
+    <a href="#s16"><span class="n">16</span>发布到 GitHub<span class="d">上传前要准备什么</span></a>
   </div>
 </nav>
 
@@ -228,26 +269,252 @@ footer{border-top:2px solid var(--ink);margin-top:70px;padding-top:18px;font-siz
 
 <!-- ============ HERO ============ -->
 <section class="hero">
-  <div class="eyebrow">RDK X5 · ROS 2 · 单目视觉 · 阿克曼底盘</div>
-  <h1>这辆车不「认识」路。<br>它只是不停地问：<span style="color:var(--accent)">白色的路，现在偏我左边还是右边？</span></h1>
+  <div class="eyebrow">一份写给「完全不懂」的人的说明书 · 2026 AIC 智能车视觉规划赛</div>
+  <h1>一辆不认识路的小车，<br>怎么只靠一颗摄像头<br>跑完 <span style="color:var(--accent)">5 米长的白色赛道</span>？</h1>
   <p class="lead">
-    这是一个跑在 RDK X5 上的 8 进程 ROS 2 系统。它用一颗摄像头看地面，把"路中心偏离画面中心多少"换算成一个
-    −1 到 +1 的数，再用一根比例弹簧把它变成方向盘转角，交给下位机。整套决策里没有地图、没有定位、没有 PID，
-    也没有"环岛算法"——所有复杂行为，都是从这一个数加若干条优先级规则里长出来的。
+    读这份文档不需要任何机器人或编程基础。里面出现的每个术语，第一次出现时都会翻译成人话。
+    读完之后，你应该能回答三个问题：<b>它在干什么</b>、<b>它为什么这么干</b>、<b>它现在还有哪些毛病</b>。
   </p>
-  <div class="heroline">
-    <span class="tag">8 个进程</span><span class="tag">11 条话题</span><span class="tag">30 fps</span>
-    <span class="tag">640×480</span><span class="tag">115200 8N1</span><span class="tag">0.4 m/s</span>
-    <span class="tag">纯 P 控制</span><span class="tag">零外部依赖</span>
+
+  <div class="paths">
+    <a class="path" href="#intro">
+      <em>看不懂技术，只想搞明白</em>
+      <b>从「序」开始 →</b>
+      <span>三分钟讲清：这车由什么组成、场上要做什么、凭什么不会冲出赛道。</span>
+    </a>
+    <a class="path" href="#s3">
+      <em>要上手跑车 / 调参</em>
+      <b>直接跳第 03 节 →</b>
+      <span>启动顺序、参数在哪、常见的坑。第 14 节是「看到什么现象改哪个数」的速查表。</span>
+    </a>
+    <a class="path" href="#s16">
+      <em>要把项目公开出去</em>
+      <b>直接跳第 16 节 →</b>
+      <span>仓库体检结果、上传前必须补的东西、以及需要你提供哪些信息。</span>
+    </a>
   </div>
 
   <div class="metrics">
-    <div class="metric"><b>2</b><span>张地图 / 各 500×300 cm</span></div>
-    <div class="metric"><b>8</b><span>根黄线 = 8 次必须停稳</span></div>
-    <div class="metric"><b>0.267<small style="font-size:13px"> m</small></b><span>满舵转弯半径（赛规下限 0.3 m）</span></div>
-    <div class="metric"><b>±0.61</b><span>误差达到此值即打满舵</span></div>
-    <div class="metric"><b>11 / 24</b><span>下行 / 上行串口字节数</span></div>
-    <div class="metric"><b>0.3<small style="font-size:13px"> s</small></b><span>上位机失联的救命窗口</span></div>
+    <div class="metric"><b>5 × 3<small style="font-size:13px"> m</small></b><span>场地大小，约一个羽毛球场</span></div>
+    <div class="metric"><b>1</b><span>颗摄像头 = 全部感官</span></div>
+    <div class="metric"><b>30</b><span>每秒看 30 眼（帧）</span></div>
+    <div class="metric"><b>0.4<small style="font-size:13px"> m/s</small></b><span>散步速度的三分之一</span></div>
+    <div class="metric"><b>8</b><span>次必须完全停稳（每图 4 根黄线）</span></div>
+    <div class="metric"><b>8</b><span>个程序同时运行</span></div>
+  </div>
+
+  <div class="box">
+    <span class="lbl">先说结论</span>
+    <p>这套系统里<b>没有地图、没有定位、没有「环岛算法」</b>。它每 33 毫秒看一次画面，把「路偏了我多少」算成一个
+    −1 到 +1 的数字，再按这个数字打方向。<b>所有看起来复杂的行为，都是从这一个数字加几条优先级规则里长出来的。</b>
+    后面 17 节，就是在解释这一句话。</p>
+  </div>
+</section>
+
+<!-- ============ 序 ============ -->
+<section class="sec" id="intro">
+  <div class="sechead">
+    <div class="kicker">序 / 零基础</div>
+    <h2>完全不懂？先花三分钟看这一节</h2>
+    <p class="lead">后面每一节都在讲细节。这一节只回答三个问题：这是什么东西、它由哪些部件拼起来、它凭什么能跑。</p>
+  </div>
+
+  <div class="box plain">
+    <span class="lbl">一句话版本</span>
+    <p>一个学生比赛用的项目：让一辆玩具大小的车，<b>只靠一颗 USB 摄像头</b>，沿着地上一片白色的路自己跑完整条赛道；
+    路上还要做对四件事——<b>看到黄线停稳、绕开红色路锥、不闯红色禁行区、把地上的数字压住</b>。
+    全部代码跑在一块巴掌大的板子上，没有遥控器，比赛过程中人不许干预。</p>
+  </div>
+
+  <h3>它的全部智慧，可以压缩成一个动作</h3>
+  <p>想象你推着购物车往前走，低头只看得到脚前一米宽的一条白色地胶。任务：<b>让车轮始终压在这条地胶的中间。</b>
+  地胶偏左了，你就把车往左带一点；偏右了，就往右带。偏得越多，带得越狠。</p>
+  <p>这辆车做的就是这件事的机械版：它每 33 毫秒看一眼前方地面，算出「<b>路的中心比画面的中心偏了多少</b>」，
+  把这个偏差变成一个转向力度，发给轮子。偏差是 +0.30 就往右带一点，是 −0.50 就往左带得多一些。</p>
+
+  <div class="box tip">
+    <span class="lbl">它不会做的三件事</span>
+    <p><b>① 不认路</b>——地上画着数字，但它只关心数字在哪，不关心是几（第 08 节解释为什么）。<br>
+    <b>② 不记路</b>——没有地图、没有 GPS、没有「我上次来过这里」。<br>
+    <b>③ 不规划</b>——它不知道终点在哪，只知道「此刻该往哪打一点方向」。<br>
+    结果是：<b>每一帧，它都当成第一次看见这条路。</b>好处是简单、稳、不容易崩；坏处是换个场地就得重新调阈值。</p>
+  </div>
+
+  <h3>问题一：它由哪些东西拼起来？</h3>
+  <p>只有四件。从「眼睛」到「脚」，一条线串下来：</p>
+
+  <div class="fig">
+    <svg viewBox="0 0 880 216" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#b7b1a3"/>
+        </marker>
+      </defs>
+      <g font-family="ui-monospace,monospace">
+        <rect x="8" y="52" width="172" height="100" rx="8" fill="#fff" stroke="#0e7490" stroke-width="1.8"/>
+        <text x="24" y="78" font-size="13" font-weight="700" fill="#15171c">① 摄像头</text>
+        <text x="24" y="100" font-size="10.5" fill="#4b5059">640×480 · 每秒 30 张</text>
+        <text x="24" y="118" font-size="10.5" fill="#858b96">唯一的感官</text>
+        <text x="24" y="136" font-size="10.5" fill="#858b96">没有雷达 / 没有 GPS</text>
+
+        <path d="M182,102 L212,102" stroke="#b7b1a3" stroke-width="1.8" marker-end="url(#ar2)"/>
+        <text x="182" y="92" font-size="9.5" fill="#6b7078">USB</text>
+
+        <rect x="216" y="38" width="216" height="128" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.8"/>
+        <text x="232" y="64" font-size="13" font-weight="700" fill="#15171c">② RDK X5 板子</text>
+        <text x="232" y="86" font-size="10.5" fill="#4b5059">所谓「上位机」</text>
+        <text x="232" y="106" font-size="10.5" fill="#15803d">8 个程序都在这里跑</text>
+        <text x="232" y="124" font-size="10.5" fill="#858b96">看画面 → 算偏差 → 算方向</text>
+        <text x="232" y="142" font-size="10.5" fill="#858b96">≈ 一块树莓派大小</text>
+        <text x="232" y="158" font-size="10.5" fill="#858b96">脑子里没有任何地图</text>
+
+        <path d="M434,102 L464,102" stroke="#b7b1a3" stroke-width="1.8" marker-end="url(#ar2)"/>
+        <text x="430" y="92" font-size="9.5" fill="#6b7078">串口</text>
+        <text x="424" y="120" font-size="9" fill="#858b96">每 33 ms</text>
+
+        <rect x="470" y="52" width="182" height="100" rx="8" fill="#fff" stroke="#6d28d9" stroke-width="1.8"/>
+        <text x="486" y="78" font-size="13" font-weight="700" fill="#15171c">③ 下位机</text>
+        <text x="486" y="100" font-size="10.5" fill="#4b5059">STM32 单片机</text>
+        <text x="486" y="118" font-size="10.5" fill="#4b5059">把「转多少」翻成</text>
+        <text x="486" y="136" font-size="10.5" fill="#4b5059">舵机角度 + 电机转速</text>
+        <text x="486" y="150" font-size="9.5" fill="#b91c1c">固件闭源，无源码</text>
+
+        <path d="M654,102 L684,102" stroke="#b7b1a3" stroke-width="1.8" marker-end="url(#ar2)"/>
+
+        <rect x="690" y="38" width="180" height="128" rx="8" fill="#fff" stroke="#c2410c" stroke-width="1.8"/>
+        <text x="706" y="64" font-size="13" font-weight="700" fill="#15171c">④ 车体</text>
+        <text x="706" y="86" font-size="10.5" fill="#4b5059">阿克曼底盘</text>
+        <text x="706" y="106" font-size="10.5" fill="#4b5059">后轮 2 个电机驱动</text>
+        <text x="706" y="124" font-size="10.5" fill="#4b5059">前轮 1 个舵机转向</text>
+        <text x="706" y="142" font-size="10.5" fill="#858b96">像汽车：不能原地转</text>
+        <text x="706" y="158" font-size="10.5" fill="#858b96">车长约 30 cm</text>
+
+        <text x="8" y="202" font-size="10.5" fill="#858b96">↑ 左边负责「想」，右边负责「动」。上位机永远不知道轮子实际转了多少度——它只是下命令。</text>
+      </g>
+    </svg>
+    <div class="figcap">图 序-1　全车只有这四件东西。注意中间那条分工线：<b>想和动是分开的</b>，所以换底盘、换轮胎时，上位机的代码一行都不用改。</div>
+  </div>
+
+  <h3>问题二：它要在什么样的场地上跑？</h3>
+  <p>场地是一块 5 米 × 3 米的白底，用黑线画出可以走的通道。所有「该做什么」都画在这块地上：</p>
+
+  <div class="fig">
+    <svg viewBox="0 0 880 400" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <clipPath id="fc"><rect x="60" y="30" width="760" height="330" rx="8"/></clipPath>
+      </defs>
+
+      <g clip-path="url(#fc)">
+        <rect x="60" y="30" width="760" height="330" fill="#2f3238"/>
+        <g fill="none" stroke="#0a0c10" stroke-width="112" stroke-linejoin="round">
+          <path d="M440,380 L440,255"/>
+          <path d="M440,255 Q440,196 366,180 L316,170 Q300,166 300,150 L300,10"/>
+          <path d="M440,255 Q440,196 514,180 L564,170 Q580,166 580,150 L580,10"/>
+        </g>
+        <g fill="none" stroke="#f5f4ef" stroke-width="100" stroke-linejoin="round">
+          <path d="M440,380 L440,255"/>
+          <path d="M440,255 Q440,196 366,180 L316,170 Q300,166 300,150 L300,10"/>
+          <path d="M440,255 Q440,196 514,180 L564,170 Q580,166 580,150 L580,10"/>
+        </g>
+
+        <path d="M440,326 L392,196 L488,196 Z" fill="#c2410c" opacity="0.10"/>
+
+        <rect x="390" y="300" width="100" height="6" fill="#eab308"/>
+        <rect x="250" y="140" width="100" height="6" fill="#eab308"/>
+        <rect x="530" y="140" width="100" height="6" fill="#eab308"/>
+
+        <path d="M486,246 L499,278 L473,278 Z" fill="#dc2626"/>
+        <rect x="272" y="50" width="56" height="24" fill="none" stroke="#dc2626" stroke-width="2.2" stroke-dasharray="5 3"/>
+        <g>
+          <circle cx="580" cy="86" r="18" fill="none" stroke="#c2410c" stroke-width="2" stroke-dasharray="4 3"/>
+          <text x="580" y="93" font-size="17" font-weight="700" fill="#c2410c" text-anchor="middle">3</text>
+        </g>
+
+        <g>
+          <rect x="422" y="316" width="36" height="26" rx="5" fill="#111318" stroke="#9aa0ad" stroke-width="1.4"/>
+          <rect x="414" y="320" width="8" height="8" rx="2" fill="#111318"/>
+          <rect x="458" y="320" width="8" height="8" rx="2" fill="#111318"/>
+          <rect x="414" y="331" width="8" height="8" rx="2" fill="#111318"/>
+          <rect x="458" y="331" width="8" height="8" rx="2" fill="#111318"/>
+        </g>
+      </g>
+
+      <g font-family="ui-monospace,monospace" font-size="10.5">
+        <text x="352" y="352" fill="#8b929c">↑ 起点</text>
+        <text x="452" y="228" fill="#8b929c">岔路</text>
+        <text x="606" y="72" fill="#c2410c">Bonus 数字</text>
+        <text x="336" y="66" fill="#dc2626">禁行区</text>
+        <text x="508" y="292" fill="#dc2626">红锥</text>
+        <text x="398" y="294" fill="#a16207">黄线</text>
+        <text x="64" y="388" fill="#858b96">黑线之外 = 出界，成绩无效</text>
+      </g>
+    </svg>
+    <div class="legend">
+      <span><b style="color:#8b929c">白</b> = 能走的路</span>
+      <span><b style="color:#0a0c10">黑线</b> = 边界，压出去即无效</span>
+      <span><b style="color:#a16207">黄</b> = 必须完全停稳</span>
+      <span><b style="color:#dc2626">红锥 / 红框</b> = 撞到或闯入要罚时</span>
+      <span><b style="color:#c2410c">数字</b> = 压住可减时</span>
+    </div>
+    <div class="figcap">图 序-2　岔路地图的示意图（真实尺寸 500 × 300 cm）。车从下方出发，经过一个岔路口，最后停在第四根黄线之后。
+    现实中没有画在地面上的箭头，也没有「终点」提示——它只能靠数黄线知道自己跑完了。</div>
+  </div>
+
+  <h3>问题三：它凭什么不会冲出去？</h3>
+  <p>靠两样东西，都很朴素：</p>
+  <ol>
+    <li><b>看得清「现在偏了多少」。</b>它不去算整块白色区域的重心（那样一到岔路口就会被带偏），
+    而是在画面里横向扫两条带子，找「连续、够宽、离我最近的那条白色通道」，再把两条带子的结果按 7:3 加权。
+    这一步的产出只有一个数：<code>error</code>，范围 −1 到 +1。（第 05 节）</li>
+    <li><b>偏多少就反打多少，但打满为止。</b>转角 = −kp × error，超过上限就砍掉。
+    偏得越狠转得越急，同时速度自动降低——因为速度越快，同样的转角画出的弧线越大，越容易冲出赛道。（第 06 节）</li>
+  </ol>
+  <div class="translate">
+    <b>为什么「打满为止」很重要：</b>如果没有上限，偏一点点就会要求一个物理上做不到的转速，
+    车会在直道上左右抽搐（行话叫「画龙」）。加上限，等于承认「车的极限就这么大」，剩下的靠减速补。
+  </div>
+
+  <h3>顺便看一眼：一场比赛从头到尾是什么样</h3>
+  <p>上面讲的是「每一刻它怎么想」。下面是「一整场它怎么过」——这张表基本就是它的全部人生：</p>
+  <table>
+    <thead><tr><th style="width:150px">阶段</th><th>车在做什么</th><th style="width:130px">会不会停</th></tr></thead>
+    <tbody>
+      <tr><td><b>① 上电</b></td><td>8 个程序按固定顺序启动，一个等一个。相机已经在拍，但车一动不动</td><td>不动（零速）</td></tr>
+      <tr><td><b>② 按下空格</b></td><td>收到「可以走了」的信号，开始以 0.4 m/s 前进——这一步之前谁按都没用，防抢跑</td><td>开始动</td></tr>
+      <tr><td><b>③ 直道与弯道</b></td><td>每 33 毫秒看一次地面，偏多少就反打多少；偏得越狠，速度自动降得越低</td><td>一直在动</td></tr>
+      <tr><td><b>④ 第一根黄线</b></td><td>看到一片黄色就刹停，等 1 秒，然后自己起步</td><td><b>停 1 秒</b></td></tr>
+      <tr><td><b>⑤ 遇到红锥</b></td><td>往旁边让一点 + 减速到 0.15–0.25 m/s。越近推得越狠</td><td><b>绝不停</b></td></tr>
+      <tr><td><b>⑥ 看到数字</b></td><td>先不管。等它「马上要被压到」了，才朝它打一把 0.38 秒的方向</td><td>动（减速到 0.2）</td></tr>
+      <tr><td><b>⑦ 第二、三根黄线</b></td><td>各停 1 秒，动作与第一根完全一样</td><td><b>各停 1 秒</b></td></tr>
+      <tr><td><b>⑧ 第四根黄线</b></td><td>永久停车。之后任何指令都盖不住，除非重启程序</td><td><b>永久停</b></td></tr>
+    </tbody>
+  </table>
+  <div class="translate">
+    <b>看出来了吗：</b>整场比赛里，它<b>必须停的只有 4 次</b>，而且第 4 次是最后一次。
+    其余时间，哪怕暂时看不见路、哪怕旁边有障碍，它都会选择继续走——因为赛规里「连续 30 秒没有任何动作」是直接终止比赛，
+    比压线（+15 秒）严重得多。这条规则解释了后面几乎所有的「为什么不干脆停下来」。
+  </div>
+
+  <h3>读之前，先认识这十个词</h3>
+  <p>下面这些词在后面反复出现。不用背，卡住的时候回来查。</p>
+  <div class="gloss">
+    <div class="row"><div class="t">ROS 2</div><div class="v">一套「让多个程序互相传话」的行业标准规矩。可以理解成：<b>给 8 个程序拉了个群，规定好谁往哪个公告板贴消息</b>。</div></div>
+    <div class="row"><div class="t">节点 / node</div><div class="v">一个只干一件事的小程序。本项目的 8 个「进程」就是 8 个节点：一个拍照、一个找线、一个仲裁……</div></div>
+    <div class="row"><div class="t">话题 / topic</div><div class="v">群里的一个<b>公告板</b>。谁都能往上贴消息，谁想听就自己订阅。贴的人不需要知道有几个人在看。</div></div>
+    <div class="row"><div class="t">上位机</div><div class="v">负责「想」的那台小电脑。这里是 RDK X5 板子，跑 Linux 和全部 Python / C++ 代码。</div></div>
+    <div class="row"><div class="t">下位机</div><div class="v">负责「出力」的单片机（STM32）。只认速度指令，不管对错。<b>固件是厂家写死的，看不到源码</b>。</div></div>
+    <div class="row"><div class="t">串口</div><div class="v">几根线组成的通信线。两端按事先约定好的<b>字节格式</b>对话——本项目每帧 11 个字节。</div></div>
+    <div class="row"><div class="t">阿克曼转向</div><div class="v">就是汽车那种转向：前轮打一个角度，车沿圆弧走。<b>不能原地转圈</b>，必须有速度才能拐弯。</div></div>
+    <div class="row"><div class="t">舵机</div><div class="v">一个「能转到指定角度」的电机，负责打方向。后轮则是两个普通电机。</div></div>
+    <div class="row"><div class="t">帧 / Hz</div><div class="v">一帧 = 一张照片，或一次完整的数据。30 Hz = 每秒 30 次，也就是每 33 毫秒一次。</div></div>
+    <div class="row"><div class="t">归一化</div><div class="v">把数值压到固定范围（这里是 −1 到 +1）。好处是<b>换分辨率、换镜头，公式都不用改</b>。</div></div>
+  </div>
+
+  <div class="box">
+    <span class="lbl">接下来怎么读</span>
+    <p>只想搞明白「这车怎么跑的」→ 读 <b>00 → 01 → 05 → 06</b>，约 10 分钟。<br>
+    02 是全局地图，03 是开机顺序，07–11 讲「特殊情况怎么办」，12–14 是给调参的人用的工具页，
+    <b>16 讲怎么把这个项目发布到 GitHub。</b></p>
   </div>
 </section>
 
@@ -258,7 +525,7 @@ footer{border-top:2px solid var(--ink);margin-top:70px;padding-top:18px;font-siz
     <h2>90 秒看懂：它在做什么</h2>
   </div>
 
-  <p>把这辆车当成一个上班的人，它每天只干三件事，按固定优先级排队：</p>
+  <p>把这辆车当成一个上班的人，它每天只干五件事，按固定优先级排队：</p>
 
   <table>
     <thead><tr><th style="width:70px">优先级</th><th style="width:180px">看到什么</th><th>就干什么</th><th style="width:150px">谁负责</th></tr></thead>
@@ -1376,7 +1643,7 @@ if now - last_seen &gt; silence_timeout:      # silence_timeout = 0.30
   </div>
 
   <div class="issue s1">
-    <div class="ih"><span class="sev a">A4</span><b>下位机没有指令超时保护</b><span class="where">src/rdkx5.md:177-190；wheeltec_robot.cpp 全篇</span></div>
+    <div class="ih"><span class="sev a">A4</span><b>下位机没有指令超时保护</b><span class="where">src/rdkx5.md「停车必须按 k」；wheeltec_robot.cpp（串口发送）</span></div>
     <p>固件收到速度指令后会一直执行，直到下一条。上位机崩溃 = 车失控。<br>
     <b>现状</b>：靠 <code>tools/safety_node.py</code>（0.3 s 静默 → 零速）兜底，但它同样依赖上位机活着。<br>
     <b>建议</b>：加物理急停（继电器串联驱动电源 / 遥控接收机接管）。这是唯一能防"整机死机"的手段。</p>
@@ -1389,10 +1656,11 @@ if now - last_seen &gt; silence_timeout:      # silence_timeout = 0.30
     <b>建议</b>：把代码默认值改成 <code>/image_raw</code>，或在 README 顶部用红字标注"必须走 launch"。</p>
   </div>
 
-  <div class="issue s1">
-    <div class="ih"><span class="sev a">A6</span><b>旧启动脚本写死了不存在的路径</b><span class="where">src/scripts/start_camera_yolo_car.sh:33,51,67</span></div>
-    <p>脚本里是 <code>/home/sunrise/ws_rdkx5</code>，当前工作区是 <code>ws_rdkx5_1</code>。直接执行必定失败，
-    但它看起来"像是"官方启动脚本，容易在赛前慌乱时被误用。</p>
+  <div class="issue s3">
+    <div class="ih"><span class="sev c">A6</span><b>旧启动脚本写死了不存在的路径</b><span class="where">src/scripts/start_camera_yolo_car.sh（已在当前工作区删除）</span></div>
+    <p>原脚本里是 <code>/home/sunrise/ws_rdkx5</code>，当前工作区是 <code>ws_rdkx5_1</code>，直接执行必定失败。
+    <b>该文件已在当前工作区删除</b>（提交后生效），此条仅作为历史记录保留——但它说明过一件事：
+    仓库里如果留着"看起来像官方"的失败脚本，很容易在赛前慌乱时被误用。</p>
   </div>
 
   <h3>B 类 · 会误导读代码 / 改参数的人</h3>
@@ -1403,10 +1671,11 @@ if now - last_seen &gt; silence_timeout:      # silence_timeout = 0.30
     <b>建议</b>：主动说明"为什么选纯 P"（噪声放大 + 积分饱和 + 慢速场景），这反而是加分项。</p>
   </div>
 
-  <div class="issue s2">
-    <div class="ih"><span class="sev b">B2</span><b>存在 33.8 KB 未编译的死代码</b><span class="where">line_follower_digit_node.cpp（未在 CMakeLists 中）</span></div>
-    <p>它包含了"巡线 + 数字识别"合一的旧实现，但没有被编译、也没有被任何 launch 引用。功能已被
-    <code>detection_turn_controller</code> + <code>cmd_mux</code> 取代。评委翻源码时容易误以为有两套逻辑。</p>
+  <div class="issue s3">
+    <div class="ih"><span class="sev c">B2</span><b>33.8 KB 未编译的死代码</b><span class="where">line_follower_digit_node.cpp（已在当前工作区删除）</span></div>
+    <p>它包含"巡线 + 数字识别"合一的旧实现，从未进过 <code>CMakeLists</code>、也没被任何 launch 引用，
+    功能已被 <code>detection_turn_controller</code> + <code>cmd_mux</code> 取代。<b>该文件已在当前工作区删除</b>，
+    提交后这项卫生问题即消失。</p>
   </div>
 
   <div class="issue s2">
@@ -1449,8 +1718,9 @@ if now - last_seen &gt; silence_timeout:      # silence_timeout = 0.30
   </div>
 
   <div class="issue s3">
-    <div class="ih"><span class="sev c">C3</span><b>未启用的节点仍留在包里</b><span class="where">detection_listener、image_resizer_node</span></div>
-    <p>编译了、装了，但两个 launch 都不启动。属于调试残留，可以删。</p>
+    <div class="ih"><span class="sev c">C3</span><b>未启用的节点仍留在包里</b><span class="where">detection_listener、image_resizer_node（已在当前工作区删除）</span></div>
+    <p>这两个节点编译了、装了，但两个 launch 都不启动，属于调试残留。<b>当前工作区已删除</b>，
+    <code>CMakeLists.txt</code> 同步修改，提交后即干净。</p>
   </div>
 
   <div class="issue s3">
@@ -1526,11 +1796,198 @@ if now - last_seen &gt; silence_timeout:      # silence_timeout = 0.30
     <dt>转弯半径</dt><dd><code>r = v / ω</code>。同样打满方向，越快半径越大；想在小场地拐小弯，只能减速。</dd>
   </dl>
 
-  <footer>
-    <p>本文档所有参数值、行号、话题名均取自 <code>ws_rdkx5_1</code> 工作区当前代码与 <code>tools/config/fork.yaml</code>。<br>
-    单一 HTML 文件 · 无外部依赖 · 断网可用 · 可直接发给他人。</p>
-  </footer>
+  <h3>读代码时会遇到的词</h3>
+  <dl class="kv">
+    <dt>launch 文件</dt><dd>一份「一次启动多个节点」的配置单。本项目 <code>tools/start.sh</code> 调的就是它。参数也从这里注入。</dd>
+    <dt>colcon / 工作空间</dt><dd>ROS 2 的编译工具。<code>colcon build</code> 把 <code>src/</code> 里的包编译到 <code>build/</code> 和 <code>install/</code>，这两个目录<b>不该进版本库</b>（已被 <code>.gitignore</code> 排除）。</dd>
+    <dt>掩膜 / mask</dt><dd>一张只有黑白的图：把「符合颜色条件的像素」标白，其余标黑。找黄线、找红色都是先做掩膜。</dd>
+    <dt>形态学开/闭运算</dt><dd>对掩膜做的小修补：开运算擦掉孤立白点（去噪），闭运算把断开的白块连起来（补缝）。</dd>
+    <dt>质心</dt><dd>一片白色区域的几何中心。本项目故意<b>不</b>用整块区域的质心，因为岔路口会被拉偏。</dd>
+    <dt>夹紧 / clamp</dt><dd>把一个数限制在上下限之间。<code>clamp(x, -1.5, 1.5)</code> 就是「超过 ±1.5 就按 ±1.5 算」。</dd>
+    <dt>QoS / 易失</dt><dd>ROS 2 消息的投递策略。默认「易失」意味着<b>后订阅的人收不到之前发过的消息</b>——所以发车开关才要 10 Hz 一直发。</dd>
+  </dl>
+
 </section>
+
+<!-- ============ 16 ============ -->
+<section class="sec" id="s16">
+  <div class="sechead">
+    <div class="kicker">16 / 发布</div>
+    <h2>把这个项目放到 GitHub 上</h2>
+    <p class="lead">这一节不是给读代码的人看的，是给「想把仓库公开出去」的人看的。先体检，再决定要补什么、要交什么。</p>
+  </div>
+
+  <div class="oneline">
+    <b>一句话</b>
+    <div>代码已经纳管在 git 里了（123 个文件 / 75 MB），缺的只有三样：<b>一个空的远端仓库、一份 README、一份许可证</b>。
+    没有一样需要改代码。</div>
+  </div>
+
+  <h3>第一步：体检结果</h3>
+  <table>
+    <thead><tr><th style="width:150px">项目</th><th>现状</th><th style="width:190px">判断</th></tr></thead>
+    <tbody>
+      <tr><td><b>版本管理</b></td><td>已 <code>git init</code>，分支 <code>main</code>，5 次提交，工作区已配置身份（Sailing）</td><td>可以，历史干净，不需要重来</td></tr>
+      <tr><td><b>远端仓库</b></td><td><code>git remote -v</code> 为空——<b>还没有连过任何 GitHub 仓库</b></td><td>需要新建一个空仓库</td></tr>
+      <tr><td><b>纳管文件</b></td><td>123 个，合计 <b>75 MB</b></td><td>可以直推，不需要 Git LFS</td></tr>
+      <tr><td><b>最大单文件</b></td><td>16 MB 的整车轮子模型 <code>waffle_base.stl</code>；11 MB 的 YOLO 模型 <code>best_modified_yolov8.bin</code></td><td>都远小于 GitHub 单文件 100 MB 上限</td></tr>
+      <tr><td><b>构建产物</b></td><td><code>build/</code> <code>install/</code> <code>log/</code> 合计约 190 MB，磁盘上共 309 MB</td><td>已被 <code>.gitignore</code> 正确排除，不会上传</td></tr>
+      <tr><td><b>README</b></td><td><b>没有</b></td><td>必须补，否则别人打开只看到一堆 cpp</td></tr>
+      <tr><td><b>许可证</b></td><td><b>没有</b></td><td>建议补。没有许可证 = 默认「保留所有权利」，别人不能合法复用</td></tr>
+      <tr><td><b>赛题文件</b></td><td>根目录 5 个 PDF（赛题、复赛通知、两张地图、视频要求），合计约 4.9 MB</td><td>建议<b>不要公开</b>，见本节末尾</td></tr>
+      <tr><td><b>推送凭据</b></td><td>没装 <code>gh</code> 命令行工具，没有 SSH 公钥</td><td>用 Personal Access Token 最省事</td></tr>
+      <tr><td><b>未提交改动</b></td><td>10 个文件已删除（废弃节点与旧文档）、<code>CMakeLists.txt</code> 已修改</td><td>推送前一起提交掉</td></tr>
+    </tbody>
+  </table>
+
+  <h3>第二步：上传前必须补的三样</h3>
+  <div class="steps">
+    <div class="step">
+      <b>一份 README.md</b>
+      <p>放在根目录。它决定「别人进来 10 秒内知不知道这是什么」。骨架在下面，直接抄。</p>
+    </div>
+    <div class="step">
+      <b>一份 LICENSE</b>
+      <p>比赛项目通常选 <b>MIT</b>（最宽松，允许别人随便用，只要你保留版权声明）。不想要别人用就选「不放许可证」，但要在 README 里写明。</p>
+    </div>
+    <div class="step">
+      <b>决定两个大文件的去留</b>
+      <p><code>best_modified_yolov8.bin</code>（11 MB）是数字识别的模型，<b>删了项目就跑不起来，建议保留</b>。
+      <code>wheeltec_robot_urdf</code> 里的整车轮子 STL（16 MB + 7.6 + 4.7 MB）只是仿真用的外观模型，跟实车代码无关，<b>删掉能省 30 MB</b>。</p>
+    </div>
+  </div>
+
+  <h3>第三步：我需要你提供什么</h3>
+  <p>除了下面这份清单，别的都不用给。前四项是硬性的，没有就推不上去。</p>
+  <table>
+    <thead><tr><th style="width:40px">#</th><th style="width:170px">需要你给的</th><th style="width:200px">举例</th><th>用途 / 说明</th></tr></thead>
+    <tbody>
+      <tr><td><b>1</b></td><td>GitHub 用户名</td><td><code>sailing-xx</code></td><td>拼出仓库地址 <code>github.com/&lt;用户名&gt;/&lt;仓库名&gt;</code></td></tr>
+      <tr><td><b>2</b></td><td>仓库名</td><td><code>rdk-x5-line-follower</code></td><td>公开之后改名会留下失效的旧链接，最好一次定好</td></tr>
+      <tr><td><b>3</b></td><td>公开还是私有</td><td>Public / Private</td><td>私有仓库外人打不开；免费账号的在线预览（Pages）也只能用于公开仓库</td></tr>
+      <tr><td><b>4</b></td><td>推送凭据</td><td>Personal Access Token（勾 <code>repo</code> 权限）</td><td>本机没有 SSH key 也没装 <code>gh</code>，HTTPS + Token 是最快路径。<b>用完立刻作废</b></td></tr>
+      <tr><td>5</td><td>大文件去留</td><td>「模型留、STL 删」</td><td>决定仓库是 75 MB 还是 35 MB</td></tr>
+      <tr><td>6</td><td>许可证</td><td>MIT / Apache-2.0 / 不加</td><td>没有许可证，别人即使看到也不能合法使用</td></tr>
+      <tr><td>7</td><td>署名信息</td><td>队名、学校、成员、指导老师、赛事全称与成绩</td><td>README 第一屏要写，也是给别人引用的依据</td></tr>
+      <tr><td>8</td><td>赛题 PDF 放不放</td><td>建议「不放」</td><td>见本节末尾的版权提醒</td></tr>
+      <tr><td>9</td><td>要不要在线版文档</td><td>把 <code>项目全景.html</code> 改名 <code>index.html</code></td><td>开了 GitHub Pages 之后，别人点链接就能看这份文档，不用下载</td></tr>
+      <tr><td>10</td><td>实车照片（可选）</td><td>1–2 张 jpg</td><td>README 里有实物图，可信度完全不一样</td></tr>
+    </tbody>
+  </table>
+
+  <h3>三种做法，选一个</h3>
+  <table>
+    <thead><tr><th style="width:120px">方案</th><th style="width:150px">你要做的</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><b>A · 推荐</b></td><td>自己执行命令</td><td>我把 README、LICENSE、命令全部准备好，你复制粘贴。<b>Token 不经过任何人</b>，最安全。</td></tr>
+      <tr><td><b>B · 代推</b></td><td>给一个临时 Token</td><td>建一个「只对这一个仓库有写权限」的 fine-grained token 发给我，推完你立刻撤销。适合你不想碰命令行的情况。</td></tr>
+      <tr><td><b>C · 网页上传</b></td><td>网页拖拽</td><td>网页界面上传有文件数量限制，123 个文件会很痛苦，<b>不推荐</b>。</td></tr>
+    </tbody>
+  </table>
+
+  <h3>方案 A 的完整命令</h3>
+  <div class="filelbl">先在 GitHub 网页上 New repository —— 不要勾 README / .gitignore / LICENSE，建一个完全空的仓库</div>
+  <pre><code data-lang="sh">cd /home/sunrise/ws_rdkx5_1
+
+# 1) 把当前整理提交掉（删除废弃文件 + CMakeLists 的修改）
+git add -A
+git commit -m "chore: 删除废弃节点与旧文档，同步 CMakeLists"
+
+# 2) 接上远端仓库（密码处填 Personal Access Token，不是登录密码）
+git remote add origin https://github.com/&lt;用户名&gt;/&lt;仓库名&gt;.git
+git branch -M main
+git push -u origin main
+
+# 3) 以后每次改动
+git add -A
+git commit -m "这次改了什么"
+git push</code></pre>
+
+  <div class="box tip">
+    <span class="lbl">第一次 push 会比较慢</span>
+    <p>75 MB 要一次性传完，家里宽带上大概 1–3 分钟。传完之后每次改动只传差异，几秒钟。
+    如果中途断了，重新执行一次 <code>git push</code> 会续传。</p>
+  </div>
+
+  <h3>README 骨架（直接改内容就能用）</h3>
+  <pre><code data-lang="md"># RDK X5 智能车 · 视觉循迹
+
+只靠一颗 USB 摄像头，让阿克曼底盘沿白色路面自主跑完 5 m × 3 m 赛道。
+2026 AIC 智能车视觉规划赛 · 复赛作品。
+
+> 先读 [项目全景.html](项目全景.html) —— 一份写给完全外行的说明书。
+
+## 它做什么
+- 巡线：HSV 找白路 → 双层横带取通道 → 7:3 加权得横向误差
+- 控制：纯 P 控制，误差 → 横摆角速度，弯道自动减速
+- 规则：黄线必停（第 4 根永久停）、红锥柔性避让、数字压线得分
+- 兜底：0.3 s 无指令自动零速
+
+## 硬件
+| 部件 | 规格 |
+|---|---|
+| 主控 | RDK X5（TROS / ROS 2 Humble） |
+| 相机 | USB 640×480 MJPG 30 fps |
+| 底盘 | 阿克曼，STM32 下位机，串口 115200 8N1 |
+
+## 软件结构
+8 个 ROS 2 节点：camera / yolov8 / line_follower / cmd_mux /
+detection_turn_controller / wheeltec_robot / safety / start_toggle
+数据流见文档第 02 节。
+
+## 快速开始
+```bash
+source /opt/tros/humble/setup.bash
+colcon build --symlink-install
+./tools/start.sh fork
+```
+
+## 调参
+参数只认 `tools/config/*.yaml`。包内自带的 `config/` 只是模板，改了不生效。
+
+## 已知限制
+- 岔路探针未启用，岔路靠白路连通性通过
+- 环岛无专用逻辑，仅靠降速
+- 下位机固件无超时保护，依赖 `safety_node` 兜底
+
+## 许可证
+MIT</code></pre>
+
+  <h3>上传之后，仓库长这样</h3>
+  <pre><code data-lang="md">ws_rdkx5_1/
+├── README.md                    ← 新增
+├── LICENSE                      ← 新增
+├── 项目全景.html                 这份文档（可改名 index.html 开 Pages）
+├── src/
+│   ├── camera/camera.py         摄像头节点
+│   ├── yolov8/bpu_yolov8_node.py  数字检测（含 11 MB 模型）
+│   ├── line_follow_ws/          巡线主包（C++，约 2400 行）
+│   └── car_ws/                  底盘驱动 / 串口 / URDF
+└── tools/
+    ├── start.sh                 一键启动（按顺序等日志）
+    ├── config/fork.yaml         比赛参数（岔路）
+    ├── config/roundabout.yaml   比赛参数（环岛）
+    ├── panel/                   Web 调参面板
+    └── sim/                     离线仿真</code></pre>
+
+  <div class="box warn">
+    <span class="lbl">版权提醒：赛题 PDF</span>
+    <p>根目录那 5 个 PDF（赛题、复赛通知、两张地图、视频提交要求）是<b>主办方发布的文件</b>，
+    不是你的作品。公开到互联网上有两个风险：① 版权上不属于你；② 如果赛事还没结束，可能涉及信息外泄。<br>
+    <b>建议</b>：从仓库里移除，README 里写一句「赛题见官方渠道」；确有需要就放进私有仓库，或在 .gitignore 里排除 <code>*.pdf</code>。</p>
+  </div>
+
+  <div class="box plain">
+    <span class="lbl">最后提醒一句</span>
+    <p>仓库一旦公开，<b>提交历史也会一起公开</b>。当前 5 次提交里没有敏感信息（没有密码、没有 Token），
+    可以直接推。但以后在代码里写死 Wi-Fi 密码、Token、内网 IP 之前，记得先想一下这东西会不会被别人看到。</p>
+  </div>
+</section>
+
+<footer>
+  <p>本文档所有参数值、行号、话题名均取自 <code>ws_rdkx5_1</code> 工作区当前代码与 <code>tools/config/fork.yaml</code>。<br>
+  单一 HTML 文件 · 无外部依赖 · 断网可用 · 可直接发给他人。</p>
+</footer>
 
 </main>
 </div>
@@ -1558,6 +2015,38 @@ if now - last_seen &gt; silence_timeout:      # silence_timeout = 0.30
       else { out += inline(esc(p)); }
     });
     el.innerHTML = out;
+  });
+})();
+
+/* ========== 1.5 每章一句话（给快速浏览的人） ========== */
+(function(){
+  const T = {
+    s0:'全车只有五条行为规则，按优先级排队。看懂这张表，就看懂了八成。',
+    s1:'很多「奇怪的设计」，答案都能在赛规的罚时表里找到。',
+    s2:'8 个程序：一条线往下走（指令），一条虚线往回走（传感器与状态）。',
+    s3:'必须一个等一个，因为「命令发出去了」不等于「对方真的活了」。',
+    s4:'一颗三十块钱的 USB 摄像头，就是它对这个世界的全部认知。',
+    s5:'640×480 的画面，最后只压出一个数：路偏了多少。',
+    s6:'全车的核心公式只有一行——转角 = −kp × 偏差，到极限就砍掉。',
+    s7:'黄线有停车权，红锥没有；丢线时宁可按记忆往前走，也不停。',
+    s8:'它不认数字是几，只是发现「有个数字快被我压到了」，然后朝它打一把方向。',
+    s9:'三路指令抢一个方向盘：有效的独占，过期的自动让位。',
+    s10:'11 个字节，每 33 毫秒一次。剩下的换算交给闭源固件。',
+    s11:'固件不会自己刹车，所以软件层加了一个 0.3 秒的看门狗。',
+    s12:'全部 90 多个参数和它们的生效方式，可以搜索。',
+    s13:'会吃罚时的坑、会误导人的代码都在这里，每条标了文件与行号。',
+    s14:'按「看到的现象」查，不要按「参数的名字」查。改一个，跑一次，记一次。',
+    s15:'想改代码，先看第一张表；看不懂的词，看第二张。'
+  };
+  Object.keys(T).forEach(function(id){
+    const sec = document.getElementById(id);
+    if(!sec) return;
+    const head = sec.querySelector('.sechead');
+    if(!head) return;
+    const d = document.createElement('div');
+    d.className = 'oneline';
+    d.innerHTML = '<b>一句话</b><div>' + T[id] + '</div>';
+    head.insertAdjacentElement('afterend', d);
   });
 })();
 
