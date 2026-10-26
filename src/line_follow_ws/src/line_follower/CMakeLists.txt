@@ -37,21 +37,6 @@ ament_target_dependencies(${PROJECT_NAME}_core
 add_executable(line_follower_node src/main.cpp)
 target_link_libraries(line_follower_node ${PROJECT_NAME}_core)
 
-add_executable(detection_listener src/detection_listener.cpp)
-ament_target_dependencies(detection_listener
-  rclcpp
-  ai_msgs
-  std_msgs
-)
-
-add_executable(image_resizer_node src/image_resizer_node.cpp)
-ament_target_dependencies(image_resizer_node
-  rclcpp
-  sensor_msgs
-  image_transport
-  cv_bridge
-)
-
 add_executable(detection_turn_controller src/detection_turn_controller.cpp)
 ament_target_dependencies(detection_turn_controller
   rclcpp
@@ -72,10 +57,6 @@ ament_target_dependencies(start_toggle_node
 )
 
 install(TARGETS ${PROJECT_NAME}_core line_follower_node
-  DESTINATION lib/${PROJECT_NAME})
-install(TARGETS detection_listener
-  DESTINATION lib/${PROJECT_NAME})
-install(TARGETS image_resizer_node
   DESTINATION lib/${PROJECT_NAME})
 install(TARGETS detection_turn_controller
   DESTINATION lib/${PROJECT_NAME})
