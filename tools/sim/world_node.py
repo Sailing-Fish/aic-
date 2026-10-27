@@ -25,6 +25,7 @@ from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from std_msgs.msg import Empty
 from tf2_ros import TransformBroadcaster
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -63,13 +64,21 @@ class SimWorld(Node):
         self.v_cmd = 0.0
         self.w_cmd = 0.0
         self.s = 0.0                # 累计里程 m
+        self.off_track = 0.0        # 累计出界时长 s（用于判断该速度档是否失效）
+        self._frame = 0
+        # 起始位姿快照，供 /sim/reset 复位（串行扫参时复用同一个世界节点）
+        self.x0, self.y0, self.yaw0 = self.x, self.y, self.yaw
 
         self.bridge = CvBridge()
-        self.pub_odom = self.create_publisher(Odometry, "/odom", 10)
-        self.pub_img = self.create_publisher(Image, "/image_raw", 10)
+        self.pub_odom = self.create_publisher(Odometry, args.odom_topic, 10)
+        self.pub_img = self.create_publisher(Image, args.image_topic, 10)
         self.pub_gt = self.create_publisher(Twist, "/sim/gt", 10)
         self.tf = TransformBroadcaster(self)
-        self.create_subscription(Twist, "/cmd_vel", self.on_cmd, 10)
+        # 必须保存引用：不赋值给成员时订阅对象可能被回收，导致完全收不到消息
+        self.sub_cmd = self.create_subscription(
+            Twist, args.cmd_topic, self.on_cmd, 10)
+        self.sub_reset = self.create_subscription(
+            Empty, "/sim/reset", self.on_reset, 10)
 
         self.dt = 1.0 / args.rate
         self.timer = self.create_timer(self.dt, self.on_timer)
@@ -81,6 +90,15 @@ class SimWorld(Node):
     def on_cmd(self, msg):
         self.v_cmd = float(msg.linear.x)
         self.w_cmd = float(msg.angular.z)
+
+    def on_reset(self, msg):
+        """把车放回起点，清空里程与出界计数。串行扫参时每组之前调用。"""
+        self.x, self.y, self.yaw = self.x0, self.y0, self.yaw0
+        self.v = self.delta = self.v_cmd = self.w_cmd = 0.0
+        self.s = 0.0
+        self.off_track = 0.0
+        self._frame = 0
+        self.get_logger().info("[sim] reset")
 
     def on_timer(self):
         dt = self.dt
@@ -137,6 +155,13 @@ class SimWorld(Node):
         im.header.stamp = stamp
         im.header.frame_id = "camera_link"
         self.pub_img.publish(im)
+
+        # 每 30 帧打一行，扫参脚本直接解析
+        self._frame += 1
+        if self._frame % 30 == 0:
+            self.get_logger().info(
+                f"[sim] s={self.s:.2f} off={self.off_track:.2f} v={self.v:.3f} "
+                f"yaw={math.degrees(self.yaw):.1f}")
 
 
 def main():
