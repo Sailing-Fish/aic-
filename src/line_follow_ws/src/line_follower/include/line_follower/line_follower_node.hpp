@@ -7,6 +7,7 @@
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <image_transport/image_transport.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <opencv2/core.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -52,6 +53,7 @@ private:
 
   void start_callback(const std_msgs::msg::Bool::SharedPtr msg);
   void image_callback(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
+  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
 
   std::optional<ProcessingResult> process_image(const cv::Mat & frame_bgr) const;
 
@@ -204,6 +206,20 @@ private:
   rclcpp::Time last_detection_time_;
 
   // ============================================================
+  // Odom：用于"停稳即走"判定
+  // 固定等 1.0s 的旧逻辑里，真正静止只有 0.35-0.5s；
+  // 用 odom 确认静止可以既省时间又保证合规（未停稳罚 +15s）。
+  // ============================================================
+  std::string odom_topic_;
+  double yellow_stop_min_time_{0.35};   // 最短停车时间，防止刚检测到就起步
+  double odom_still_threshold_{0.02};   // 判定静止的速度阈值 m/s
+  double odom_still_hold_{0.25};        // 需要持续静止多久
+  double odom_speed_{0.0};
+  bool odom_still_valid_{false};
+  bool odom_seen_{false};
+  rclcpp::Time odom_still_since_;
+
+  // ============================================================
   // ROS interfaces
   // ============================================================
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
@@ -213,6 +229,7 @@ private:
 
   image_transport::Subscriber image_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr start_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
 
   image_transport::Publisher debug_pub_;
   bool debug_enabled_{false};

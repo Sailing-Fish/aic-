@@ -14,6 +14,7 @@ find_package(image_transport REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(ai_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 include_directories(
   include
@@ -32,6 +33,7 @@ ament_target_dependencies(${PROJECT_NAME}_core
   OpenCV
   std_msgs
   ai_msgs
+  nav_msgs
 )
 
 add_executable(line_follower_node src/main.cpp)

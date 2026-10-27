@@ -7,11 +7,16 @@ line_follower_node:
     start_topic: line_follower/start_cmd
     stop_cmd_topic: /cmd_vel_stop
     line_centroid_topic: line_follower/centroid
-    target_speed: 0.3
-    max_speed: 0.3
+    odom_topic: /odom
+    target_speed: 0.40
+    max_speed: 0.40
     min_speed: 0.0
     max_yaw_rate: 1.5
-    kp: 2.45
+    kp: 3.00
+    # 停稳即走：最少停 0.35s，且 odom 确认 |v|<0.02 持续 0.25s 才放行
+    yellow_stop_min_time: 0.35
+    odom_still_threshold: 0.02
+    odom_still_hold: 0.25
     roi_top_ratio: 0.65
     roi_bottom_ratio: 0.2
     gaussian_kernel: 5
@@ -83,7 +88,7 @@ line_follower_node:
     line_lost_stop_time: 0.8
     line_lost_forward_speed: 0.3
     line_lost_yaw_hold_factor: 0.85
-    speed_gain_damping: 0.65
+    speed_gain_damping: 0.40
     publish_debug_image: true
 detection_turn_controller:
   ros__parameters:
