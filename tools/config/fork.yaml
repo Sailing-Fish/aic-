@@ -8,11 +8,11 @@ line_follower_node:
     stop_cmd_topic: /cmd_vel_stop
     line_centroid_topic: line_follower/centroid
     odom_topic: /odom
-    target_speed: 0.40
-    max_speed: 0.40
+    target_speed: 0.50
+    max_speed: 0.50
     min_speed: 0.0
     max_yaw_rate: 1.5
-    kp: 3.00
+    kp: 3.30
     # 停稳即走：最少停 0.35s，且 odom 确认 |v|<0.02 持续 0.25s 才放行
     yellow_stop_min_time: 0.35
     odom_still_threshold: 0.02
@@ -51,9 +51,9 @@ line_follower_node:
     reverse_curve_threshold: 0.35
     reverse_curve_confirm_frames: 3
     reverse_curve_clear_frames: 4
-    reverse_curve_speed: 0.16
+    reverse_curve_speed: 0.34
     sharp_curve_threshold: 0.5
-    sharp_curve_speed: 0.2
+    sharp_curve_speed: 0.41
     enable_red_filter: true
     red_h_low_1: 0
     red_h_high_1: 10
@@ -88,7 +88,7 @@ line_follower_node:
     line_lost_stop_time: 0.8
     line_lost_forward_speed: 0.3
     line_lost_yaw_hold_factor: 0.85
-    speed_gain_damping: 0.40
+    speed_gain_damping: 0.22
     publish_debug_image: true
 detection_turn_controller:
   ros__parameters:
