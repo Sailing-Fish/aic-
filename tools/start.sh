@@ -285,7 +285,16 @@ launch_proc start
 
 FOLLOW_GRACE_UNTIL=$(( $(date +%s) + FOLLOW_GRACE ))
 
-[[ $NO_PANEL -eq 0 ]] && launch_proc panel
+# 面板是后台进程，Ctrl+C 时可能来不及退出；残留实例会一直占着 8080-8089，
+# 攒到 10 个就再也起不来（表现为 exit code 134 + "8080-8089 全部被占用"）。
+if [[ $NO_PANEL -eq 0 ]]; then
+  if pgrep -f "tools/panel/server.py" > /dev/null 2>&1; then
+    log "清理残留 panel 进程"
+    pkill -f "tools/panel/server.py" 2>/dev/null || true
+    sleep 1
+  fi
+  launch_proc panel
+fi
 launch_proc safety
 launch_proc collector
 
