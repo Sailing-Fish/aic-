@@ -133,6 +133,8 @@
        white-space:pre-wrap;word-break:break-all;background:#070b10}
   #log .dec{color:#78e0a2} #log .err{color:#ff9b9b} #log .hl{background:#3b3410}
   #log .pe{color:#ffd166;font-weight:700}
+  #log .sep{color:#8fd0ff;background:#0e1a27;border-left:3px solid #3a6ea5;
+            padding:3px 8px;margin:4px 0;border-radius:4px;font-weight:700}
 
   /* modal */
   .mask{position:fixed;inset:0;background:rgba(3,6,10,.82);display:none;
@@ -249,8 +251,10 @@
         <option value="collector">⑧DEC汇总</option>
       </select>
       <label><input type="checkbox" id="onlyDec" checked> 只看决策</label>
+      <label title="进程重启后自动从本次启动的分界线开始显示"><input type="checkbox" id="onlyCurrent" checked> 只看本次启动</label>
       <input type="text" id="search" placeholder="搜索关键字">
       <label><input type="checkbox" id="autoscroll" checked> 自动滚动</label>
+      <button id="btnReloadAll" title="从日志开头重新加载（会关闭“只看本次启动”）">从头看</button>
       <button id="btnClear">清屏</button>
     </div>
     <div id="log"></div>
@@ -308,6 +312,11 @@
     <p>代码里大部分参数是<b>启动时读一次</b>存进变量的，运行中改 YAML 不会回头重读。
        所以正确流程是：<b>改参数 → 保存 → 重启巡线节点</b>。点「保存并重启巡线」会自动做这两步，
        重启后在「生效参数」卡片和日志 <code>[DEC] param effective</code> 行里能看到新值。</p>
+    <p>「保存并重启巡线」的真实动作是：<b>杀掉旧的巡线进程组并关掉旧窗口 → 弹出一个新窗口</b>，
+       其他窗口不受影响。面板会一直等到新进程打出 <code>[DEC] param effective</code> 才提示
+       “重启完成”；期间会显示“正在关闭旧进程 / 等参数上报”。日志里会留下
+       <code>[DEC] proc start name=follow</code> 分界线，勾选「只看本次启动」就只显示这一次的内容。
+       发车信号还是开的时候不允许重启——新节点一启动就会开动。</p>
     <p style="text-align:right;margin-top:18px">
       <button onclick="document.getElementById('mask').classList.remove('show')">知道了</button>
     </p>
@@ -339,10 +348,17 @@ const EV_CN = {
   'proc_down':           ['进程异常',   '准备重启'],
   'proc_exit':           ['进程退出',   ''],
   'follow_nodes_missing':['节点缺失',   '巡线子节点不见了'],
+  'proc|start':          ['进程启动',   '新窗口已起来'],
+  'proc|exit':           ['进程退出',   ''],
+  'proc|restart':        ['重启进程',   '面板请求重启'],
+  'proc|ready':          ['重启完成',   '新进程已就绪'],
+  'proc|timeout':        ['重启超时',   '没等到新进程就绪标记'],
 };
 
 let logOffset = 0, logFile = 'follow', lastStarted = null, lastLocked = null;
 let paramsState = null, dirty = false, lastEff = {}, effMismatch = false;
+let runningMap = null, yamlStale = false, restarting = false, pendingChanged = '';
+let lastFollowEpoch = null, mapMismatchPrev = null, mapAutoSynced = false, lastRunId = null;
 
 function toast(msg, bad){
   const t = $('toast');
@@ -395,24 +411,64 @@ async function pollStatus(){
       $('stDigitSub').textContent = 't=' + Number(dg.t).toFixed(1) + 's';
     } else { $('stDigit').textContent='-'; $('stDigitSub').textContent='最近一次转向'; }
 
-    // 卡4 生效参数
+    // 卡4 生效参数：先看“YAML 比进程新”（覆盖所有参数，比逐项对比更可靠）
     lastEff = d.effective || {};
+    yamlStale = !!(d.yaml && d.yaml.stale);
+    markPending();
     const kpEff = lastEff.kp;
     $('stParam').textContent = (kpEff!==undefined) ? ('kp ' + kpEff) : 'kp -';
-    $('stParamSub').textContent = (kpEff!==undefined)
-      ? (effMismatch ? '与 YAML 不一致，需重启' : '与 YAML 一致')
-      : '节点未启动或未上报';
-    $('stParam').style.color = effMismatch ? 'var(--warn)' : '';
+    if(yamlStale){
+      $('stParamSub').textContent = 'YAML 已改，需重启巡线';
+      $('stParam').style.color = 'var(--warn)';
+    } else if(kpEff!==undefined){
+      $('stParamSub').textContent = effMismatch ? '与生效值不一致，需重启' : '与 YAML 一致';
+      $('stParam').style.color = effMismatch ? 'var(--warn)' : '';
+    } else {
+      $('stParamSub').textContent = '节点未启动或未上报';
+      $('stParam').style.color = '';
+    }
+
+    // 面板要跟着“实际运行的参数文件”走，否则改了 A 却重启 B
+    const rf = d.params_file || null;
+    if(rf) runningMap = rf;
+    if(rf && !mapAutoSynced){
+      mapAutoSynced = true;
+      if($('mapSel').value !== rf && !dirty){ $('mapSel').value = rf; loadParams(rf); }
+    }
+    const mm = !!(runningMap && $('mapSel').value !== runningMap);
+    if(mm !== mapMismatchPrev){ mapMismatchPrev = mm; refreshMapWarn(); updateButtons(); }
+
+    // 换了一轮运行：日志文件是新的，偏移必须归零，否则会从新文件中间开始读
+    if(d.run_id && lastRunId && d.run_id !== lastRunId){
+      logOffset=0; $('log').innerHTML='';
+      toast('日志已切换到新一轮：' + d.run_id);
+    }
+    if(d.run_id) lastRunId = d.run_id;
+
+    // ④巡线换了进程（面板重启或看门狗重启）——明确说一声
+    const fe = (d.follow||{}).started_epoch || 0;
+    if(fe && lastFollowEpoch && fe !== lastFollowEpoch && !restarting){
+      // 看门狗重启时发车信号可能还是开：新节点会立刻继续跑，必须如实说
+      toast('④巡线进程已重新启动（' + isoHms(d.follow.started_iso) + '）'
+        + (d.start_cmd ? '；发车信号仍为开，车会自动继续' : '；需按空格发车'), !!d.start_cmd);
+    }
+    if(fe) lastFollowEpoch = fe;
 
     // 决策流
     renderFeed(d.events||[]);
 
-    // 锁：只看 locked（重置/急停会解锁），不看 start_cmd 原始值
+    // 锁：只看 locked（真正停车后才会解锁）
     lastStarted = d.started;
     const lk = !!d.locked;
-    if(lk !== lastLocked){ lastLocked = lk; setLocked(lk); }
-    $('paramTag').textContent = d.params_file ? ('当前 ' + d.params_file) : '-';
+    if(lk !== lastLocked){ setLocked(lk); }
+
+    $('paramTag').textContent = (runningMap ? ('当前 ' + runningMap + '.yaml') : '-')
+      + (fe ? (' · 节点启动 ' + isoHms((d.follow||{}).started_iso)) : '')
+      + (yamlStale ? ' · YAML 未生效' : '');
+    $('paramTag').style.color = yamlStale ? 'var(--warn)' : '';
     $('logTag').textContent = d.run_id || '-';
+
+    handleRestart(d.restart);
   }catch(e){}
 }
 
@@ -430,6 +486,7 @@ function renderFeed(evs){
     if(e.area==='red' && kv){ desc = kv.replace(/side=L/,'障碍在左→向右避').replace(/side=R/,'障碍在右→向左避'); }
     if(e.area==='digit' && kv){ desc = kv.replace(/best=/,'数字 ').replace(/yaw=/,' 角速度 '); }
     if(e.area==='safety'){ desc = kv || '上游静默，自动发零速'; }
+    if(e.area==='proc' && kv){ desc = kv; }
     return `<div class="ev ${e.area}">
       <div class="t">${Number(e.t).toFixed(1)}</div>
       <div class="body"><b>${title}</b>${(desc||kv)?`<i>${desc || kv}</i>`:''}</div>
@@ -437,12 +494,35 @@ function renderFeed(evs){
   }).join('');
 }
 
-function setLocked(running){
-  $('btnSave').disabled = running;
-  $('btnSaveRestart').disabled = running;
-  document.querySelectorAll('#params input').forEach(el=>{ el.disabled = running; });
-  if(running) toast('已发车：参数已锁定（赛规禁止赛中调车）');
+function setLocked(running, quiet){
+  lastLocked = running;
+  updateButtons();
+  if(running && !quiet) toast('已发车：参数已锁定（赛规禁止赛中调车）');
 }
+
+function updateButtons(){
+  const sel = $('mapSel').value;
+  const mismatch = !!(runningMap && sel !== runningMap);
+  const locked = lastLocked === true;
+  $('btnSave').disabled = locked;
+  $('btnSaveRestart').disabled = locked || mismatch || restarting;
+  $('btnSaveRestart').title = mismatch
+    ? ('当前运行的是 ' + runningMap + '.yaml；改 ' + sel + '.yaml 再重启不会生效')
+    : (restarting ? '重启进行中，等新进程就绪' : '');
+  document.querySelectorAll('#params input').forEach(el=>{ el.disabled = locked; });
+}
+
+function refreshMapWarn(){
+  if(dirty || restarting) return;
+  const sel = $('mapSel').value;
+  if(runningMap && sel !== runningMap){
+    $('memo').textContent = `正在编辑 ${sel}.yaml；当前运行 ${runningMap}.yaml，重启不生效`;
+  } else if($('memo').textContent.indexOf('正在编辑 ') === 0){
+    $('memo').textContent = '未修改';
+  }
+}
+
+function isoHms(s){ const m=/(\d\d:\d\d:\d\d)/.exec(s||''); return m ? m[1] : '--:--:--'; }
 
 // ---------------- 参数
 async function loadParams(map){
@@ -514,20 +594,63 @@ async function saveParams(thenRestart){
     body:JSON.stringify({map, values})});
   const d = await r.json();
   if(!d.ok){ toast('保存失败：'+(d.error||d.msg), true); return; }
+  const changed = (d.msg && d.msg !== 'no change') ? d.msg : '';
   if(d.msg==='no change'){ toast('参数没有变化'); }
   else { toast('已写入 YAML：' + d.msg); }
-  dirty=false; $('memo').textContent='已保存';
-  if(thenRestart){ await restartProc('follow', true); }
-  else { toast('已保存。参数要重启巡线才生效，点「保存并重启巡线」'); }
+  dirty=false;
+  // 立刻把表单基准值换成刚保存的值，这样“待重启”标记马上按新值算，不用等重载
+  document.querySelectorAll('#params .row').forEach(row=>{
+    const inp=row.querySelector('input'); if(!inp) return;
+    row.dataset.orig = row.dataset.type==='bool' ? String(inp.checked) : String(parseFloat(inp.value));
+  });
+  markPending();
+  if(thenRestart){
+    if(runningMap && map !== runningMap){
+      $('memo').textContent = '已保存，但不是正在运行的文件';
+      toast(`当前运行 ${runningMap}.yaml；${map}.yaml 只保存，不会重启`, true);
+      updateButtons();
+      return;
+    }
+    await restartProc('follow', changed);
+  } else {
+    $('memo').textContent = '已保存，需重启巡线才生效';
+    toast('已保存。参数要重启巡线才生效，点「保存并重启巡线」');
+  }
 }
 
-async function restartProc(name, silent){
+// 点完重启不是“点完就算”：等后端看到新进程的分界线 + param effective 才提示完成
+async function restartProc(name, changed){
   const r = await fetch('/api/restart/'+name,{method:'POST'});
   const d = await r.json();
-  if(d.ok){
-    if(!silent) toast(d.msg||'已请求重启');
-    setTimeout(()=>{ loadParams($('mapSel').value); }, 6000);
-  } else toast('失败：'+d.error, true);
+  if(!d.ok){ toast('重启失败：'+d.error, true); return; }
+  restarting = true;
+  pendingChanged = changed || '';
+  $('memo').textContent = '重启中：正在关闭旧进程…';
+  updateButtons();
+  toast(d.msg || '已请求重启');
+}
+
+function handleRestart(rs){
+  if(!rs || !restarting) return;
+  if(rs.state === 'ready'){
+    restarting = false;
+    const extra = pendingChanged ? `：${pendingChanged}` : '';
+    toast(`④巡线已重启完成，参数已生效${extra}。需到⑤窗口按空格发车`);
+    $('memo').textContent = '重启完成，参数已生效';
+    pendingChanged = '';
+    if(!dirty) loadParams($('mapSel').value);
+    updateButtons();
+  } else if(rs.state === 'timeout'){
+    restarting = false;
+    toast('④巡线重启超时：30s 没等到新进程上报参数，请看下方 follow 日志', true);
+    $('memo').textContent = '重启超时';
+    pendingChanged = '';
+    updateButtons();
+  } else {
+    $('memo').textContent = (rs.state === 'queued' || rs.state === 'killing')
+      ? `重启中：正在关闭旧进程… ${rs.elapsed}s`
+      : `重启中：新窗口已起，等参数上报… ${rs.elapsed}s`;
+  }
 }
 
 // ---------------- 日志
@@ -538,11 +661,25 @@ async function pollLogs(){
     if(!d.lines || !d.lines.length){ if(typeof d.offset==='number') logOffset=d.offset; return; }
     logOffset = d.offset;
     const box=$('log'), q=$('search').value.trim(), stick=$('autoscroll').checked;
-    const frag=document.createDocumentFragment();
+    const onlyCur = $('onlyCurrent').checked;
+    let frag=document.createDocumentFragment();
     d.lines.forEach(ln=>{
+      // 进程启动分界线：只认当前查看的这个进程，别的进程的行不会出现在这个文件里
+      const isStart = /^\[DEC\] proc start name=/.test(ln);
+      if(isStart && ln.indexOf('name='+logFile) !== -1){
+        if(onlyCur){
+          box.innerHTML='';
+          frag=document.createDocumentFragment();
+        } else {
+          const sep=document.createElement('div');
+          sep.className='sep'; sep.textContent='── 以上是更早的启动 ──';
+          frag.appendChild(sep);
+        }
+      }
       const div=document.createElement('div');
       div.textContent=ln;
-      if(ln.includes('[DEC] param effective')||ln.includes('[DEC] panel param_write')) div.className='pe';
+      if(isStart) div.className='sep';
+      else if(ln.includes('[DEC] param effective')||ln.includes('[DEC] panel param_write')) div.className='pe';
       else if(ln.includes('[DEC]')) div.className='dec';
       else if(/error|fail|exception|traceback/i.test(ln)) div.className='err';
       if(q&&ln.includes(q)) div.classList.add('hl');
@@ -557,8 +694,17 @@ async function pollLogs(){
 // ---------------- 事件
 $('btnSave').addEventListener('click',()=>saveParams(false));
 $('btnSaveRestart').addEventListener('click',()=>saveParams(true));
-$('mapSel').addEventListener('change',()=>{ logOffset=0; loadParams($('mapSel').value); });
+$('mapSel').addEventListener('change',()=>{
+  logOffset=0; loadParams($('mapSel').value);
+  refreshMapWarn(); updateButtons();
+});
 $('logFile').addEventListener('change',()=>{ logFile=$('logFile').value; logOffset=0; $('log').innerHTML=''; });
+$('onlyCurrent').addEventListener('change',()=>{ logOffset=0; $('log').innerHTML=''; });
+$('btnReloadAll').addEventListener('click',()=>{
+  // 从头看 = 关掉“只看本次启动”，否则会在最后一个分界线处又被清掉
+  $('onlyCurrent').checked = false;
+  logOffset=0; $('log').innerHTML='';
+});
 $('btnClear').addEventListener('click',()=>{ $('log').innerHTML=''; });
 $('btnHelp').addEventListener('click',()=>$('mask').classList.add('show'));
 $('mask').addEventListener('click',e=>{ if(e.target.id==='mask') $('mask').classList.remove('show'); });
@@ -567,13 +713,13 @@ $('btnReset').addEventListener('click',async()=>{
   toast(d.ok?d.msg:('失败：'+d.error), !d.ok);
   if(d.ok){
     logOffset=0; $('log').innerHTML='';
-    lastLocked = false; setLocked(false);      // 立刻解锁，不等下一次轮询
+    setLocked(false, true);      // 立刻解锁，不等下一次轮询
   }
 });
 $('estop').addEventListener('click',async()=>{
   const d = await (await fetch('/api/estop',{method:'POST'})).json();
   toast(d.ok?'已停车，参数已解锁':('失败：'+d.error), !d.ok);
-  if(d.ok){ lastLocked = false; setLocked(false); }
+  if(d.ok){ setLocked(false, true); }
 });
 $('imgDebug').src='/api/stream/debug';
 $('imgYolo').src='/api/stream/yolo';

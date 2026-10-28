@@ -50,6 +50,7 @@ class Shared:
         self.lock = threading.Lock()
         self.frames = {'debug': None, 'yolo': None}
         self.started = False
+        self.start_cmd = False   # start_toggle 最近一次发布的原始值（不认沿）
         self.locked = False       # 参数是否锁定：只在"真正发车"的上升沿置位
         self.track_state = 'unknown'
         self.yellow_count = 0
@@ -59,6 +60,7 @@ class Shared:
         self.last_yellow_ts = 0.0
         self.final_stopped = False
         self.round = 1
+        self.restart = None       # {'name','t0','off'} 最近一次面板发起的重启
 
 
 SH = Shared()
@@ -111,8 +113,11 @@ class PanelNode(Node):
     def _on_start(self, msg):
         new_val = bool(msg.data)
 
+        # 原始值单独存一份：判断"重启安不安全"要用它。
         # start_toggle 以 10Hz 重复发布同一个值，这里只认跳变沿。
-        # 否则：急停/重置把面板解成"未发车"后，下一条重复的 true 会立刻把它锁回去。
+        with SH.lock:
+            SH.start_cmd = new_val
+
         if new_val == self._last_started:
             return
         self._last_started = new_val
@@ -201,10 +206,34 @@ def run_dir():
     return None
 
 
+def read_seg(name):
+    """读 wrap.sh 写的 <name>.seg：本次进程的 pid / 日志起点 / 启动时间。
+
+    有了它就不用猜"这一行是哪个进程打的"，也不用在长日志里往回翻 30KB。
+    """
+    path = os.path.join(STATE_DIR, f'{name}.seg')
+    out = {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                k, _, v = line.strip().partition('=')
+                if k:
+                    out[k] = v
+    except OSError:
+        return {}
+    for k in ('pid', 'log_off', 'started_epoch'):
+        try:
+            out[k] = int(out.get(k, 0))
+        except (TypeError, ValueError):
+            out[k] = 0
+    return out
+
+
 def read_effective_params():
     """解析 follow.log 里节点启动时打印的「[DEC] param effective ...」行。
 
-    这是"真正生效的值"，和 YAML 里的值对比就能知道要不要重启节点。
+    只看本次进程的日志段（seg.log_off 之后）。拿整份文件或"最后 30KB"都会
+    被上一次启动的行干扰，这正是"改了参数到底生效没有"说不清的原因。
     """
     rd = run_dir()
     if not rd:
@@ -212,12 +241,18 @@ def read_effective_params():
     path = os.path.join(rd, 'follow.log')
     if not os.path.isfile(path):
         return {}
+    seg = read_seg('follow')
     try:
+        size = os.path.getsize(path)
+        start = int(seg.get('log_off') or 0)
+        # start == size 表示新进程还没输出，必须返回 {}（等它上报），
+        # 不能退回读旧内容，否则面板会拿上一代进程的参数冒充“已生效”。
+        if not (0 <= start <= size):
+            start = max(0, size - 65536)
         with open(path, 'rb') as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - 30000))
-            text = f.read().decode('utf-8', errors='replace')
+            f.seek(start)
+            # param effective 在节点启动后几秒内就打出来了，读前 64KB 足够
+            text = f.read(65536).decode('utf-8', errors='replace')
     except OSError:
         return {}
 
@@ -234,6 +269,58 @@ def read_effective_params():
                 except ValueError:
                     result[k] = v
     return result
+
+
+READY_PAT = {
+    'follow': b'param effective',
+    'panel': b'[panel] http://',
+    'base': b'serial port opened',
+    'camera': '摄像头已成功启动'.encode('utf-8'),
+    'yolo': '视觉检测节点就绪'.encode('utf-8'),
+}
+
+
+def restart_state():
+    """面板发起的重启进行到哪一步：queued / killing / starting / ready / timeout。
+
+    依据是日志里本次进程的分界线（wrap.sh 写的 [DEC] proc start），
+    不是 status.json —— 看门狗在等新进程就绪时不会刷新 status，会误判。
+    """
+    with SH.lock:
+        r = dict(SH.restart) if SH.restart else None
+    if not r:
+        return None
+
+    name, off = r['name'], int(r.get('off') or 0)
+    elapsed = time.time() - r['t0']
+    rd = run_dir()
+    chunk = b''
+    if rd:
+        path = os.path.join(rd, f'{name}.log')
+        try:
+            size = os.path.getsize(path)
+            if size > off:
+                with open(path, 'rb') as f:
+                    f.seek(off)
+                    chunk = f.read(min(524288, size - off))
+        except OSError:
+            chunk = b''
+
+    started = b'[DEC] proc start name=' in chunk
+    pat = READY_PAT.get(name)
+    ready = (pat in chunk) if pat else started
+
+    if ready:
+        state = 'ready'
+    elif elapsed > 30:
+        state = 'timeout'
+    elif started:
+        state = 'starting'
+    elif elapsed > 2:
+        state = 'killing'
+    else:
+        state = 'queued'
+    return {'name': name, 'state': state, 'elapsed': round(elapsed, 1)}
 
 
 def read_recent_events(limit=10):
@@ -406,10 +493,28 @@ class Handler(BaseHTTPRequestHandler):
                 allowed = {'base', 'camera', 'yolo', 'follow', 'panel', 'safety', 'collector'}
                 if name not in allowed:
                     return self._err(400, f'未知进程 {name}')
+                # 发车信号还是开的时候重启 follow，新节点一订阅到 true 就会立刻开动。
+                # 必须先真的停车（⑤窗口按空格），不能靠急停绕过去。
+                with SH.lock:
+                    live = SH.start_cmd
+                if live:
+                    return self._err(
+                        409, '⑤发车信号仍为开：新进程会立刻开动。请先在⑤窗口按空格停车，再重启')
+
+                off = 0
+                rd = run_dir()
+                if rd:
+                    try:
+                        off = os.path.getsize(os.path.join(rd, f'{name}.log'))
+                    except OSError:
+                        off = 0
+                with SH.lock:
+                    SH.restart = {'name': name, 't0': time.time(), 'off': off}
                 with open(os.path.join(STATE_DIR, 'cmd.restart'), 'w', encoding='utf-8') as f:
                     f.write(name)
                 print(f'[DEC] panel restart name={name}', flush=True)
-                return self._json({'ok': True, 'msg': f'已请求重启 {name}'})
+                return self._json({'ok': True, 'msg': f'已请求重启 {name}，正在等新进程就绪…',
+                                   'restart': restart_state()})
 
             if path == '/api/round/reset':
                 # 只重置面板统计，不动车：车跑出赛道后，把它搬回起点、按空格，
@@ -452,6 +557,7 @@ class Handler(BaseHTTPRequestHandler):
         with SH.lock:
             started = SH.started
             locked = SH.locked
+            live = SH.start_cmd
             state = SH.track_state
             yc = SH.yellow_count
             yp = SH.yellow_permanent
@@ -466,6 +572,17 @@ class Handler(BaseHTTPRequestHandler):
         else:
             elapsed = te - ts
 
+        # “YAML 比进程新”是比参数值对比更可靠的判据：
+        # 只要保存过且晚于 follow 进程启动时间，就一定有参数没生效。
+        seg = read_seg('follow')
+        started_epoch = int(seg.get('started_epoch') or 0)
+        map_name = st.get('params_file') or 'fork'
+        try:
+            ymtime = os.stat(os.path.join(CONFIG_DIR, f'{map_name}.yaml')).st_mtime
+        except OSError:
+            ymtime = 0.0
+        yaml_stale = bool(started_epoch and ymtime > started_epoch + 1)
+
         self._json({
             'ok': True,
             'global': st.get('global', 'down'),
@@ -473,12 +590,18 @@ class Handler(BaseHTTPRequestHandler):
             'params_file': st.get('params_file'),
             'procs': st.get('procs', {}),
             'started': started,
+            'start_cmd': live,
             'locked': locked,
             'track_state': state,
             'yellow': {'count': yc, 'permanent': yp},
             'timer': {'elapsed': round(elapsed, 2), 'running': ts is not None and te is None,
                       'final': te is not None, 'armed': ts is not None},
             'round': rnd,
+            'follow': {'started_epoch': started_epoch,
+                       'started_iso': seg.get('started_iso', ''),
+                       'log_off': int(seg.get('log_off') or 0)},
+            'yaml': {'file': f'{map_name}.yaml', 'mtime': ymtime, 'stale': yaml_stale},
+            'restart': restart_state(),
             'effective': read_effective_params(),
             'events': read_recent_events(10),
             'frames': frames_ok,
@@ -522,14 +645,20 @@ class Handler(BaseHTTPRequestHandler):
         with open(path, 'rb') as f:
             f.seek(offset)
             raw = f.read()
-        chunk = raw.decode('utf-8', errors='replace')
-        lines = chunk.splitlines()
-        if lines and not chunk.endswith('\n'):
-            # 最后一行可能不完整，只推进到它的起点，下次再读
-            offset += len(raw) - len(lines[-1].encode('utf-8'))
-            lines = lines[:-1]
+
+        # 偏移必须按字节算。之前是 decode(errors='replace') 后再 encode 求长度，
+        # 碰到中文半行时字节数对不上，会漏行或重复行——日志就“不可信”了。
+        cut = raw.rfind(b'\n')
+        if cut < 0:
+            complete = b''
         else:
-            offset += len(raw)
+            complete = raw[:cut + 1]
+        offset += len(complete)
+        chunk = complete.decode('utf-8', errors='replace')
+        lines = chunk.split('\n')
+        if lines and lines[-1] == '':
+            lines.pop()
+        lines = [ln.rstrip('\r') for ln in lines]
 
         if only_dec:
             lines = [ln for ln in lines if '[DEC]' in ln]
@@ -566,9 +695,9 @@ def main():
     NODE = PanelNode()
     threading.Thread(target=rclpy.spin, args=(NODE,), daemon=True).start()
 
-    # 黄线总数从参数文件取，供面板显示 n/N
+    # 黄线总数从“正在运行的”参数文件取，供面板显示 n/N
     try:
-        for g in load_params('fork')['groups']:
+        for g in load_params(read_status().get('params_file') or 'fork')['groups']:
             for it in g['items']:
                 if it['key'] == 'yellow_permanent_count':
                     SH.yellow_permanent = int(it['value'])

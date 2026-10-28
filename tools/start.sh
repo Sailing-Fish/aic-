@@ -71,6 +71,8 @@ if [[ -n "$STOP_TARGET" ]]; then
   if proc_alive "$pid"; then
     # 打抑制标记，守护看到后不会重启
     touch "$STATE/$STOP_TARGET.suppress"
+    # 连进程组一起杀：只杀 wrap.sh 会让 ros2 launch/节点变成孤儿继续跑
+    kill -TERM "-$pid" 2>/dev/null
     kill -TERM "$pid" 2>/dev/null
     log "已请求停止 $STOP_TARGET (pid=$pid)，守护不会重启它"
   else
@@ -92,13 +94,21 @@ fi
 
 mkdir -p "$STATE" "$LOGROOT"
 # 清掉上一轮的状态文件：pid 残留会让守护误判"进程已死"（踩过）
-rm -f "$STATE"/*.pid "$STATE"/*.exit "$STATE"/*.suppress 2>/dev/null
-rm -f "$STATE/cmd.restart" "$STATE/cmd.stop" "$STATE/started" 2>/dev/null
+rm -f "$STATE"/*.pid "$STATE"/*.exit "$STATE"/*.suppress "$STATE"/*.seg 2>/dev/null
+rm -f "$STATE/cmd.restart" "$STATE/cmd.stop" "$STATE/started" "$STATE/panel_port" 2>/dev/null
 
 RUN_ID="run_$(date +%Y%m%d_%H%M%S)"
 RUN_DIR="$LOGROOT/$RUN_ID"
 mkdir -p "$RUN_DIR"
 ln -sfn "$RUN_ID" "$LOGROOT/latest"
+
+# start.sh 自己的输出也落盘：看门狗打的 [DEC]（重启/退出/节点缺失）必须能被
+# dec_collector 收进 events.csv，否则面板上根本看不到"谁在什么时候被重启"。
+# -i：Ctrl+C 时 tee 不能跟着死，否则后面的停车日志写不进去，脚本还会被 SIGPIPE 打断。
+# stdbuf -oL：tee 默认块缓冲，重启/退出事件会晚几秒才出现在面板上。
+TEE="tee"
+command -v stdbuf >/dev/null 2>&1 && TEE="stdbuf -oL tee"
+exec > >($TEE -i -a "$RUN_DIR/start.log") 2>&1
 
 # 只保留最近 KEEP_RUNS 次
 mapfile -t olds < <(find "$LOGROOT" -maxdepth 1 -type d -name 'run_*' -printf '%f\n' | sort | head -n -$KEEP_RUNS)
@@ -131,9 +141,10 @@ NAMES=(base camera yolo follow start panel safety collector)
 TITLES=("①底盘" "②相机" "③YOLO" "④巡线+仲裁" "⑤发车" "⑥面板" "⑦兜底" "⑧DEC汇总")
 WINDOWED=(1 1 1 1 1 0 0 0)          # 1=开 xterm 窗口
 RESTARTABLE=(1 1 1 1 0 1 1 1)       # 1=允许自动重启
-XTERM_PID=(); IS_ALIVE=(); RESTARTS=(); EXITCODE=(); HANDLED=(); LAUNCHED=()
+XTERM_PID=(); IS_ALIVE=(); RESTARTS=(); EXITCODE=(); HANDLED=(); LAUNCHED=(); LOG_OFF=()
 for i in "${!NAMES[@]}"; do
   XTERM_PID[i]=""; IS_ALIVE[i]=0; RESTARTS[i]=0; EXITCODE[i]=""; HANDLED[i]=0; LAUNCHED[i]=0
+  LOG_OFF[i]=0
 done
 
 cmd_string() {
@@ -152,12 +163,62 @@ cmd_string() {
 
 idx_of() { local n="$1" k; for k in "${!NAMES[@]}"; do [[ "${NAMES[$k]}" == "$n" ]] && { echo "$k"; return; }; done; echo -1; }
 
+# 每个进程“起来”的标志。只用于重启后确认，别拿它判定业务正常。
+ready_pat() {
+  case "$1" in
+    base)   echo "serial port opened" ;;
+    camera) echo "摄像头已成功启动" ;;
+    yolo)   echo "视觉检测节点就绪" ;;
+    follow) echo "Line follower subscribing" ;;
+    panel)  echo "[panel] http://" ;;
+    *)      echo "[DEC] proc start name=$1" ;;
+  esac
+}
+
+# 杀一个受管进程：先 TERM 整个进程组（xterm/setsid 下 wrap.sh 是会话首进程，pgid==pid），
+# 等它真的退出，超时才 KILL；最后按包名兜底清扫。
+# 只 kill wrap.sh 的 pid 是不够的：ros2 launch 和节点会变成孤儿，继续发 cmd_vel，
+# 这就是“改了参数有时生效、日志两段混在一起、端口被占”的根因。
+kill_proc() {
+  local n="$1" wait_s="${2:-6}" pid i=0
+  pid="$(read_file "$STATE/$n.pid")"
+  if proc_alive "$pid"; then
+    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+    if (( wait_s > 0 )); then
+      while (( i < wait_s * 10 )) && proc_alive "$pid"; do sleep 0.1; i=$(( i + 1 )); done
+      if proc_alive "$pid"; then
+        log "\033[33m$n 未在 ${wait_s}s 内退出，强制 KILL\033[0m"
+        kill -KILL "-$pid" 2>/dev/null
+        kill -KILL "$pid" 2>/dev/null
+        sleep 0.3
+      fi
+    fi
+  fi
+
+  # 兜底：子进程自己 setsid、或上一轮留下的孤儿，按包名再扫一遍
+  case "$n" in
+    base)      pkill -TERM -f "ros2 launch turn_on_wheeltec_robot" 2>/dev/null || true ;;
+    # camera.py / bpu_yolov8_node.py 是 cd 进目录后用相对路径跑的，
+    # cmdline 里没有 $WS 前缀，只能按文件名匹配
+    camera)    pkill -TERM -f "camera.py" 2>/dev/null || true ;;
+    yolo)      pkill -TERM -f "bpu_yolov8_node.py" 2>/dev/null || true ;;
+    follow)    pkill -TERM -f "install/line_follower/lib/line_follower/(line_follower_node|detection_turn_controller|cmd_mux_node)" 2>/dev/null || true ;;
+    start)     pkill -TERM -f "start_toggle_node" 2>/dev/null || true ;;
+    panel)     pkill -TERM -f "$TOOLS/panel/server.py" 2>/dev/null || true ;;
+    safety)    pkill -TERM -f "$TOOLS/safety_node.py" 2>/dev/null || true ;;
+    collector) pkill -TERM -f "$TOOLS/dec_collector.py" 2>/dev/null || true ;;
+  esac
+}
+
 launch_proc() {
   local n="$1"
   local i; i="$(idx_of "$n")"
   local cmd; cmd="$(cmd_string "$n")"
   LAUNCHED[i]=1
   rm -f "$STATE/$n.exit"
+  # 记住启动前的日志长度：之后判“就绪”只看这之后的输出，
+  # 否则文件里上一次启动留下的就绪行会让判断立刻为真。
+  LOG_OFF[i]="$(stat -c%s "$RUN_DIR/$n.log" 2>/dev/null || echo 0)"
 
   if [[ "${WINDOWED[$i]}" == "1" && $HEADLESS -eq 0 ]]; then
     RDK_NAME="$n" RDK_CMD="$cmd" RDK_RUN_DIR="$RUN_DIR" RDK_STATE_DIR="$STATE" \
@@ -218,14 +279,10 @@ shutdown_all() {
   publish_zero 30
 
   # 2) 按进程组杀（后台进程是 setsid 出来的，pid 就是组长，-pid 连带子进程）
-  local i n pid
+  local i n
   for i in "${!NAMES[@]}"; do
     n="${NAMES[$i]}"
-    pid="$(read_file "$STATE/$n.pid")"
-    if proc_alive "$pid"; then
-      kill -TERM "-$pid" 2>/dev/null
-      kill -TERM "$pid" 2>/dev/null
-    fi
+    kill_proc "$n" 0
     if [[ -n "${XTERM_PID[$i]}" ]] && proc_alive "${XTERM_PID[$i]}"; then
       kill -TERM "${XTERM_PID[$i]}" 2>/dev/null
     fi
@@ -257,8 +314,13 @@ trap 'shutdown_all; exit 0' INT TERM HUP
 # 也不用起临时节点（每次调用约 1s，几十次会把启动拖到半分钟）。
 wait_for_log() {
   local n="$1" pat="$2" tmo="${3:-15}" i=0 max=$(( ${3:-15} * 5 ))
+  local idx off=0
+  idx="$(idx_of "$n")"
+  [[ $idx -ge 0 ]] && off="${LOG_OFF[$idx]:-0}"
   while (( i < max )); do
-    if grep -qF -- "$pat" "$RUN_DIR/$n.log" 2>/dev/null; then
+    # 只看本次启动之后的日志段。用进程替换而不是管道：脚本开了 pipefail，
+    # `tail | grep -q` 在 grep 提前退出时会因 SIGPIPE 变成假失败。
+    if grep -qF -- "$pat" <(tail -c +$(( off + 1 )) "$RUN_DIR/$n.log" 2>/dev/null); then
       log "$n 就绪：$pat"
       return 0
     fi
@@ -319,13 +381,20 @@ while [[ $STOPPING -eq 0 ]]; do
     if [[ -n "$want" && "$(idx_of "$want")" != "-1" ]]; then
       i="$(idx_of "$want")"
       log "面板请求重启 $want"
-      printf '[DEC] panel restart name=%s\n' "$want"
-      pid="$(read_file "$STATE/$want.pid")"
-      proc_alive "$pid" && kill -TERM "$pid" 2>/dev/null
-      sleep 1
+      printf '[DEC] proc restart name=%s by=panel\n' "$want"
+      # 必须把旧进程组整组杀干净再拉起，否则新旧两套节点会同时发 cmd_vel，
+      # 表现就是"参数有时生效、日志里两段输出混着、面板端口被旧进程占着"。
+      kill_proc "$want" 6
       RESTARTS[i]=0
       launch_proc "$want"
       [[ "$want" == "follow" ]] && FOLLOW_GRACE_UNTIL=$(( $(date +%s) + FOLLOW_GRACE ))
+      # 等新进程真的报就绪再宣告完成：面板据此提示“已更新”，而不是点完就算
+      if wait_for_log "$want" "$(ready_pat "$want")" 15; then
+        printf '[DEC] proc ready name=%s\n' "$want"
+      else
+        printf '[DEC] proc timeout name=%s\n' "$want"
+        log "\033[31m$want 重启后 15s 内没等到就绪标记（查 $RUN_DIR/$want.log）\033[0m"
+      fi
     fi
   fi
 
