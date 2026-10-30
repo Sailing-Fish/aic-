@@ -104,6 +104,12 @@ class TrackRenderer:
         my = np.nan_to_num(((self.H - 1) - y / self.mpp).astype(np.float32), nan=-1e6)
         out = cv2.remap(self.map_bgr, mx, my, cv2.INTER_LINEAR,
                         borderMode=cv2.BORDER_CONSTANT, borderValue=BG_BGR)
+        # remap 在坐标越界时会填 (0,0,0)，不是 borderValue。纯黑会被巡线的
+        # binary_threshold(160) 当成障碍，污染 ROI 的列白像素比例 -> 质心跳动 -> 丢线。
+        # 统一改回地图背景色，与真实地垫一致。
+        black = (out == 0).all(axis=2)
+        if black.any():
+            out[black] = BG_BGR
         if blur > 0:
             k = int(blur * 2) * 2 + 1
             out = cv2.GaussianBlur(out, (k, k), blur)
