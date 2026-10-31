@@ -93,12 +93,13 @@ LineFollowerNode::LineFollowerNode()
     this->get_logger(),
     "[DEC] param effective target_speed=%.2f max_speed=%.2f kp=%.2f max_yaw_rate=%.2f "
     "roi_top=%.2f roi_bottom=%.2f yellow_stop_dur=%.2f yellow_count=%d "
-    "red_near=%.2f red_close=%.2f lost_speed=%.2f",
+    "red_near=%.2f red_close=%.2f lost_speed=%.2f ff=%.2f ff_v=%d",
     target_speed_, max_speed_, kp_, max_yaw_rate_,
     roi_top_ratio_, roi_bottom_ratio_, yellow_stop_duration_, yellow_permanent_count_,
     this->get_parameter("red_near_ratio").as_double(),
     this->get_parameter("red_very_close_ratio").as_double(),
-    this->get_parameter("line_lost_forward_speed").as_double());
+    this->get_parameter("line_lost_forward_speed").as_double(),
+    steer_ff_gain_, steer_ff_use_v_ ? 1 : 0);
 
   const int kernel_size = std::max<int>(1, morph_kernel_);
   morph_element_ = cv::getStructuringElement(
@@ -236,6 +237,8 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("line_lost_forward_speed", 0.06);
   this->declare_parameter("line_lost_yaw_hold_factor", 0.85);
   this->declare_parameter("speed_gain_damping", 0.5);
+  this->declare_parameter("steer_ff_gain", 0.0);
+  this->declare_parameter("steer_ff_use_v", false);
   this->declare_parameter("publish_debug_image", true);
 
   // 停稳即走：靠 odom 确认真正静止后再放行。
@@ -335,6 +338,8 @@ void LineFollowerNode::declare_parameters()
 
   line_lost_stop_time_ = this->get_parameter("line_lost_stop_time").as_double();
   speed_gain_damping_ = this->get_parameter("speed_gain_damping").as_double();
+  steer_ff_gain_ = std::max(0.0, this->get_parameter("steer_ff_gain").as_double());
+  steer_ff_use_v_ = this->get_parameter("steer_ff_use_v").as_bool();
   publish_debug_image_ = this->get_parameter("publish_debug_image").as_bool();
 
   odom_topic_ = this->get_parameter("odom_topic").as_string();
@@ -425,6 +430,7 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
   // 暂停后清空连续弯状态，重新启动时由当前画面重新判断，避免继承旧状态。
   if (!start_enabled_) {
     g_curve_assist = CurveAssistRuntime{};
+    ff_state_ = 0.0;
   }
 
   RCLCPP_INFO(
@@ -463,6 +469,7 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
   if (!start_enabled_) {
     // 停车等待期间不累计连续弯判定，避免起步继承静止画面的旧状态。
     g_curve_assist = CurveAssistRuntime{};
+    ff_state_ = 0.0;
 
     static rclcpp::Time last_log_time = this->now();
     rclcpp::Time current_time = this->now();
@@ -786,8 +793,19 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       last_detection_time_ = now;
       current_state = TrackState::TRACKING;
 
-      const double yaw_cmd =
-        clamp(-(kp_ * result.error), -max_yaw_rate_, max_yaw_rate_);
+      // 视觉前馈：far-near 的带符号差就是“弯的提前量”。
+      // 左弯时 ff_raw < 0，-gain*ff_raw > 0（向左），右弯相反。
+      // 一阶低通抑制 far 带逐帧噪声；默认 gain=0 时完全不影响原逻辑。
+      const double ff_raw =
+        g_curve_assist.far_error - g_curve_assist.near_error;
+      ff_state_ = 0.25 * ff_raw + 0.75 * ff_state_;
+      double ff = ff_state_;
+      if (steer_ff_use_v_) {
+        ff *= clamp(odom_speed_ / 0.45, 0.0, 1.5);
+      }
+      const double yaw_cmd = clamp(
+        -(kp_ * result.error + steer_ff_gain_ * ff),
+        -max_yaw_rate_, max_yaw_rate_);
 
       // 曲率代理 = 远端偏差 - 近端偏差。直道上两者接近，弯道上远端偏得多。
       // 用它降速比用 |error| 更准：偏差大不等于弯急（可能只是贴边）。
