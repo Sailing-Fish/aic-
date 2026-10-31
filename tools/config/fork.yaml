@@ -95,12 +95,28 @@ detection_turn_controller:
     detection_topic: hobot_dnn_detection
     state_topic: line_follower/track_state
     cmd_vel_topic: /cmd_vel_detection
+    start_topic: line_follower/start_cmd
+    stop_cmd_topic: /cmd_vel_stop
+    require_start_cmd: true
+    stop_cmd_timeout: 0.5
     det_frame_width: 640
     det_frame_height: 480
     confidence_threshold: 0.1
     frame_window: 2
+    max_detection_gap: 0.35
+    max_missed_frames: 1
+    max_position_jump: 0.18
+    min_position_consistency: 0.45
+    min_x_diff: 0.01
+    weight_confidence: 0.45
+    weight_count: 0.35
+    weight_consistency: 0.20
     turn_cooldown: 0.8
     turn_duration: 0.38
+    min_turn_duration: 0.12
+    recovery_center_tolerance: 0.12
+    recovery_confirm_frames: 2
+    dedup_clear_time: 2.0
     turn_linear: 0.2
     yaw_gain: 1.6
     max_yaw_rate: 1.3
