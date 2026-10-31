@@ -8,12 +8,12 @@ line_follower_node:
     stop_cmd_topic: /cmd_vel_stop
     line_centroid_topic: line_follower/centroid
     odom_topic: /odom
-    target_speed: 0.50
-    max_speed: 0.50
+    track_mode: fork
+    target_speed: 0.5
+    max_speed: 0.5
     min_speed: 0.0
     max_yaw_rate: 1.5
-    kp: 3.30
-    # 停稳即走：最少停 0.35s，且 odom 确认 |v|<0.02 持续 0.25s 才放行
+    kp: 3.3
     yellow_stop_min_time: 0.35
     odom_still_threshold: 0.02
     odom_still_hold: 0.25
@@ -39,6 +39,7 @@ line_follower_node:
     yellow_stop_duration: 1.0
     yellow_permanent_count: 4
     yellow_clear_frames: 10
+    yellow_min_gap_m: 0.6
     enable_intersection_probe: false
     intersection_band_height: 50
     intersection_dark_ratio_threshold: 1.0
@@ -89,6 +90,8 @@ line_follower_node:
     line_lost_forward_speed: 0.3
     line_lost_yaw_hold_factor: 0.85
     speed_gain_damping: 0.22
+    steer_ff_gain: 0.0
+    steer_ff_use_v: false
     publish_debug_image: true
 detection_turn_controller:
   ros__parameters:

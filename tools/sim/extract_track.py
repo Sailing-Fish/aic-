@@ -199,10 +199,20 @@ def main():
     print(f"[geom] path={total:.2f}m  lane_width≈{lane_w:.0f}mm  "
           f"kappa max={np.abs(kappa).max():.2f}/m (Rmin={1/max(np.abs(kappa).max(),1e-6):.2f}m)", flush=True)
 
-    # 黄线：默认按实测 odom 比例缩放，可在 JSON 里手改
-    yellow_odom = [0.85, 2.56, 8.35, 10.95]
-    odom_len = 11.07
+    # 黄线位置：按各图实测 odom 停车里程，等比缩放到中心线弧长。
+    #   fork      : lap_fork2 @0.3 -> 停车点 0.85/2.56/8.35/10.95，odom 11.07 m
+    #   roundabout: rb4       @0.3 -> 停车点 0.40/2.89/6.08/10.03，odom 10.03 m
+    # 环岛原来直接套 fork 的 [0.85,2.56,8.35,10.95]，第 3 根偏了约 2 m，
+    # 导致仿真把第 3 根当成第 4 根、提前 1.8 m 判终点。
+    YELLOW_ODOM = {
+        "fork": ([0.85, 2.56, 8.35, 10.95], 11.07),
+        "roundabout": ([0.40, 2.89, 6.08, 10.03], 10.03),
+    }
+    yellow_odom, odom_len = YELLOW_ODOM.get(
+        args.name, ([0.85, 2.56, 8.35, 10.95], 11.07))
     yellow = [round(v * total / odom_len, 3) for v in yellow_odom]
+    # 规则：最后一根贴在终点前 6cm
+    yellow[-1] = round(total - 0.06, 3)
 
     # 鸟瞰渲染图：蓝底 + 白路 + 黄线（颜色与真实赛场地垫一致）
     rgb = np.zeros((H, W, 3), np.uint8)
@@ -218,6 +228,9 @@ def main():
         half_len = (lane_w / 2) / mm_per_px
         a = (pts_px[i] + nrm * half_len).astype(int)
         b = (pts_px[i] - nrm * half_len).astype(int)
+        # 规则写黄线宽 20mm，但真实胶带边缘发虚、有反光，图像里有效宽度约 30mm。
+        # 仿真画 20mm 硬边会让面积只占 ROI 的 0.5%，达不到 yellow_area_ratio_threshold=0.02，
+        # 表现为"黄线漏检、车不停"。按 32mm 画更接近实车成像。
         cv2.line(rgb, tuple(a), tuple(b), (0, 215, 255), max(2, int(20 / mm_per_px)))
     cv2.imwrite(os.path.join(outdir, f"{args.name}.png"), rgb)
 

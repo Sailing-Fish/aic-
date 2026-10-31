@@ -138,6 +138,10 @@ private:
   double line_lost_full_stop_time_{1.2};
 
   double speed_gain_damping_{0.5};
+  // 视觉前馈：用 far-near 的带符号差提前打方向。默认 0 = 关闭，行为与原来完全一致。
+  double steer_ff_gain_{0.0};
+  bool steer_ff_use_v_{false};
+  double ff_state_{0.0};
   bool publish_debug_image_{true};
 
   // ============================================================

@@ -154,7 +154,12 @@ class SimWorld(Node):
         im = self.bridge.cv2_to_imgmsg(img, encoding="bgr8")
         im.header.stamp = stamp
         im.header.frame_id = "camera_link"
-        self.pub_img.publish(im)
+        # 单帧发布失败不应让整个仿真停摆：publish 抛异常会一路传到 executor，
+        # 导致 spin 退出、图像流中断，巡线节点随之判定丢线。
+        try:
+            self.pub_img.publish(im)
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f"[sim] image publish failed: {exc}")
 
         # 每 30 帧打一行，扫参脚本直接解析
         self._frame += 1
@@ -188,9 +193,17 @@ def main():
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except Exception as exc:  # noqa: BLE001
+        print(f"[sim] spin exited abnormally: {exc}", flush=True)
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

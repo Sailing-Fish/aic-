@@ -29,12 +29,13 @@ LineFollowerNode::LineFollowerNode()
     this->get_logger(),
     "[DEC] param effective target_speed=%.2f max_speed=%.2f kp=%.2f max_yaw_rate=%.2f "
     "roi_top=%.2f roi_bottom=%.2f yellow_stop_dur=%.2f yellow_count=%d "
-    "red_near=%.2f red_close=%.2f lost_speed=%.2f",
+    "red_near=%.2f red_close=%.2f lost_speed=%.2f ff=%.2f ff_v=%d",
     target_speed_, max_speed_, kp_, max_yaw_rate_,
     roi_top_ratio_, roi_bottom_ratio_, yellow_stop_duration_, yellow_permanent_count_,
     this->get_parameter("red_near_ratio").as_double(),
     this->get_parameter("red_very_close_ratio").as_double(),
-    this->get_parameter("line_lost_forward_speed").as_double());
+    this->get_parameter("line_lost_forward_speed").as_double(),
+    steer_ff_gain_, steer_ff_use_v_ ? 1 : 0);
 
   const double now_sec = this->now().seconds();
   track_state_machine_.reset(now_sec);
@@ -185,6 +186,8 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("line_lost_slow_factor", 0.4);
   this->declare_parameter("line_lost_full_stop_time", 1.2);
   this->declare_parameter("speed_gain_damping", 0.5);
+  this->declare_parameter("steer_ff_gain", 0.0);
+  this->declare_parameter("steer_ff_use_v", false);
   this->declare_parameter("publish_debug_image", true);
 
   // 停稳即走
@@ -299,6 +302,8 @@ void LineFollowerNode::declare_parameters()
   line_lost_slow_factor_ = this->get_parameter("line_lost_slow_factor").as_double();
   line_lost_full_stop_time_ = this->get_parameter("line_lost_full_stop_time").as_double();
   speed_gain_damping_ = this->get_parameter("speed_gain_damping").as_double();
+  steer_ff_gain_ = std::max(0.0, this->get_parameter("steer_ff_gain").as_double());
+  steer_ff_use_v_ = this->get_parameter("steer_ff_use_v").as_bool();
   publish_debug_image_ = this->get_parameter("publish_debug_image").as_bool();
 
   yellow_stop_min_time_ = this->get_parameter("yellow_stop_min_time").as_double();
@@ -499,6 +504,7 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
 
   if (!start_enabled_) {
     curve_assist_ = CurveAssistState{};
+    ff_state_ = 0.0;
   }
 
   RCLCPP_INFO(
@@ -536,6 +542,7 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
   if (!start_enabled_) {
     curve_assist_ = CurveAssistState{};
+    ff_state_ = 0.0;
 
     const rclcpp::Time current_time = this->now();
     if (!waiting_log_initialized_) {
@@ -780,6 +787,13 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         motion_state_);
     linear_speed = cmd.linear_speed;
     yaw_rate = cmd.yaw_rate;
+    const double ff_raw = curve_assist_.far_error - curve_assist_.near_error;
+    ff_state_ = 0.25 * ff_raw + 0.75 * ff_state_;
+    double ff = ff_state_;
+    if (steer_ff_use_v_) {
+      ff *= clamp(sm_state.odom_speed / 0.45, 0.0, 1.5);
+    }
+    yaw_rate = clamp(yaw_rate - steer_ff_gain_ * ff, -max_yaw_rate_, max_yaw_rate_);
     publish_stop_cmd = cmd.publish_stop;
   } else {
     current_state = step_events.base_state;

@@ -8,15 +8,16 @@ line_follower_node:
     stop_cmd_topic: /cmd_vel_stop
     line_centroid_topic: line_follower/centroid
     odom_topic: /odom
-    target_speed: 0.50
-    max_speed: 0.50
+    track_mode: roundabout
+    target_speed: 0.55
+    max_speed: 0.55
     min_speed: 0.0
-    max_yaw_rate: 1.5
-    kp: 3.30
+    max_yaw_rate: 2.0
+    kp: 2.45
     yellow_stop_min_time: 0.35
     odom_still_threshold: 0.02
     odom_still_hold: 0.25
-    roi_top_ratio: 0.65
+    roi_top_ratio: 0.6
     roi_bottom_ratio: 0.2
     gaussian_kernel: 5
     binary_threshold: 160.0
@@ -38,6 +39,7 @@ line_follower_node:
     yellow_stop_duration: 1.0
     yellow_permanent_count: 4
     yellow_clear_frames: 10
+    yellow_min_gap_m: 0.6
     enable_intersection_probe: false
     intersection_band_height: 50
     intersection_dark_ratio_threshold: 1.0
@@ -69,9 +71,9 @@ line_follower_node:
     reverse_curve_threshold: 0.35
     reverse_curve_confirm_frames: 3
     reverse_curve_clear_frames: 4
-    reverse_curve_speed: 0.28
-    sharp_curve_threshold: 0.42
-    sharp_curve_speed: 0.33
+    reverse_curve_speed: 0.32
+    sharp_curve_threshold: 0.5
+    sharp_curve_speed: 0.36
     enable_red_filter: true
     red_h_low_1: 0
     red_h_high_1: 10
@@ -106,7 +108,9 @@ line_follower_node:
     line_lost_stop_time: 0.8
     line_lost_forward_speed: 0.3
     line_lost_yaw_hold_factor: 0.85
-    speed_gain_damping: 0.26
+    speed_gain_damping: 0.9
+    steer_ff_gain: 0.0
+    steer_ff_use_v: false
     publish_debug_image: true
 detection_turn_controller:
   ros__parameters:
