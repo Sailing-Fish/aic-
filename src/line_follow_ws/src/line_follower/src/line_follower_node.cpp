@@ -58,6 +58,12 @@ LineFollowerNode::LineFollowerNode()
   intersection_end_time_ = this->now();
   intersection_cooldown_until_ = this->now();
 
+  // 这三个时间戳必须用节点时钟初始化：默认构造的 rclcpp::Time 是 SYSTEM_TIME，
+  // 和 this->now() 的 ROS_TIME 相减会抛 "can't subtract times with different time sources"。
+  last_odom_time_ = this->now();
+  last_segment_pub_time_ = this->now();
+  last_seg_diag_time_ = this->now();
+
   RCLCPP_INFO(
     this->get_logger(),
     "Line follower subscribing to '%s', publishing cmd_vel on '%s', start_topic: '%s'",

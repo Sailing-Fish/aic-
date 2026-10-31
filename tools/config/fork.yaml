@@ -11,7 +11,7 @@ line_follower_node:
     track_mode: fork
     seg2_start_count: 2
     seg3_start_count: 0
-    seg3_start_dist_m: 1.2
+    seg3_start_dist_m: 1.0
     seg1_target_speed: 0.65
     seg1_kp: 3.3
     seg1_steer_bias: 0.0
