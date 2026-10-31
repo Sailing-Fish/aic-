@@ -18,7 +18,12 @@ struct SegmentParams
   double kp{3.00};
   // 主动转向偏置 rad/s，与 angular.z 同号：负 = 向右，正 = 向左。
   // 稳态平衡点 error = -steer_bias / kp，用来"故意偏到线的一侧"（选支路）。
+  // steer_bias2 给"拐进去再拐出来"的第二种偏置用，配合两个持续里程。
   double steer_bias{0.0};
+  double steer_bias2{0.0};
+  double bias_phase1_dist_m{0.0};
+  double bias_gap_m{0.0};
+  double bias_phase2_dist_m{0.0};
   double max_yaw_rate{1.50};
   double speed_gain_damping{0.50};
   double roi_top_ratio{0.65};
@@ -33,6 +38,41 @@ struct SegmentParams
 };
 
 constexpr int kMaxSegments = 4;
+
+// ============================================================
+// 段内"转向偏置时序"：同一段里打两个短脉冲，中间留一个间隔。
+//
+//   0 .. D1              用 B1（拐进支路）
+//   D1 .. D1+G           不施加（间隔：靠 P 跟线通过这一小段）
+//   D1+G .. D1+G+D2      用 B2（B2 与 B1 反号 = 拐出来；同号 = 再拐一次）
+//   之后                 0
+//
+// D1 <= 0            ：整段都用 B1（不切换）
+// G  < 0             ：按 0 处理
+// D2 <= 0            ：与 D1 相同（对称脉冲）
+//
+// 注意：这是"持续施加的角速度偏置"，不是脉冲；实际转角 ≈ B × (D / v)，
+// 窗口短于 ~0.2 s 会被舵机一阶滞后吃掉，所以 D 一般 0.2–0.4 m。
+// ============================================================
+inline double steer_bias_at(
+  double seg_dist_m, double b1, double d1, double gap, double b2, double d2)
+{
+  if (d1 <= 0.0) {
+    return b1;
+  }
+  if (seg_dist_m < d1) {
+    return b1;
+  }
+  const double g = std::max(0.0, gap);
+  if (seg_dist_m < d1 + g) {
+    return 0.0;
+  }
+  const double d2_eff = (d2 > 0.0) ? d2 : d1;
+  if (seg_dist_m < d1 + g + d2_eff) {
+    return b2;
+  }
+  return 0.0;
+}
 
 // ============================================================
 // 一张地图的分段计划

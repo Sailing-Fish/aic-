@@ -86,11 +86,29 @@ SEGMENT_BOUNDARIES = {
 }
 
 
+# 只给某一张图的某一段追加的参数（(地图, 段号) -> items）
+# 段内偏置时序：B1 走 D1 米 → 间隔 G 米 → B2 走 D2 米 → 0
+SEGMENT_EXTRA = {
+    ("fork", 2): [
+        ("steer_bias_dist_m", "偏置1 持续里程 (m)", "float", 0.0, 2.0, 0.05,
+         "进入本段后施加偏置1 走多少米；0 = 整段都施加（等于没有时序）"),
+        ("steer_bias_gap_m", "两段偏置的间隔 (m)", "float", 0.0, 2.0, 0.05,
+         "偏置1 打完先松多少米（顺着线走），再打偏置2"),
+        ("steer_bias2", "转向偏置2 (负=向右)", "float", -1.5, 1.5, 0.05,
+         "拐出来用；与偏置1 同号=再拐一次，反号=拐回来"),
+        ("steer_bias2_dist_m", "偏置2 持续里程 (m)", "float", 0.0, 2.0, 0.05,
+         "0 = 与偏置1 相同（对称脉冲）"),
+    ],
+}
+
+
 def _segment_groups():
     groups = []
     for map_name, titles in SEGMENT_TITLES.items():
         for seg, title in titles.items():
             items = [("seg%d_%s" % (seg, k[0]),) + k[1:] for k in CURVE_KEYS]
+            items += [("seg%d_%s" % (seg, k[0]),) + k[1:]
+                      for k in SEGMENT_EXTRA.get((map_name, seg), [])]
             groups.append({
                 "section": "line_follower_node",
                 "group": title,

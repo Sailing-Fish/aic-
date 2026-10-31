@@ -49,6 +49,14 @@ private:
   // 当前段是否在等一个"里程"边界（岔路段2→3 / 环岛段3→4），用于 2Hz 打 d= 方便校准
   bool awaiting_dist_boundary() const;
 
+  // 此刻实际施加的转向偏置（段内两段时序：B1 走 D1 米 → B2 走 D2 米 → 0）
+  double current_bias() const
+  {
+    return steer_bias_at(
+      seg_dist_m_, steer_bias_, bias_phase1_dist_m_, bias_gap_m_, steer_bias2_,
+      bias_phase2_dist_m_);
+  }
+
   bool detect_red(
     const cv::Mat & frame_bgr,
     int roi_top,
@@ -98,7 +106,16 @@ private:
   double kp_{1.8};
   // 主动转向偏置（rad/s，负=向右）。稳态平衡点 error = -steer_bias_ / kp_，
   // 用来故意把车偏到线的一侧（岔路选支）。默认 0 = 完全不影响原行为。
+  // 段内可分两段施加：前 bias_phase1_dist_m_ 米用 steer_bias_，
+  // 之后 bias_phase2_dist_m_ 米用 steer_bias2_（拐进去再拐出来），再之后归零。
   double steer_bias_{0.0};
+  double steer_bias2_{0.0};
+  double bias_phase1_dist_m_{0.0};
+  double bias_gap_m_{0.0};
+  double bias_phase2_dist_m_{0.0};
+  // 进入本段后走过的里程（分段偏置时序用；与 dist_since_yellow_ 分开，
+  // 免得中途压到黄线把时序重置）
+  double seg_dist_m_{0.0};
 
   double roi_top_ratio_{0.5};
   double roi_bottom_ratio_{0.05};

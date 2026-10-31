@@ -26,17 +26,8 @@ LineFollowerNode::LineFollowerNode()
   declare_parameters();
   setup_interfaces();
 
-  RCLCPP_INFO(
-    this->get_logger(),
-    "[DEC] param effective target_speed=%.2f max_speed=%.2f kp=%.2f max_yaw_rate=%.2f "
-    "roi_top=%.2f roi_bottom=%.2f yellow_stop_dur=%.2f yellow_count=%d "
-    "red_near=%.2f red_close=%.2f lost_speed=%.2f ff=%.2f ff_v=%d",
-    target_speed_, max_speed_, kp_, max_yaw_rate_,
-    roi_top_ratio_, roi_bottom_ratio_, yellow_stop_duration_, yellow_permanent_count_,
-    this->get_parameter("red_near_ratio").as_double(),
-    this->get_parameter("red_very_close_ratio").as_double(),
-    this->get_parameter("line_lost_forward_speed").as_double(),
-    steer_ff_gain_, steer_ff_use_v_ ? 1 : 0);
+  // 参数生效值由 load_segment_parameters() 统一打印（全局一行 + 每段一行），
+  // 这里不再重复。
 
   const double now_sec = this->now().seconds();
   track_state_machine_.reset(now_sec);
@@ -235,6 +226,11 @@ void LineFollowerNode::declare_parameters()
       decl_d("target_speed", 0.50);
       decl_d("kp", 3.00);
       decl_d("steer_bias", 0.0);
+      // 段内偏置时序：B1 走 D1 米 → 间隔 G 米 → B2 走 D2 米 → 0
+      decl_d("steer_bias_dist_m", 0.0);
+      decl_d("steer_bias_gap_m", 0.0);
+      decl_d("steer_bias2", 0.0);
+      decl_d("steer_bias2_dist_m", 0.0);
       decl_d("max_yaw_rate", 1.50);
       decl_d("speed_gain_damping", 0.50);
       decl_d("roi_top_ratio", 0.65);
@@ -555,6 +551,11 @@ void LineFollowerNode::load_segment_parameters()
         "[DEC] param seg%d_steer_bias=%.2f 超过 seg%d_max_yaw_rate=%.2f，已截断",
         i, bias_raw, i, p.max_yaw_rate);
     }
+    // 段内两段偏置：0 表示不启用该阶段
+    p.bias_phase1_dist_m = d("steer_bias_dist_m");
+    p.bias_gap_m = d("steer_bias_gap_m");
+    p.steer_bias2 = std::clamp(sd("steer_bias2"), -p.max_yaw_rate, p.max_yaw_rate);
+    p.bias_phase2_dist_m = d("steer_bias2_dist_m");
     p.speed_gain_damping = d("speed_gain_damping");
     p.roi_top_ratio = clamp(d("roi_top_ratio"), 0.0, 1.0);
     p.roi_bottom_ratio = clamp(d("roi_bottom_ratio"), 0.0, 0.5);
@@ -608,7 +609,7 @@ void LineFollowerNode::load_segment_parameters()
 
   RCLCPP_INFO(
     this->get_logger(),
-    "[DEC] param effective mode=%s segs=%d max_speed=%.2f min_speed=%.2f "
+    "[DEC] param effective #0 mode=%s segs=%d max_speed=%.2f min_speed=%.2f "
     "seg2_start_count=%d seg3_start_count=%d seg3_start_dist_m=%.3f seg4_start_dist_m=%.3f "
     "yellow_stop_dur=%.2f yellow_count=%d",
     track_mode_.c_str(), planner_.count(), max_speed_, min_speed_,
@@ -616,16 +617,36 @@ void LineFollowerNode::load_segment_parameters()
     planner_.plan().seg3_start_dist_m, planner_.plan().seg4_start_dist_m,
     yellow_stop_duration_, yellow_permanent_count_);
 
+  // 键名必须与 YAML 完全一致（segN_<key>）：面板靠它把"待重启"标到对应的行上。
   for (int i = 1; i <= planner_.count(); ++i) {
     const SegmentParams & p = seg_params_[i - 1];
-    RCLCPP_INFO(
-      this->get_logger(),
-      "[DEC] seg%d v=%.2f kp=%.2f bias=%.2f yaw_max=%.2f damp=%.2f roi=%.2f/%.2f "
-      "curve=%d rev=%.2f sharp=%.2f/%.2f ff=%.2f ff_v=%d",
-      i, p.target_speed, p.kp, p.steer_bias, p.max_yaw_rate, p.speed_gain_damping,
-      p.roi_top_ratio, p.roi_bottom_ratio, p.continuous_curve_assist ? 1 : 0,
-      p.reverse_curve_speed, p.sharp_curve_threshold, p.sharp_curve_speed,
-      p.steer_ff_gain, p.steer_ff_use_v ? 1 : 0);
+    std::string line = "[DEC] param effective #" + std::to_string(i);
+    char kv[96];
+    const auto add_d = [&](const char * key, double v) {
+        std::snprintf(kv, sizeof(kv), " seg%d_%s=%.3f", i, key, v);
+        line += kv;
+      };
+    add_d("target_speed", p.target_speed);
+    add_d("kp", p.kp);
+    add_d("steer_bias", p.steer_bias);
+    add_d("steer_bias_dist_m", p.bias_phase1_dist_m);
+    add_d("steer_bias_gap_m", p.bias_gap_m);
+    add_d("steer_bias2", p.steer_bias2);
+    add_d("steer_bias2_dist_m", p.bias_phase2_dist_m);
+    add_d("max_yaw_rate", p.max_yaw_rate);
+    add_d("speed_gain_damping", p.speed_gain_damping);
+    add_d("roi_top_ratio", p.roi_top_ratio);
+    add_d("roi_bottom_ratio", p.roi_bottom_ratio);
+    add_d("reverse_curve_speed", p.reverse_curve_speed);
+    add_d("reverse_curve_threshold", p.reverse_curve_threshold);
+    add_d("sharp_curve_threshold", p.sharp_curve_threshold);
+    add_d("sharp_curve_speed", p.sharp_curve_speed);
+    add_d("steer_ff_gain", p.steer_ff_gain);
+    std::snprintf(
+      kv, sizeof(kv), " seg%d_enable_continuous_curve_assist=%d seg%d_steer_ff_use_v=%d",
+      i, p.continuous_curve_assist ? 1 : 0, i, p.steer_ff_use_v ? 1 : 0);
+    line += kv;
+    RCLCPP_INFO(this->get_logger(), "%s", line.c_str());
   }
 }
 
@@ -638,6 +659,12 @@ void LineFollowerNode::apply_segment(int segment)
   target_speed_ = p.target_speed;
   kp_ = p.kp;
   steer_bias_ = p.steer_bias;
+  steer_bias2_ = p.steer_bias2;
+  bias_phase1_dist_m_ = p.bias_phase1_dist_m;
+  bias_gap_m_ = p.bias_gap_m;
+  bias_phase2_dist_m_ = p.bias_phase2_dist_m;
+  // 段内偏置时序以"进入本段"为起点，所以每次换段都清零。
+  seg_dist_m_ = 0.0;
   max_yaw_rate_ = p.max_yaw_rate;
   speed_gain_damping_ = p.speed_gain_damping;
   roi_top_ratio_ = p.roi_top_ratio;
@@ -772,6 +799,8 @@ void LineFollowerNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr ms
       const double ds = v * dt;
       odom_arc_s_ += ds;
       dist_since_yellow_ += ds;
+      // 段内里程：偏置时序（B1 → 间隔 → B2）的计时基准，换段时清零
+      seg_dist_m_ += ds;
     }
   }
   last_odom_time_ = now;
@@ -1111,9 +1140,10 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     if (steer_ff_use_v_) {
       ff *= clamp(sm_state.odom_speed / 0.45, 0.0, 1.5);
     }
-    // steer_bias_ 是"故意偏到线的一侧"的唯一手段：P 控制器稳态永远把线放在中间。
+    // 转向偏置是"故意偏到线的一侧"的唯一手段：P 控制器稳态永远把线放在中间。
+    // current_bias() 按段内里程给出时序：B1 走 D1 → 间隔 G → B2 走 D2 → 0。
     yaw_rate = clamp(
-      yaw_rate - steer_ff_gain_ * ff + steer_bias_, -max_yaw_rate_, max_yaw_rate_);
+      yaw_rate - steer_ff_gain_ * ff + current_bias(), -max_yaw_rate_, max_yaw_rate_);
     publish_stop_cmd = cmd.publish_stop;
   } else {
     current_state = step_events.base_state;

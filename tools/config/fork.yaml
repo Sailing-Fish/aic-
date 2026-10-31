@@ -29,6 +29,10 @@ line_follower_node:
     seg2_target_speed: 0.53
     seg2_kp: 3.3
     seg2_steer_bias: -0.7
+    seg2_steer_bias_dist_m: 0.2
+    seg2_steer_bias_gap_m: 0.15
+    seg2_steer_bias2: -0.7
+    seg2_steer_bias2_dist_m: 0.2
     seg2_max_yaw_rate: 1.5
     seg2_speed_gain_damping: 0.25
     seg2_roi_top_ratio: 0.65
