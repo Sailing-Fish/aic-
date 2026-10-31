@@ -14,33 +14,15 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 
+#include "line_follower/debug_renderer.hpp"
+#include "line_follower/image_processor.hpp"
+#include "line_follower/lane_geometry.hpp"
+#include "line_follower/line_follower_types.hpp"
+#include "line_follower/motion_controller.hpp"
+#include "line_follower/track_state_machine.hpp"
+
 namespace line_follower
 {
-
-enum class TrackState
-{
-  LOST = 0,
-  TRACKING,
-  YELLOW_LINE_DETECTED
-};
-
-struct ProcessingResult
-{
-  bool line_detected{false};
-  bool yellow_line_detected{false};
-
-  cv::Rect bounding_box{};
-  cv::Point2f centroid{0.0F, 0.0F};
-
-  double error{0.0};
-  TrackState state{TrackState::LOST};
-
-  cv::Mat roi_bgr;
-  cv::Mat binary_mask;
-
-  int roi_top{0};
-  int roi_bottom{0};
-};
 
 class LineFollowerNode : public rclcpp::Node
 {
@@ -49,13 +31,14 @@ public:
 
 private:
   void declare_parameters();
+  void sync_runtime_parameters();
   void setup_interfaces();
 
   void start_callback(const std_msgs::msg::Bool::SharedPtr msg);
   void image_callback(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
 
-  std::optional<ProcessingResult> process_image(const cv::Mat & frame_bgr) const;
+  std::optional<ProcessingResult> process_image(const cv::Mat & frame_bgr);
 
   bool detect_red(
     const cv::Mat & frame_bgr,
@@ -65,7 +48,7 @@ private:
     double & side_sign,
     cv::Point2d & red_centroid_img,
     cv::Point2d & div_base_img,
-    cv::Point2d & div_target_img) const;
+    cv::Point2d & div_target_img);
 
   std::string state_to_string(TrackState state) const;
 
@@ -94,9 +77,10 @@ private:
   std::string start_topic_;
   std::string stop_cmd_topic_;
   std::string line_centroid_topic_;
+  std::string odom_topic_;
 
   // ============================================================
-  // Basic motion
+  // Basic motion & ROI parameters
   // ============================================================
   double target_speed_{0.6};
   double max_speed_{1.0};
@@ -104,9 +88,6 @@ private:
   double max_yaw_rate_{1.2};
   double kp_{1.8};
 
-  // ============================================================
-  // ROI / image processing
-  // ============================================================
   double roi_top_ratio_{0.5};
   double roi_bottom_ratio_{0.05};
 
@@ -117,10 +98,8 @@ private:
   double min_contour_area_{2000.0};
   bool invert_binary_{false};
 
-  cv::Mat morph_element_;
-
   // ============================================================
-  // White road filter
+  // White road & yellow line filter parameters
   // ============================================================
   bool use_white_filter_{false};
   int white_h_low_{0};
@@ -128,9 +107,6 @@ private:
   int white_s_max_{60};
   int white_v_min_{180};
 
-  // ============================================================
-  // Yellow line
-  // ============================================================
   bool use_yellow_filter_{false};
   int yellow_h_low_{20};
   int yellow_h_high_{40};
@@ -139,16 +115,34 @@ private:
   double yellow_area_ratio_threshold_{0.1};
   double yellow_stop_duration_{1.0};
   int yellow_permanent_count_{5};
-
-  // 新增：同一条实体黄线只计数一次
-  bool yellow_line_latched_{false};
-  int yellow_clear_frames_{0};
   int yellow_clear_frames_required_{10};
+  double yellow_stop_min_time_{0.35};
+  double odom_still_threshold_{0.02};
+  double odom_still_hold_{0.25};
 
-  bool yellow_line_stop_active_{false};
-  int yellow_line_detection_count_{0};
-  bool permanent_stop_{false};
-  rclcpp::Time yellow_line_detection_time_;
+  // ============================================================
+  // Parameterized lane band geometry & lost-line thresholds
+  // ============================================================
+  double far_band_top_ratio_{0.34};
+  double far_band_bottom_ratio_{0.56};
+  double near_band_top_ratio_{0.62};
+  double near_band_bottom_ratio_{0.88};
+  double near_band_weight_{0.70};
+  double far_band_weight_{0.30};
+
+  double line_lost_stop_time_{0.8};
+  double line_lost_forward_speed_{0.06};
+  double line_lost_yaw_hold_factor_{0.85};
+  double line_lost_slow_time_{0.4};
+  double line_lost_slow_factor_{0.4};
+  double line_lost_full_stop_time_{1.2};
+
+  double speed_gain_damping_{0.5};
+  // 视觉前馈：用 far-near 的带符号差提前打方向。默认 0 = 关闭，行为与原来完全一致。
+  double steer_ff_gain_{0.0};
+  bool steer_ff_use_v_{false};
+  double ff_state_{0.0};
+  bool publish_debug_image_{true};
 
   // ============================================================
   // Intersection probe
@@ -195,33 +189,21 @@ private:
   cv::Point2d last_div_target_img_{0.0, 0.0};
 
   // ============================================================
-  // Line state / runtime state
+  // Extracted domain components & explicit runtime state objects
   // ============================================================
-  double line_lost_stop_time_{0.8};
-  double speed_gain_damping_{0.5};
-  // 视觉前馈：用 far-near 的带符号差提前打方向。默认 0 = 关闭，行为与原来完全一致。
-  double steer_ff_gain_{0.0};
-  bool steer_ff_use_v_{false};   // 固件是角速度闭环时，前馈乘 v/0.45
-  double ff_state_{0.0};         // 一阶低通状态
-  bool publish_debug_image_{true};
+  ImageProcessor image_processor_;
+  LaneGeometry lane_geometry_;
+  TrackStateMachine track_state_machine_;
+  MotionController motion_controller_;
+  DebugRenderer debug_renderer_;
+
+  CurveAssistState curve_assist_{};
+  RedAvoidState red_avoid_{};
+  MotionState motion_state_{};
 
   bool start_enabled_{false};
-  TrackState last_state_{TrackState::LOST};
-  rclcpp::Time last_detection_time_;
-
-  // ============================================================
-  // Odom：用于"停稳即走"判定
-  // 固定等 1.0s 的旧逻辑里，真正静止只有 0.35-0.5s；
-  // 用 odom 确认静止可以既省时间又保证合规（未停稳罚 +15s）。
-  // ============================================================
-  std::string odom_topic_;
-  double yellow_stop_min_time_{0.35};   // 最短停车时间，防止刚检测到就起步
-  double odom_still_threshold_{0.02};   // 判定静止的速度阈值 m/s
-  double odom_still_hold_{0.25};        // 需要持续静止多久
-  double odom_speed_{0.0};
-  bool odom_still_valid_{false};
-  bool odom_seen_{false};
-  rclcpp::Time odom_still_since_;
+  bool waiting_log_initialized_{false};
+  rclcpp::Time last_waiting_log_time_;
 
   // ============================================================
   // ROS interfaces
