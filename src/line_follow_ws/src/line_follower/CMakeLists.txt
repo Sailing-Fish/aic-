@@ -49,6 +49,7 @@ include_directories(
 add_library(${PROJECT_NAME}_core
   src/line_follower_node.cpp
   ${LINE_FOLLOWER_ALGO_SOURCES}
+  src/segment_planner.cpp
 )
 ament_target_dependencies(${PROJECT_NAME}_core
   rclcpp

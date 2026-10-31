@@ -223,6 +223,7 @@
           <option value="fork">岔路 fork</option>
           <option value="roundabout">环岛 roundabout</option>
         </select>
+        <select id="segSel" title="选择要编辑的段；切换只改显隐，跨段的改动会一起保存"></select>
         <button class="primary" id="btnSaveRestart">保存并重启巡线</button>
         <button id="btnSave">仅保存</button>
         <span class="memo" id="memo">未修改</span>
@@ -308,7 +309,33 @@
       <tr><td>生效参数</td><td>节点<b>实际</b>加载的值。和 YAML 不一致就说明要重启巡线</td></tr>
     </table>
 
-    <h4>五、为什么改了参数车没变</h4>
+    <h4>五、分段参数怎么用</h4>
+    <p>一张地图切成几段，每段一套<b>弯道相关</b>的参数（目标速度、kp、角速度上限、
+       误差降速、ROI 上下边界、连续弯辅助、视觉前馈）。切换点如下：</p>
+    <table>
+      <tr><th>地图</th><th>段</th><th>从哪开始</th></tr>
+      <tr><td>岔路</td><td>1</td><td>起步</td></tr>
+      <tr><td>岔路</td><td>2</td><td>跨过第 2 根黄线（选择支路/转弯窗口）</td></tr>
+      <tr><td>岔路</td><td>3</td><td>第 2 根黄线之后再走 <code>段3 起始里程</code>（转弯结束，恢复正常跟线）</td></tr>
+      <tr><td>环岛</td><td>1</td><td>起步</td></tr>
+      <tr><td>环岛</td><td>2</td><td>跨过第 2 根黄线</td></tr>
+      <tr><td>环岛</td><td>3</td><td>跨过第 3 根黄线</td></tr>
+      <tr><td>环岛</td><td>4</td><td>第 3 根黄线之后再走 <code>段4 起始里程</code>（环岛二出口）</td></tr>
+    </table>
+    <p>用「段」下拉框选择要编辑哪一段，<b>只改显示，不影响正在跑的车</b>；
+       段号前面有 ● 的那一项就是<b>车上现在正在用</b>的那一段（节点每秒上报一次）。</p>
+    <p><b>转向偏置（steer_bias）</b>是唯一能让车「故意偏到线的一侧」的参数，
+       选岔路支路就用它：单位 rad/s，<b>负值向右、正值向左</b>，稳态偏移 ≈
+       <code>-bias / kp</code>。用法：把<b>段2</b>的 steer_bias 从 <code>-0.40</code> 开始，
+       一档 0.10 往上加；同时把该段目标速度降到 0.25–0.30、kp 降到 2.0–2.5，
+       否则 P 项会把偏置顶回去。进分支稳了之后，用 <code>段3 起始里程</code>
+       把参数切回「不偏」的段3。</p>
+    <p><b>段4 起始里程</b>是唯一靠里程判定的边界，需要现场整定：第一次实车跑时，
+       看视频里车头压上<b>第 3 根黄线</b>那一帧的 <code>d</code> 值（参数标题或调试图上的
+       <code>SEG x/4 d=…</code>）＝黄线检测提前量，然后
+       <code>阈值 = 2.27×1.08 + d + 0.15</code>。<b>宁可切晚</b>，在弯里就切会切内线。</p>
+
+    <h4>六、为什么改了参数车没变</h4>
     <p>代码里大部分参数是<b>启动时读一次</b>存进变量的，运行中改 YAML 不会回头重读。
        所以正确流程是：<b>改参数 → 保存 → 重启巡线节点</b>。点「保存并重启巡线」会自动做这两步，
        重启后在「生效参数」卡片和日志 <code>[DEC] param effective</code> 行里能看到新值。</p>
@@ -414,9 +441,16 @@ async function pollStatus(){
     // 卡4 生效参数：先看“YAML 比进程新”（覆盖所有参数，比逐项对比更可靠）
     lastEff = d.effective || {};
     yamlStale = !!(d.yaml && d.yaml.stale);
+
+    // 实时段号：只在变化时重排选项，避免每 500 ms 打断正在进行的编辑
+    const si = d.segment || {};
+    const ls = (typeof si.seg === 'number') ? Math.round(si.seg) : null;
+    if(ls && ls !== liveSeg){ liveSeg = ls; syncSegOptions(); }
+
     markPending();
-    const kpEff = lastEff.kp;
-    $('stParam').textContent = (kpEff!==undefined) ? ('kp ' + kpEff) : 'kp -';
+    const curSeg = ls || liveSeg || 1;
+    const kpEff = lastEff['seg' + curSeg + '_kp'];
+    $('stParam').textContent = (kpEff!==undefined) ? ('段' + curSeg + ' kp ' + kpEff) : 'kp -';
     if(yamlStale){
       $('stParamSub').textContent = 'YAML 已改，需重启巡线';
       $('stParam').style.color = 'var(--warn)';
@@ -463,7 +497,8 @@ async function pollStatus(){
     if(lk !== lastLocked){ setLocked(lk); }
 
     $('paramTag').textContent = (runningMap ? ('当前 ' + runningMap + '.yaml') : '-')
-      + (fe ? (' · 节点启动 ' + isoHms((d.follow||{}).started_iso)) : '')
+      + ' · 段' + curSeg + (typeof si.dist === 'number' ? (' d=' + si.dist.toFixed(2) + 'm') : '')
+      + (fe ? (' · 启动 ' + isoHms((d.follow||{}).started_iso)) : '')
       + (yamlStale ? ' · YAML 未生效' : '');
     $('paramTag').style.color = yamlStale ? 'var(--warn)' : '';
     $('logTag').textContent = d.run_id || '-';
@@ -525,14 +560,47 @@ function refreshMapWarn(){
 function isoHms(s){ const m=/(\d\d:\d\d:\d\d)/.exec(s||''); return m ? m[1] : '--:--:--'; }
 
 // ---------------- 参数
+// 分段：段号由后端 /api/status 的 segment.seg 给出（节点 1Hz 上报）。
+// 段选择器只影响"显示哪一段"，不改变正在运行的行为，也不会自动跟着实时段号跳
+// —— 边跑边跳会打断正在编辑的输入框。
+let liveSeg = 1;
+
+function segList(){
+  if(!paramsState) return [1];
+  const list = [...new Set((paramsState.groups||[]).filter(g=>g.segment).map(g=>g.segment))];
+  list.sort((a,b)=>a-b);
+  return list.length ? list : [1];
+}
+
+function syncSegOptions(){
+  const sel = $('segSel');
+  const list = segList();
+  const prev = sel.value || String(list[0]);
+  sel.innerHTML = list.map(n=>`<option value="${n}">${n===liveSeg?'● ':''}段${n}</option>`).join('');
+  sel.value = list.some(n=>String(n)===prev) ? prev : String(list[0]);
+  sel.disabled = list.length < 2;
+}
+
+function applySegFilter(){
+  const cur = $('segSel').value;
+  document.querySelectorAll('#params details.grp').forEach(det=>{
+    const s = det.dataset.seg;
+    det.style.display = (!s || s === cur) ? '' : 'none';
+  });
+}
+
 async function loadParams(map){
   const d = await (await fetch('/api/params?map='+encodeURIComponent(map),{cache:'no-store'})).json();
   paramsState = d;
   const box = $('params');
   box.innerHTML = '';
+  let plainIdx = 0;
   d.groups.forEach((g,gi)=>{
     const det = document.createElement('details');
-    det.className='grp'; det.open = gi<3;
+    det.className='grp';
+    if(g.segment) det.dataset.seg = String(g.segment);
+    // 段分组默认折叠（只展开选中的那段），非段分组前面两个默认展开
+    det.open = g.segment ? false : (plainIdx++ < 2);
     const sum = document.createElement('summary'); sum.textContent = g.group; det.appendChild(sum);
     g.items.forEach(it=>{
       const row = document.createElement('div');
@@ -556,6 +624,12 @@ async function loadParams(map){
     });
     box.appendChild(det);
   });
+  syncSegOptions();
+  applySegFilter();
+  // 只展开当前选中的那一段
+  document.querySelectorAll('#params details.grp').forEach(det=>{
+    if(det.dataset.seg) det.open = (det.dataset.seg === $('segSel').value);
+  });
   markPending();
   $('memo').textContent = '已加载';
   setLocked(lastLocked===true);
@@ -564,12 +638,13 @@ async function loadParams(map){
 // 对比 YAML 与节点实际生效值，不一致的行标「待重启」
 function markPending(){
   effMismatch = false;
-  const map = {target_speed:'target_speed', kp:'kp', max_speed:'max_speed',
-               max_yaw_rate:'max_yaw_rate', yellow_stop_duration:'yellow_stop_dur',
-               red_near_ratio:'red_near', red_very_close_ratio:'red_close',
-               line_lost_forward_speed:'lost_speed'};
+  // 分段键在日志里就是同名（seg2_kp=…），直接同名比对；只有旧键还需要别名
+  const alias = {yellow_stop_duration:'yellow_stop_dur',
+                 red_near_ratio:'red_near', red_very_close_ratio:'red_close',
+                 line_lost_forward_speed:'lost_speed'};
   document.querySelectorAll('#params .row').forEach(row=>{
-    const key = row.dataset.key, effKey = map[key];
+    const key = row.dataset.key;
+    const effKey = (lastEff[key] !== undefined) ? key : alias[key];
     row.classList.remove('pending');
     if(!effKey || lastEff[effKey] === undefined) return;
     const cur = parseFloat(row.dataset.orig);
@@ -698,6 +773,7 @@ $('mapSel').addEventListener('change',()=>{
   logOffset=0; loadParams($('mapSel').value);
   refreshMapWarn(); updateButtons();
 });
+$('segSel').addEventListener('change',()=>{ applySegFilter(); });
 $('logFile').addEventListener('change',()=>{ logFile=$('logFile').value; logOffset=0; $('log').innerHTML=''; });
 $('onlyCurrent').addEventListener('change',()=>{ logOffset=0; $('log').innerHTML=''; });
 $('btnReloadAll').addEventListener('click',()=>{

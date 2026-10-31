@@ -422,13 +422,65 @@ HTTP 响应头: Content-Type: multipart/x-mixed-replace; boundary=frame
 
 | 组 | 参数 | 单位 | 范围 |
 |---|---|---|---|
-| 速度 | `target_speed` `max_speed` `min_speed` `kp` `max_yaw_rate` `speed_gain_damping` | m/s, rad/s | 0–1.0 / 0–3.0 |
-| 视觉 | `roi_top_ratio` `roi_bottom_ratio` `binary_threshold` `white_s_max` `white_v_min` `morph_kernel` | — | 0–1 / 0–255 |
+| 分段（逐段） | `segN_` + 弯道 14 键（含 `steer_bias`，见 9.2.1） | — | — |
+| 分段切换 | `seg2_start_count` `seg3_start_count` `seg4_start_dist_m` | 次, m | 1–4 / 1–6 |
+| 速度限幅 | `max_speed` `min_speed`（全段共用） | m/s | 0–1.5 |
+| 视觉 | `binary_threshold` `white_s_max` `white_v_min` `morph_kernel` `morph_iterations` | — | 0–1 / 0–255 |
 | 黄线 | `yellow_stop_duration` `yellow_permanent_count` `yellow_area_ratio_threshold` `yellow_clear_frames` | s, 次 | — |
 | 红锥 | `red_near_ratio` `red_very_close_ratio` `red_soft_yaw` `red_repulsion_gain` `red_min_forward_speed` `red_corridor_half_width_ratio` | — | 0–1 |
 | 丢线 | `line_lost_stop_time` `line_lost_forward_speed` `line_lost_yaw_hold_factor` | s, m/s | — |
 
 每项带上现在 YAML 里的值和代码里的注释，说明它管什么。
+
+### 9.2.1 分段参数（每段一套）
+
+**为什么分段**：同一套 `kp` / `roi` / 目标速度不可能同时适合起步直道、选支转弯和半径 0.48 m 的环岛。
+分段之后每段独立的 14 个键，面板按段切换编辑。
+
+| 代码 | 作用 |
+|---|---|
+| `include/line_follower/segment_planner.hpp` | `SegmentParams`（14 字段，含 `steer_bias`）、`SegmentPlan`（段数 + 边界）、`SegmentPlanner::update()`；零 ROS 依赖 |
+| `line_follower_node.cpp` | `load_segment_parameters()` 读 `segN_*`；`apply_segment()` 把当前段**镜像**到原有的 `target_speed_ / kp_ / steer_bias_ / max_yaw_rate_ / roi_* / speed_gain_damping_ / steer_ff_*`，热循环与红锥避让一行不改 |
+| `odom_callback` | `|v|·dt` 积分成 `dist_since_yellow_`（dt 限 0–0.2 s），每根黄线归零 |
+| `image_callback` | 最前面调 `update_segment()`（ROI 逐段，必须在 `process_image` 之前）；落后一帧 |
+
+**切换规则**（`track_mode` 决定 3 段还是 4 段）。边界有两种，填 0 = 该条件关闭：
+
+| 地图 | 段 | 进入条件 |
+|---|---|---|
+| fork | 1 → 2 | 跨过第 `seg2_start_count`（默认 2）根黄线 |
+| fork | 2 → 3 | 第 2 根黄线之后 `seg3_start_dist_m`（选支/转弯结束） |
+| roundabout | 1 → 2 / 2 → 3 | 跨过第 2 / 3 根黄线 |
+| roundabout | 3 → 4 | 第 3 根黄线之后 `seg4_start_dist_m`（默认 3.30 m） |
+
+**选支（岔路）：`steer_bias`** —— 这是唯一能让车"故意偏到线的一侧"的参数。
+`kp` / `roi` / `damping` 全是"跟着线走"的量，P 控制器稳态永远是线在画面中间。
+
+```
+yaw_cmd = clamp(-(kp·error + ff_gain·ff) + steer_bias, -max_yaw_rate, +max_yaw_rate)
+                                        ↑ rad/s，负 = 向右
+稳态：kp·error = steer_bias  ->  error = -bias/kp（线固定在画面偏一侧）
+```
+
+调法：段2 的 `steer_bias` 从 **-0.40** 起、一档 0.10 加；同时把该段 `target_speed` 降到
+0.25–0.30、`kp` 降到 2.0–2.5（kp 高会把偏置顶回去），`steer_ff_gain` 置 0（别和前馈打架）。
+`|bias|` 必须小于 `max_yaw_rate`，否则只剩饱和打角（启动会告警并截断）。
+进分支稳了以后，用 `seg3_start_dist_m` 把参数切回 `steer_bias=0` 的段3。
+
+段号在一次运行内**单调递增**（终点黄线会把里程清零，不单调就会倒回段 3），只有换圈时 `reset()` 回退。
+
+**段 4 的 3.30 m 怎么来的**：几何出口距第 3 根黄线 2.27 m（环岛二 κ>1.0 区间 6.78–8.68，半径 0.48–0.50 m，扫过约 221°），
+黄线检测提前量 0.35–0.70 m，odom 刻度 ×1.08，再留 0.15 余量。**宁可切晚**：在弯里切会切内线，晚切只损失约 0.2 s。
+首跑校准：看视频里车头压上第 3 根黄线那一帧的 `d`（调试图 `SEG x/4 d=…` 或 `[DEC] seg d=`），
+`阈值 = 2.27×1.08 + d + 0.15`。
+
+**否决过的方案**：
+
+| 方案 | 为什么不用 |
+|---|---|
+| 画面白占比 | 实测反向：环岛内 70–90%，出口直道 68%→60%（直路收敛到灭点白像素更少） |
+| 转角/`angular.z` 变小 | 它测的是**跟踪误差**不是**路弯度**；环岛内跟得准时转角也是 0，6.6–6.8 m 处实测为 0 |
+| 视觉弯曲代理做扳机 | 有饱和死区（远带占满整幅时中点恒为 320，8.2–8.4 m 处假"直"），需要额外判别，收益不抵复杂度 |
 
 ### 9.3 两套参数文件
 
@@ -481,6 +533,8 @@ HTTP 响应头: Content-Type: multipart/x-mixed-replace; boundary=frame
 | 同上 | 停车计时结束处（`yellow_line_stop_active_=false` 附近） | `yellow stop_end dur=x` |
 | 同上 | `permanent_stop_=true` 处 | `yellow final stop` |
 | 同上 | `current_state` 变化处 | `state a->b` |
+| 同上 | `update_segment()` 段号变化 | `seg change from=1 to=2 count=2/4 dist=0.42` |
+| 同上 | 等里程边界的那一段（岔路段2 / 环岛段3）2 Hz | `seg d=1.20 cnt=3 thr=3.30`（校准 `seg3_start_dist_m` / `seg4_start_dist_m` 用） |
 | 同上 | `soft_red_active` 由 false 变 true 处 | `cone side= risk= area= in_path=` |
 | 同上 | 丢线进入/恢复处 | `lost_enter` / `lost_exit` |
 | `detection_turn_controller.cpp` | `trigger_turn()` | `digit best= conf= xdiff= yaw= dur=` |
@@ -666,6 +720,13 @@ ts_iso,t_rel,source,area,event,kv
 - **原因**：用了和现有节点相同的名字
 - **怎么查**：`ros2 node list` 出现重复
 - **缓解**：面板节点固定命名 `panel_node` / `safety_node`，与现有不重名
+
+### R21 分段切错（段号与车实际位置不符）
+- **现象**：某段参数明显不对（比如还在环岛里就用上了段 4 的高速），面板段号与视频位置对不上
+- **原因**：① 黄线少计/多计一根 → 段 2、3 整体错位；② `seg4_start_dist_m` 没按首跑校准；③ `track_mode` 与实际地图不符
+- **怎么查**：`[DEC] seg change` 的时间戳与视频对齐；调试图上的 `SEG x/4 d=…`；`[DEC] param effective #0 mode=… segs=…`
+- **缓解**：三个边界参数都在面板「分段切换」组可改；段号**单调递增**不会来回跳；`seg4` 默认偏晚；启动时若检测到旧键（`target_speed` 等）会打 `stale legacy keys` 警告
+- **代价**：晚切约 0.2 s 圈速；早切可能切内线，所以宁可晚
 
 ---
 

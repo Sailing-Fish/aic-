@@ -19,6 +19,7 @@
 #include "line_follower/lane_geometry.hpp"
 #include "line_follower/line_follower_types.hpp"
 #include "line_follower/motion_controller.hpp"
+#include "line_follower/segment_planner.hpp"
 #include "line_follower/track_state_machine.hpp"
 
 namespace line_follower
@@ -39,6 +40,14 @@ private:
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
 
   std::optional<ProcessingResult> process_image(const cv::Mat & frame_bgr);
+
+  // 分段：读参数 -> 判定当前段 -> 把该段参数镜像到热循环使用的成员变量
+  void load_segment_parameters();
+  void apply_segment(int segment);
+  void update_segment();
+  void publish_segment_info(bool force);
+  // 当前段是否在等一个"里程"边界（岔路段2→3 / 环岛段3→4），用于 2Hz 打 d= 方便校准
+  bool awaiting_dist_boundary() const;
 
   bool detect_red(
     const cv::Mat & frame_bgr,
@@ -87,6 +96,9 @@ private:
   double min_speed_{0.0};
   double max_yaw_rate_{1.2};
   double kp_{1.8};
+  // 主动转向偏置（rad/s，负=向右）。稳态平衡点 error = -steer_bias_ / kp_，
+  // 用来故意把车偏到线的一侧（岔路选支）。默认 0 = 完全不影响原行为。
+  double steer_bias_{0.0};
 
   double roi_top_ratio_{0.5};
   double roi_bottom_ratio_{0.05};
@@ -142,6 +154,13 @@ private:
   double steer_ff_gain_{0.0};
   bool steer_ff_use_v_{false};
   double ff_state_{0.0};
+  // 连续弯辅助：默认由全局参数初始化，apply_segment() 之后按段生效，
+  // sync_runtime_parameters() 每帧从这几个成员重建 cfg，所以必须留在成员里。
+  bool enable_curve_assist_{true};
+  double reverse_curve_speed_{0.34};
+  double reverse_curve_threshold_{0.35};
+  double sharp_curve_threshold_{0.50};
+  double sharp_curve_speed_{0.36};
   bool publish_debug_image_{true};
 
   // ============================================================
@@ -206,12 +225,35 @@ private:
   rclcpp::Time last_waiting_log_time_;
 
   // ============================================================
+  // 分段参数（track_mode 决定 2 段还是 4 段）
+  //
+  // 注意：上面 target_speed_ / kp_ / max_yaw_rate_ / roi_*_ / speed_gain_damping_ /
+  // steer_ff_* 都是"当前段的生效值"，由 apply_segment() 从 seg_params_ 镜像过来。
+  // 热循环、红锥避让、限幅一律读这些镜像，算法层不知道"段"的存在。
+  // ============================================================
+  SegmentPlanner planner_;
+  SegmentParams seg_params_[kMaxSegments]{};
+  int active_seg_{1};
+  std::string track_mode_{"fork"};
+  std::string segment_topic_;
+
+  // odom 里程积分：只服务分段切换（横向控制仍然只用视觉）。
+  // 每根黄线把 dist_since_yellow_ 归零，黄线在这里起"里程锚点"作用。
+  double odom_arc_s_{0.0};
+  double dist_since_yellow_{0.0};
+  bool odom_arc_valid_{false};
+  rclcpp::Time last_odom_time_;
+  rclcpp::Time last_segment_pub_time_;
+  rclcpp::Time last_seg_diag_time_;
+
+  // ============================================================
   // ROS interfaces
   // ============================================================
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr stop_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Point>::SharedPtr centroid_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr segment_pub_;   // 当前段号，面板用
 
   image_transport::Subscriber image_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr start_sub_;
@@ -219,6 +261,9 @@ private:
 
   image_transport::Publisher debug_pub_;
   bool debug_enabled_{false};
+
+  // 段号心跳：不依赖图像与 odom，相机没起来时面板也要能显示当前段
+  rclcpp::TimerBase::SharedPtr segment_timer_;
 };
 
 }  // namespace line_follower

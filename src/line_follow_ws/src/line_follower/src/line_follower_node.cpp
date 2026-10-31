@@ -1,6 +1,7 @@
 #include "line_follower/line_follower_node.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -196,6 +197,52 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("odom_still_threshold", 0.02);
   this->declare_parameter("odom_still_hold", 0.25);
 
+  // ============================================================
+  // 分段：track_mode 决定几段，segN_<key> 是每段一套曲线参数
+  //
+  // 边界有两种，填 0 = 该条件关闭：
+  //   * 黄线计数（segN_start_count）—— 黄线是精确锚点，且与停车逻辑共用同一个计数
+  //   * 段内里程（segN_start_dist_m）—— 没有黄线锚点的边界：岔路选支完成、
+  //     环岛二出口，只能靠 odom 里程，逐根黄线归零
+  // ============================================================
+  this->declare_parameter("track_mode", "fork");
+  this->declare_parameter("seg2_start_count", 2);
+  this->declare_parameter("seg3_start_count", 0);
+  // 岔路：第 2 根黄线之后再走 N 米进入段3（选支/转弯结束）。首跑按日志 d= 校准。
+  this->declare_parameter("seg3_start_dist_m", 0.0);
+  // 环岛：第 3 根黄线 → 出口的几何弧长 2.27 m，黄线检测提前量 0.35~0.7 m，
+  // odom 刻度约 1.08，再留 0.1 余量 -> 3.3 m（宁可切晚，不在弯中切）。
+  this->declare_parameter("seg4_start_dist_m", 0.0);
+  this->declare_parameter("segment_topic", "line_follower/segment");
+
+  {
+    for (int i = 1; i <= kMaxSegments; ++i) {
+      char key[64];
+      const auto decl_d = [&](const char * name, double def) {
+          std::snprintf(key, sizeof(key), "seg%d_%s", i, name);
+          this->declare_parameter(key, def);
+        };
+      const auto decl_b = [&](const char * name, bool def) {
+          std::snprintf(key, sizeof(key), "seg%d_%s", i, name);
+          this->declare_parameter(key, def);
+        };
+      decl_d("target_speed", 0.50);
+      decl_d("kp", 3.00);
+      decl_d("steer_bias", 0.0);
+      decl_d("max_yaw_rate", 1.50);
+      decl_d("speed_gain_damping", 0.50);
+      decl_d("roi_top_ratio", 0.65);
+      decl_d("roi_bottom_ratio", 0.20);
+      decl_d("reverse_curve_speed", 0.34);
+      decl_d("reverse_curve_threshold", 0.35);
+      decl_d("sharp_curve_threshold", 0.50);
+      decl_d("sharp_curve_speed", 0.36);
+      decl_d("steer_ff_gain", 0.0);
+      decl_b("enable_continuous_curve_assist", true);
+      decl_b("steer_ff_use_v", false);
+    }
+  }
+
   image_topic_ = this->get_parameter("image_topic").as_string();
   cmd_vel_topic_ = this->get_parameter("cmd_vel_topic").as_string();
   debug_image_topic_ = this->get_parameter("debug_image_topic").as_string();
@@ -204,6 +251,7 @@ void LineFollowerNode::declare_parameters()
   stop_cmd_topic_ = this->get_parameter("stop_cmd_topic").as_string();
   line_centroid_topic_ = this->get_parameter("line_centroid_topic").as_string();
   odom_topic_ = this->get_parameter("odom_topic").as_string();
+  segment_topic_ = this->get_parameter("segment_topic").as_string();
 
   target_speed_ = this->get_parameter("target_speed").as_double();
   max_speed_ = this->get_parameter("max_speed").as_double();
@@ -306,6 +354,13 @@ void LineFollowerNode::declare_parameters()
   steer_ff_use_v_ = this->get_parameter("steer_ff_use_v").as_bool();
   publish_debug_image_ = this->get_parameter("publish_debug_image").as_bool();
 
+  // 连续弯辅助的初值取全局参数；load_segment_parameters() 之后由 segN_* 覆盖。
+  enable_curve_assist_ = this->get_parameter("enable_continuous_curve_assist").as_bool();
+  reverse_curve_speed_ = std::max(0.0, this->get_parameter("reverse_curve_speed").as_double());
+  reverse_curve_threshold_ = this->get_parameter("reverse_curve_threshold").as_double();
+  sharp_curve_threshold_ = this->get_parameter("sharp_curve_threshold").as_double();
+  sharp_curve_speed_ = std::max(0.0, this->get_parameter("sharp_curve_speed").as_double());
+
   yellow_stop_min_time_ = this->get_parameter("yellow_stop_min_time").as_double();
   odom_still_threshold_ = this->get_parameter("odom_still_threshold").as_double();
   odom_still_hold_ = this->get_parameter("odom_still_hold").as_double();
@@ -333,6 +388,9 @@ void LineFollowerNode::declare_parameters()
   image_processor_.set_config(img_cfg);
 
   sync_runtime_parameters();
+
+  // 分段参数必须在最后加载：apply_segment(1) 会覆盖上面这些成员并重建 cfg。
+  load_segment_parameters();
 }
 
 void LineFollowerNode::sync_runtime_parameters()
@@ -355,12 +413,11 @@ void LineFollowerNode::sync_runtime_parameters()
     this->get_parameter("band_column_white_ratio").as_double();
   geo_cfg.min_run_width =
     static_cast<int>(this->get_parameter("band_min_run_width").as_int());
-  geo_cfg.enable_continuous_curve_assist =
-    this->get_parameter("enable_continuous_curve_assist").as_bool();
+  // 连续弯辅助这几个值改成按段生效：成员由 apply_segment() 写入，sync 只负责下发。
+  geo_cfg.enable_continuous_curve_assist = enable_curve_assist_;
   geo_cfg.reverse_curve_min_error =
     this->get_parameter("reverse_curve_min_error").as_double();
-  geo_cfg.reverse_curve_threshold =
-    this->get_parameter("reverse_curve_threshold").as_double();
+  geo_cfg.reverse_curve_threshold = reverse_curve_threshold_;
   geo_cfg.reverse_curve_confirm_frames =
     static_cast<int>(this->get_parameter("reverse_curve_confirm_frames").as_int());
   geo_cfg.reverse_curve_clear_frames =
@@ -405,13 +462,10 @@ void LineFollowerNode::sync_runtime_parameters()
   motion_cfg.max_yaw_rate = max_yaw_rate_;
   motion_cfg.kp = kp_;
   motion_cfg.speed_gain_damping = speed_gain_damping_;
-  motion_cfg.enable_continuous_curve_assist = geo_cfg.enable_continuous_curve_assist;
-  motion_cfg.reverse_curve_speed =
-    this->get_parameter("reverse_curve_speed").as_double();
-  motion_cfg.sharp_curve_threshold =
-    this->get_parameter("sharp_curve_threshold").as_double();
-  motion_cfg.sharp_curve_speed =
-    this->get_parameter("sharp_curve_speed").as_double();
+  motion_cfg.enable_continuous_curve_assist = enable_curve_assist_;
+  motion_cfg.reverse_curve_speed = reverse_curve_speed_;
+  motion_cfg.sharp_curve_threshold = sharp_curve_threshold_;
+  motion_cfg.sharp_curve_speed = sharp_curve_speed_;
   motion_cfg.heading_gain =
     this->get_parameter("heading_gain").as_double();
   motion_cfg.low_confidence_threshold =
@@ -444,12 +498,241 @@ void LineFollowerNode::sync_runtime_parameters()
   motion_controller_.set_config(motion_cfg);
 }
 
+void LineFollowerNode::load_segment_parameters()
+{
+  track_mode_ = this->get_parameter("track_mode").as_string();
+
+  SegmentPlan plan;
+  if (track_mode_ == "roundabout") {
+    plan.segment_count = 4;
+  } else if (track_mode_ == "fork") {
+    plan.segment_count = 3;
+  } else {
+    RCLCPP_WARN(
+      this->get_logger(),
+      "[DEC] param track_mode='%s' 不认识（可选 fork / roundabout），按 fork 3 段处理",
+      track_mode_.c_str());
+    track_mode_ = "fork";
+    plan.segment_count = 3;
+  }
+  plan.seg2_start_count = this->get_parameter("seg2_start_count").as_int();
+  plan.seg3_start_count = this->get_parameter("seg3_start_count").as_int();
+  plan.seg3_start_dist_m = this->get_parameter("seg3_start_dist_m").as_double();
+  plan.seg4_start_dist_m = this->get_parameter("seg4_start_dist_m").as_double();
+  planner_.configure(plan);
+
+  for (int i = 1; i <= kMaxSegments; ++i) {
+    SegmentParams & p = seg_params_[i - 1];
+    char key[64];
+    const auto d = [&](const char * name) {
+        std::snprintf(key, sizeof(key), "seg%d_%s", i, name);
+        return std::max(0.0, this->get_parameter(key).as_double());
+      };
+    const auto b = [&](const char * name) {
+        std::snprintf(key, sizeof(key), "seg%d_%s", i, name);
+        return this->get_parameter(key).as_bool();
+      };
+    // steer_bias 可为负（负=向右），不能用 d() 的 max(0,…)
+    const auto sd = [&](const char * name) {
+        std::snprintf(key, sizeof(key), "seg%d_%s", i, name);
+        return this->get_parameter(key).as_double();
+      };
+    p.target_speed = d("target_speed");
+    p.kp = d("kp");
+    p.max_yaw_rate = d("max_yaw_rate");
+    // 偏置超过角速度上限就只剩饱和打角，等于失控；这里直接截到上限并告警。
+    const double bias_raw = sd("steer_bias");
+    p.steer_bias = std::clamp(bias_raw, -p.max_yaw_rate, p.max_yaw_rate);
+    if (std::abs(bias_raw) > p.max_yaw_rate + 1e-6) {
+      RCLCPP_WARN(
+        this->get_logger(),
+        "[DEC] param seg%d_steer_bias=%.2f 超过 seg%d_max_yaw_rate=%.2f，已截断",
+        i, bias_raw, i, p.max_yaw_rate);
+    }
+    p.speed_gain_damping = d("speed_gain_damping");
+    p.roi_top_ratio = clamp(d("roi_top_ratio"), 0.0, 1.0);
+    p.roi_bottom_ratio = clamp(d("roi_bottom_ratio"), 0.0, 0.5);
+    p.reverse_curve_speed = d("reverse_curve_speed");
+    p.reverse_curve_threshold = d("reverse_curve_threshold");
+    p.sharp_curve_threshold = d("sharp_curve_threshold");
+    p.sharp_curve_speed = d("sharp_curve_speed");
+    p.steer_ff_gain = d("steer_ff_gain");
+    p.continuous_curve_assist = b("enable_continuous_curve_assist");
+    p.steer_ff_use_v = b("steer_ff_use_v");
+  }
+
+  // "改了参数没反应"最常见的原因就是被全局限幅吃掉，启动时直接说清楚。
+  for (int i = 1; i <= planner_.count(); ++i) {
+    const SegmentParams & p = seg_params_[i - 1];
+    if (p.target_speed > max_speed_ + 1e-6) {
+      RCLCPP_WARN(
+        this->get_logger(),
+        "[DEC] param seg%d_target_speed=%.2f 超过全局 max_speed=%.2f，实际被限幅到 %.2f",
+        i, p.target_speed, max_speed_, max_speed_);
+    }
+    if (p.kp <= 0.0) {
+      RCLCPP_WARN(
+        this->get_logger(), "[DEC] param seg%d_kp=%.2f 非法（必须 >0），该段不会转向", i, p.kp);
+    }
+  }
+
+  // 旧键还留在 YAML 里时不会报错、只会被静默忽略 —— 这里必须吵一次。
+  const auto overrides =
+    this->get_node_parameters_interface()->get_parameter_overrides();
+  static const char * kLegacyKeys[] = {
+    "target_speed", "kp", "max_yaw_rate", "speed_gain_damping", "roi_top_ratio",
+    "roi_bottom_ratio", "enable_continuous_curve_assist", "reverse_curve_speed",
+    "reverse_curve_threshold", "sharp_curve_threshold", "sharp_curve_speed",
+    "steer_ff_gain", "steer_ff_use_v"};
+  std::string stale;
+  for (const char * k : kLegacyKeys) {
+    if (overrides.find(k) != overrides.end()) {
+      stale += k;
+      stale += ' ';
+    }
+  }
+  if (!stale.empty()) {
+    RCLCPP_WARN(
+      this->get_logger(),
+      "[DEC] param stale legacy keys ignored: %s（已改为逐段 segN_<key>）", stale.c_str());
+  }
+
+  active_seg_ = 1;
+  apply_segment(1);
+
+  RCLCPP_INFO(
+    this->get_logger(),
+    "[DEC] param effective mode=%s segs=%d max_speed=%.2f min_speed=%.2f "
+    "seg2_start_count=%d seg3_start_count=%d seg3_start_dist_m=%.3f seg4_start_dist_m=%.3f "
+    "yellow_stop_dur=%.2f yellow_count=%d",
+    track_mode_.c_str(), planner_.count(), max_speed_, min_speed_,
+    planner_.plan().seg2_start_count, planner_.plan().seg3_start_count,
+    planner_.plan().seg3_start_dist_m, planner_.plan().seg4_start_dist_m,
+    yellow_stop_duration_, yellow_permanent_count_);
+
+  for (int i = 1; i <= planner_.count(); ++i) {
+    const SegmentParams & p = seg_params_[i - 1];
+    RCLCPP_INFO(
+      this->get_logger(),
+      "[DEC] seg%d v=%.2f kp=%.2f bias=%.2f yaw_max=%.2f damp=%.2f roi=%.2f/%.2f "
+      "curve=%d rev=%.2f sharp=%.2f/%.2f ff=%.2f ff_v=%d",
+      i, p.target_speed, p.kp, p.steer_bias, p.max_yaw_rate, p.speed_gain_damping,
+      p.roi_top_ratio, p.roi_bottom_ratio, p.continuous_curve_assist ? 1 : 0,
+      p.reverse_curve_speed, p.sharp_curve_threshold, p.sharp_curve_speed,
+      p.steer_ff_gain, p.steer_ff_use_v ? 1 : 0);
+  }
+}
+
+void LineFollowerNode::apply_segment(int segment)
+{
+  const int idx = std::clamp(segment, 1, kMaxSegments) - 1;
+  const SegmentParams & p = seg_params_[idx];
+
+  // 镜像给热循环 / 红锥避让 / 限幅使用：算法层完全不知道"段"的存在。
+  target_speed_ = p.target_speed;
+  kp_ = p.kp;
+  steer_bias_ = p.steer_bias;
+  max_yaw_rate_ = p.max_yaw_rate;
+  speed_gain_damping_ = p.speed_gain_damping;
+  roi_top_ratio_ = p.roi_top_ratio;
+  roi_bottom_ratio_ = p.roi_bottom_ratio;
+  enable_curve_assist_ = p.continuous_curve_assist;
+  reverse_curve_speed_ = p.reverse_curve_speed;
+  reverse_curve_threshold_ = p.reverse_curve_threshold;
+  sharp_curve_threshold_ = p.sharp_curve_threshold;
+  sharp_curve_speed_ = p.sharp_curve_speed;
+  steer_ff_gain_ = std::max(0.0, p.steer_ff_gain);
+  steer_ff_use_v_ = p.steer_ff_use_v;
+
+  // 段参数生效的唯一出口：重建 ImageProcessor / LaneGeometry / MotionController 的 cfg。
+  // 不要直接改 cfg 成员——image_callback 每帧都会 sync 一次，改了会被盖掉。
+  sync_runtime_parameters();
+
+  // ROI 变了，near/far 带的语义也跟着变；清一次，别把上一段的连续弯状态带过来。
+  curve_assist_ = CurveAssistState{};
+  ff_state_ = 0.0;
+}
+
+bool LineFollowerNode::awaiting_dist_boundary() const
+{
+  const SegmentPlan & plan = planner_.plan();
+  if (plan.segment_count >= 3 && plan.seg3_start_dist_m > 0.0 && active_seg_ == 2) {
+    return true;
+  }
+  if (plan.segment_count >= 4 && plan.seg4_start_dist_m > 0.0 && active_seg_ == 3) {
+    return true;
+  }
+  return false;
+}
+
+void LineFollowerNode::update_segment()
+{
+  const int yellow_count = track_state_machine_.state().yellow_line_detection_count;
+  const int seg = planner_.update(yellow_count, dist_since_yellow_);
+  if (seg != active_seg_) {
+    const int prev = active_seg_;
+    active_seg_ = seg;
+    apply_segment(active_seg_);
+    RCLCPP_INFO(
+      this->get_logger(),
+      "[DEC] seg change from=%d to=%d count=%d/%d dist=%.2f",
+      prev, active_seg_, yellow_count, yellow_permanent_count_,
+      dist_since_yellow_);
+    publish_segment_info(true);
+  } else if (awaiting_dist_boundary()) {
+    // 正在等一个"里程"边界：按 2Hz 打出段内里程，第一次实车跑用它校准阈值。
+    //   岔路：段2 期间打 d，用来定 seg3_start_dist_m
+    //   环岛：段3 期间打 d，用来定 seg4_start_dist_m
+    // 读法（环岛）：车头压上第 3 根黄线那一帧的 d 就是"黄线检测提前量" L，
+    //   阈值 = 2.27(几何出口) × 1.08(odom 刻度) + L + 0.15。
+    const auto now = this->now();
+    if ((now - last_seg_diag_time_).seconds() >= 0.5) {
+      last_seg_diag_time_ = now;
+      const double thr = (active_seg_ == 2) ?
+        planner_.plan().seg3_start_dist_m : planner_.plan().seg4_start_dist_m;
+      RCLCPP_INFO(
+        this->get_logger(), "[DEC] seg d=%.2f cnt=%d thr=%.2f",
+        dist_since_yellow_, yellow_count, thr);
+    }
+  }
+
+  publish_segment_info(false);
+}
+
+void LineFollowerNode::publish_segment_info(bool force)
+{
+  if (!segment_pub_) {
+    return;
+  }
+  const auto now = this->now();
+  if (!force && (now - last_segment_pub_time_).seconds() < 1.0) {
+    return;
+  }
+  last_segment_pub_time_ = now;
+
+  char buf[128];
+  std::snprintf(
+    buf, sizeof(buf), "seg=%d n=%d count=%d dist=%.2f",
+    active_seg_, planner_.count(),
+    track_state_machine_.state().yellow_line_detection_count, dist_since_yellow_);
+
+  std_msgs::msg::String msg;
+  msg.data = buf;
+  segment_pub_->publish(msg);
+}
+
 void LineFollowerNode::setup_interfaces()
 {
   cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(cmd_vel_topic_, 10);
   stop_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(stop_cmd_topic_, 10);
   state_pub_ = this->create_publisher<std_msgs::msg::String>(line_state_topic_, 10);
   centroid_pub_ = this->create_publisher<geometry_msgs::msg::Point>(line_centroid_topic_, 10);
+  // 面板靠它显示"当前第几段"，也方便现场用 ros2 topic echo 核对。
+  segment_pub_ = this->create_publisher<std_msgs::msg::String>(segment_topic_, 10);
+  // 段号心跳：不依赖图像与 odom，相机没起来时面板也要能显示当前段。
+  segment_timer_ = this->create_wall_timer(
+    std::chrono::milliseconds(500),
+    [this]() {publish_segment_info(false);});
 
   image_sub_ = image_transport::create_subscription(
     this,
@@ -472,6 +755,21 @@ void LineFollowerNode::setup_interfaces()
 void LineFollowerNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
   track_state_machine_.update_odom(msg->twist.twist.linear.x, this->now().seconds());
+
+  // 里程积分只服务分段切换（横向控制仍然只用视觉）。
+  // dt 限幅：odom 断流/抖动时不能把几秒的速度一次性累进去。
+  const auto now = this->now();
+  const double v = std::abs(msg->twist.twist.linear.x);
+  if (odom_arc_valid_) {
+    const double dt = (now - last_odom_time_).seconds();
+    if (dt > 0.0 && dt < 0.2) {
+      const double ds = v * dt;
+      odom_arc_s_ += ds;
+      dist_since_yellow_ += ds;
+    }
+  }
+  last_odom_time_ = now;
+  odom_arc_valid_ = true;
 }
 
 void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
@@ -498,6 +796,14 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
     RCLCPP_INFO(
       this->get_logger(),
       "Previous lap finished. New lap reset: yellow count=0, permanent stop cleared.");
+
+    // 新一圈：段号与里程一起归零。黄线计数是分段的锚点，两者必须同时重置。
+    planner_.reset();
+    odom_arc_s_ = 0.0;
+    dist_since_yellow_ = 0.0;
+    active_seg_ = 1;
+    apply_segment(1);
+    publish_segment_info(true);
   }
 
   start_enabled_ = new_state;
@@ -700,6 +1006,12 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     track_state_machine_.step(yellow_detected, line_detected, now.seconds());
   const auto & sm_state = track_state_machine_.state();
 
+  // 每根黄线都是分段的里程锚点：新数到一根就把"距上一根黄线"清零。
+  if (step_events.yellow_stop_begin) {
+    dist_since_yellow_ = 0.0;
+  }
+  update_segment();
+
   if (step_events.yellow_stop_begin) {
     RCLCPP_INFO(
       this->get_logger(),
@@ -793,7 +1105,9 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     if (steer_ff_use_v_) {
       ff *= clamp(sm_state.odom_speed / 0.45, 0.0, 1.5);
     }
-    yaw_rate = clamp(yaw_rate - steer_ff_gain_ * ff, -max_yaw_rate_, max_yaw_rate_);
+    // steer_bias_ 是"故意偏到线的一侧"的唯一手段：P 控制器稳态永远把线放在中间。
+    yaw_rate = clamp(
+      yaw_rate - steer_ff_gain_ * ff + steer_bias_, -max_yaw_rate_, max_yaw_rate_);
     publish_stop_cmd = cmd.publish_stop;
   } else {
     current_state = step_events.base_state;

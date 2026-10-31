@@ -5,43 +5,110 @@
 
 为什么参数说明放这里而不是 YAML 注释：写回 YAML 时 PyYAML 会丢注释（DESIGN.md R08），
 把说明搬到这里后，改多少次参数都不会丢。
+
+分段：line_follower_node 里"对弯道影响最大"的那组参数是逐段的（segN_<key>），
+段数由地图决定（岔路 2 段、环岛 4 段）。CURVE_KEYS 只写一份，按 地图×段号 生成分组；
+分组带 segment / maps 字段，load_params 据此过滤，前端据 segment 做显隐切换。
 """
 
 # type: float | int | bool
 # (key, label, type, min, max, step, help)
-SCHEMA = [
-    {
-        "section": "line_follower_node",
-        "group": "弯道调试（重点）",
-        "items": [
-            ("target_speed", "目标速度", "float", 0.0, 1.0, 0.01,
-             "直道基础速度；↑更快但弯前更难停，↓更稳"),
-            ("kp", "转向比例增益", "float", 0.0, 6.0, 0.05,
-             "↑更贴弯但高速易摆；↓更稳但切弯/走外线"),
-            ("max_yaw_rate", "最大角速度", "float", 0.0, 3.0, 0.05,
-             "↑允许更急转向，超过舵角上限后无效；↓弯中可能转不够"),
-            ("speed_gain_damping", "速度随误差衰减", "float", 0.0, 1.0, 0.05,
-             "↑弯中降速更多更稳；↓保持速度更快但易切"),
-            ("roi_top_ratio", "ROI 上边界", "float", 0.0, 1.0, 0.01,
-             "↑看得更远、转向更早，远处噪声大；↓看得更近"),
-            ("roi_bottom_ratio", "ROI 下边界", "float", 0.0, 0.5, 0.01,
-             "↑近带往远处移、少看车头；↓能看到更近的黄线"),
-            ("enable_continuous_curve_assist", "启用连续弯辅助", "bool", 0, 1, 1,
-             "开：S 弯只跟近点；关：0.7 近 + 0.3 远"),
-            ("reverse_curve_speed", "反向弯限速", "float", 0.0, 0.6, 0.01,
-             "S 弯限速；↑更快但易切；↓更稳更慢"),
-            ("reverse_curve_threshold", "反向弯判定阈值", "float", 0.0, 1.0, 0.01,
-             "↑更晚触发反向弯辅助；↓更早、更稳"),
-            ("sharp_curve_threshold", "急弯判定阈值", "float", 0.0, 1.0, 0.01,
-             "↑更晚触发急弯降速；↓更早、更稳"),
-            ("sharp_curve_speed", "急弯限速", "float", 0.0, 0.6, 0.01,
-             "急弯限速；↑更快但易切；↓更稳更慢"),
-            ("steer_ff_gain", "视觉前馈增益", "float", 0.0, 1.0, 0.01,
-             "0=关闭；↑弯中更早打方向/更贴，过大易切内/摆"),
-            ("steer_ff_use_v", "前馈随速度缩放", "bool", 0, 1, 1,
-             "探针显示角速度闭环时开；角度映射时关"),
-        ],
+#
+# 每段一套的曲线参数。键名必须与 line_follower_node.cpp
+# load_segment_parameters() 的读取表一致（那边拼成 segN_<key>）。
+CURVE_KEYS = [
+    ("target_speed", "目标速度", "float", 0.0, 1.0, 0.01,
+     "本段基础速度；超过全局 max_speed 会被限幅（启动打 WARNING）"),
+    ("kp", "转向比例增益", "float", 0.0, 6.0, 0.05,
+     "↑更贴弯但高速易摆；↓更稳但切弯/走外线"),
+    ("steer_bias", "转向偏置 (负=向右)", "float", -1.5, 1.5, 0.05,
+     "主动偏到线的一侧，选支路用；稳态偏移 = -bias/kp，"
+     "太大直接切内/出界，且 |bias| 不要超过 max_yaw_rate"),
+    ("max_yaw_rate", "最大角速度", "float", 0.0, 3.0, 0.05,
+     "↑允许更急转向，超过舵角上限后无效；↓弯中可能转不够"),
+    ("speed_gain_damping", "速度随误差衰减", "float", 0.0, 1.0, 0.05,
+     "↑弯中降速更多更稳；↓保持速度更快但易切"),
+    ("roi_top_ratio", "ROI 上边界", "float", 0.0, 1.0, 0.01,
+     "↑看得更远、转向更早，远处噪声大；↓看得更近"),
+    ("roi_bottom_ratio", "ROI 下边界", "float", 0.0, 0.5, 0.01,
+     "↑近带往远处移、少看车头；↓能看到更近的黄线"),
+    ("enable_continuous_curve_assist", "启用连续弯辅助", "bool", 0, 1, 1,
+     "开：S 弯只跟近点；关：0.7 近 + 0.3 远"),
+    ("reverse_curve_speed", "反向弯限速", "float", 0.0, 0.6, 0.01,
+     "S 弯限速；↑更快但易切；↓更稳更慢"),
+    ("reverse_curve_threshold", "反向弯判定阈值", "float", 0.0, 1.0, 0.01,
+     "↑更晚触发反向弯辅助；↓更早、更稳"),
+    ("sharp_curve_threshold", "急弯判定阈值", "float", 0.0, 1.0, 0.01,
+     "↑更晚触发急弯降速；↓更早、更稳"),
+    ("sharp_curve_speed", "急弯限速", "float", 0.0, 0.6, 0.01,
+     "急弯限速；↑更快但易切；↓更稳更慢"),
+    ("steer_ff_gain", "视觉前馈增益", "float", 0.0, 1.0, 0.01,
+     "0=关闭；↑弯中更早打方向/更贴，过大易切内/摆"),
+    ("steer_ff_use_v", "前馈随速度缩放", "bool", 0, 1, 1,
+     "探针显示角速度闭环时开；角度映射时关"),
+]
+
+# 每张地图的段标题。段号 -> 标题（同时决定这张图有几段）
+SEGMENT_TITLES = {
+    "fork": {
+        1: "段1 · 起步直道（0→2.33 m，可提速）",
+        2: "段2 · 选支/转弯（第2根黄线后 seg3_start_dist_m 米内）",
+        3: "段3 · 出分支后（恢复正常跟线）",
     },
+    "roundabout": {
+        1: "段1 · 第2根黄线前（直道+环岛一）",
+        2: "段2 · 黄线2→3（U弯+环岛二入口）",
+        3: "段3 · 黄线3→环岛二出口",
+        4: "段4 · 环岛二出口→终点",
+    },
+}
+
+# 分段切换条件（只对该地图显示）
+SEGMENT_BOUNDARIES = {
+    "fork": [
+        ("seg2_start_count", "段2 起始黄线序号", "int", 1, 4, 1,
+         "跨过第 N 根黄线进入段2；岔路图默认 2（第1根在起步 0.77 m 处）"),
+        ("seg3_start_dist_m", "段3 起始里程 (m)", "float", 0.1, 6.0, 0.1,
+         "第2根黄线之后再走多少米进入段3（选支/转弯结束）；"
+         "填 0 等于关掉，改看 seg3_start_count"),
+        ("seg3_start_count", "段3 起始黄线序号", "int", 0, 4, 1,
+         "0 = 不用黄线判定（岔路走里程）；环岛图不显示这一项"),
+    ],
+    "roundabout": [
+        ("seg2_start_count", "段2 起始黄线序号", "int", 1, 4, 1,
+         "跨过第 N 根黄线进入段2；默认 2"),
+        ("seg3_start_count", "段3 起始黄线序号", "int", 1, 4, 1,
+         "跨过第 N 根黄线进入段3；默认 3"),
+        ("seg4_start_dist_m", "段4 起始里程 (m)", "float", 1.0, 6.0, 0.1,
+         "距第3根黄线再走多少米进入段4（环岛二出口）；"
+         "= 2.27×1.08 + 检测提前量 + 0.15，宁晚不早"),
+    ],
+}
+
+
+def _segment_groups():
+    groups = []
+    for map_name, titles in SEGMENT_TITLES.items():
+        for seg, title in titles.items():
+            items = [("seg%d_%s" % (seg, k[0]),) + k[1:] for k in CURVE_KEYS]
+            groups.append({
+                "section": "line_follower_node",
+                "group": title,
+                "segment": seg,
+                "maps": [map_name],
+                "items": items,
+            })
+    for map_name, items in SEGMENT_BOUNDARIES.items():
+        groups.append({
+            "section": "line_follower_node",
+            "group": "分段切换（改这里决定参数什么时候换）",
+            "maps": [map_name],
+            "items": items,
+        })
+    return groups
+
+
+SCHEMA = _segment_groups() + [
     {
         "section": "line_follower_node",
         "group": "黄线停车",
@@ -60,9 +127,10 @@ SCHEMA = [
     },
     {
         "section": "line_follower_node",
-        "group": "速度限幅",
+        "group": "速度限幅（全段共用）",
         "items": [
-            ("max_speed", "最大速度", "float", 0.0, 1.5, 0.01, "限幅上限 m/s"),
+            ("max_speed", "最大速度", "float", 0.0, 1.5, 0.01,
+             "限幅上限 m/s，必须 ≥ 各段目标速度"),
             ("min_speed", "最小速度", "float", 0.0, 0.5, 0.01, "限幅下限 m/s"),
         ],
     },

@@ -9,16 +9,70 @@ line_follower_node:
     line_centroid_topic: line_follower/centroid
     odom_topic: /odom
     track_mode: roundabout
-    target_speed: 0.55
-    max_speed: 0.55
+    seg2_start_count: 2
+    seg3_start_count: 3
+    seg4_start_dist_m: 2.6
+    seg1_target_speed: 0.5
+    seg1_kp: 3.3
+    seg1_steer_bias: 0.0            # rad/s，负=向右；稳态平衡点 error = -bias/kp
+    seg1_max_yaw_rate: 2.0
+    seg1_speed_gain_damping: 0.5
+    seg1_roi_top_ratio: 0.7
+    seg1_roi_bottom_ratio: 0.25
+    seg1_enable_continuous_curve_assist: true
+    seg1_reverse_curve_speed: 0.32
+    seg1_reverse_curve_threshold: 0.35
+    seg1_sharp_curve_threshold: 0.5
+    seg1_sharp_curve_speed: 0.36
+    seg1_steer_ff_gain: 0.1
+    seg1_steer_ff_use_v: true
+    seg2_target_speed: 0.7
+    seg2_kp: 3.3
+    seg2_steer_bias: 0.0
+    seg2_max_yaw_rate: 2.0
+    seg2_speed_gain_damping: 0.6
+    seg2_roi_top_ratio: 0.65
+    seg2_roi_bottom_ratio: 0.2
+    seg2_enable_continuous_curve_assist: true
+    seg2_reverse_curve_speed: 0.32
+    seg2_reverse_curve_threshold: 0.35
+    seg2_sharp_curve_threshold: 0.23
+    seg2_sharp_curve_speed: 0.36
+    seg2_steer_ff_gain: 0.05
+    seg2_steer_ff_use_v: true
+    seg3_target_speed: 0.5
+    seg3_kp: 3.3
+    seg3_steer_bias: 0.0
+    seg3_max_yaw_rate: 2.0
+    seg3_speed_gain_damping: 0.6
+    seg3_roi_top_ratio: 0.7
+    seg3_roi_bottom_ratio: 0.25
+    seg3_enable_continuous_curve_assist: true
+    seg3_reverse_curve_speed: 0.32
+    seg3_reverse_curve_threshold: 0.35
+    seg3_sharp_curve_threshold: 0.5
+    seg3_sharp_curve_speed: 0.36
+    seg3_steer_ff_gain: 0.1
+    seg3_steer_ff_use_v: true
+    seg4_target_speed: 0.6
+    seg4_kp: 2.45
+    seg4_steer_bias: 0.0
+    seg4_max_yaw_rate: 2.0
+    seg4_speed_gain_damping: 0.9
+    seg4_roi_top_ratio: 0.6
+    seg4_roi_bottom_ratio: 0.2
+    seg4_enable_continuous_curve_assist: true
+    seg4_reverse_curve_speed: 0.32
+    seg4_reverse_curve_threshold: 0.35
+    seg4_sharp_curve_threshold: 0.5
+    seg4_sharp_curve_speed: 0.36
+    seg4_steer_ff_gain: 0.1
+    seg4_steer_ff_use_v: true
+    max_speed: 0.7
     min_speed: 0.0
-    max_yaw_rate: 2.0
-    kp: 2.45
-    yellow_stop_min_time: 0.35
+    yellow_stop_min_time: 0.2
     odom_still_threshold: 0.02
     odom_still_hold: 0.25
-    roi_top_ratio: 0.6
-    roi_bottom_ratio: 0.2
     gaussian_kernel: 5
     binary_threshold: 160.0
     morph_kernel: 3
@@ -35,11 +89,10 @@ line_follower_node:
     yellow_h_high: 40
     yellow_s_min: 80
     yellow_v_min: 120
-    yellow_area_ratio_threshold: 0.02
+    yellow_area_ratio_threshold: 0.015
     yellow_stop_duration: 1.0
     yellow_permanent_count: 4
     yellow_clear_frames: 10
-    yellow_min_gap_m: 0.6
     enable_intersection_probe: false
     intersection_band_height: 50
     intersection_dark_ratio_threshold: 1.0
@@ -47,7 +100,6 @@ line_follower_node:
     intersection_turn_yaw_rate: 1.8
     intersection_turn_duration: 2.0
     intersection_cooldown: 2.0
-    enable_continuous_curve_assist: true
     far_band_top_ratio: 0.22
     far_band_bottom_ratio: 0.42
     near_band_top_ratio: 0.50
@@ -68,12 +120,8 @@ line_follower_node:
     low_confidence_speed: 0.26
     low_confidence_yaw_hold: 0.80
     reverse_curve_min_error: 0.12
-    reverse_curve_threshold: 0.35
     reverse_curve_confirm_frames: 3
     reverse_curve_clear_frames: 4
-    reverse_curve_speed: 0.32
-    sharp_curve_threshold: 0.5
-    sharp_curve_speed: 0.36
     enable_red_filter: true
     red_h_low_1: 0
     red_h_high_1: 10
@@ -108,9 +156,6 @@ line_follower_node:
     line_lost_stop_time: 0.8
     line_lost_forward_speed: 0.3
     line_lost_yaw_hold_factor: 0.85
-    speed_gain_damping: 0.9
-    steer_ff_gain: 0.0
-    steer_ff_use_v: false
     publish_debug_image: true
 detection_turn_controller:
   ros__parameters:

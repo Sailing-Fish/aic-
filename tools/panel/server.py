@@ -61,6 +61,7 @@ class Shared:
         self.final_stopped = False
         self.round = 1
         self.restart = None       # {'name','t0','off'} 最近一次面板发起的重启
+        self.segment = {}         # line_follower/segment 最近一次上报：seg/n/count/dist
 
 
 SH = Shared()
@@ -88,6 +89,8 @@ class PanelNode(Node):
         self.create_subscription(Image, '/yolo_detection_image', self._on_yolo, 5)
         self.create_subscription(Bool, 'line_follower/start_cmd', self._on_start, 10)
         self.create_subscription(String, 'line_follower/track_state', self._on_state, 10)
+        # 当前段号：面板用它显示"现在跑的是哪一段"，并给段选择器打 ●
+        self.create_subscription(String, 'line_follower/segment', self._on_segment, 10)
         self.estop_pub = self.create_publisher(Twist, '/cmd_vel_stop', 10)
 
         self.create_timer(0.2, self._tick)
@@ -151,6 +154,21 @@ class PanelNode(Node):
             if state == 'yellow_line_detected' and prev != 'yellow_line_detected':
                 SH.yellow_count += 1
                 SH.last_yellow_ts = time.time()
+
+    def _on_segment(self, msg):
+        """节点上报："seg=2 n=4 count=1 dist=1.23"。纯文本，不需要 json 解析。"""
+        info = {}
+        for tok in msg.data.split():
+            if '=' not in tok:
+                continue
+            k, v = tok.split('=', 1)
+            try:
+                info[k] = float(v)
+            except ValueError:
+                info[k] = v
+        if 'seg' in info:
+            with SH.lock:
+                SH.segment = info
 
     def _tick(self):
         # 永久停车的判据：黄线状态持续 >2s（临时停车只有 yellow_stop_duration≈1s）
@@ -256,11 +274,12 @@ def read_effective_params():
     except OSError:
         return {}
 
+    # 节点启动时是"全局一行 + 每段一行"，必须合并而不是取最后一行，
+    # 否则面板只能看到最后一段的生效值，切到段1/2/3 就判不出是否待重启。
     result = {}
     for line in text.splitlines():
         if 'param effective' not in line:
             continue
-        result = {}
         for tok in line.split('param effective', 1)[1].split():
             if '=' in tok:
                 k, v = tok.split('=', 1)
@@ -353,6 +372,9 @@ def load_params(map_name):
 
     groups = []
     for g in params_schema.SCHEMA:
+        # 分段分组只对对应地图显示（岔路 2 段、环岛 4 段）
+        if g.get('maps') and map_name not in g['maps']:
+            continue
         sec = g['section']
         cur = (data.get(sec) or {}).get('ros__parameters') or {}
         items = []
@@ -365,7 +387,10 @@ def load_params(map_name):
                 'value': cur[key], 'help': helptext,
             })
         if items:
-            groups.append({'section': sec, 'group': g['group'], 'items': items})
+            grp = {'section': sec, 'group': g['group'], 'items': items}
+            if g.get('segment'):
+                grp['segment'] = g['segment']
+            groups.append(grp)
     return {'map': map_name, 'groups': groups}
 
 
@@ -563,6 +588,7 @@ class Handler(BaseHTTPRequestHandler):
             yp = SH.yellow_permanent
             ts, te = SH.timer_start, SH.timer_stop
             rnd = SH.round
+            seg_info = dict(SH.segment)
             frames_ok = {k: (v is not None) for k, v in SH.frames.items()}
 
         if ts is None:
@@ -594,6 +620,7 @@ class Handler(BaseHTTPRequestHandler):
             'locked': locked,
             'track_state': state,
             'yellow': {'count': yc, 'permanent': yp},
+            'segment': seg_info,
             'timer': {'elapsed': round(elapsed, 2), 'running': ts is not None and te is None,
                       'final': te is not None, 'armed': ts is not None},
             'round': rnd,

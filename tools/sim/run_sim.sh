@@ -33,8 +33,11 @@ if pgrep -f "world_node.py" >/dev/null; then
 fi
 
 echo "[1/3] sim_world ($TRACK)"
+# --odom-topic /odom：参数文件里 odom_topic 就是 /odom，world_node 默认发 /sim/odom，
+# 不改的话巡线收不到里程 -> 段4 永远不触发、停稳放行也只能走 1.0s 兜底。
 python3 -u "$WS/tools/sim/world_node.py" \
   --track "$WS/tools/sim/tracks/$TRACK.json" \
+  --odom-topic /odom \
   > /tmp/sim_world.log 2>&1 &
 WORLD_PID=$!
 sleep 3
