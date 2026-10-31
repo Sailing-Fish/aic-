@@ -73,6 +73,11 @@ line_follower_node:
     yellow_stop_min_time: 0.2
     odom_still_threshold: 0.02
     odom_still_hold: 0.25
+    yellow_brake_speed: 0.0
+    yellow_brake_period_s: 0.2
+    yellow_brake_pulse_s: 0.0
+    yellow_brake_release_speed: 0.08
+    yellow_brake_max_time_s: 0.8
     gaussian_kernel: 5
     binary_threshold: 160.0
     morph_kernel: 3

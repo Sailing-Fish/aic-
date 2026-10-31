@@ -12,12 +12,12 @@ line_follower_node:
     seg2_start_count: 2
     seg3_start_count: 0
     seg3_start_dist_m: 1.0
-    seg1_target_speed: 0.65
+    seg1_target_speed: 0.6
     seg1_kp: 3.3
     seg1_steer_bias: 0.0
     seg1_max_yaw_rate: 1.5
-    seg1_speed_gain_damping: 0.22
-    seg1_roi_top_ratio: 0.65
+    seg1_speed_gain_damping: 0.7
+    seg1_roi_top_ratio: 0.7
     seg1_roi_bottom_ratio: 0.2
     seg1_enable_continuous_curve_assist: true
     seg1_reverse_curve_speed: 0.34
@@ -29,10 +29,10 @@ line_follower_node:
     seg2_target_speed: 0.53
     seg2_kp: 3.3
     seg2_steer_bias: -0.7
-    seg2_steer_bias_dist_m: 0.2
-    seg2_steer_bias_gap_m: 0.15
+    seg2_steer_bias_dist_m: 0.0
+    seg2_steer_bias_gap_m: 0.3
     seg2_steer_bias2: -0.7
-    seg2_steer_bias2_dist_m: 0.2
+    seg2_steer_bias2_dist_m: 0.0
     seg2_max_yaw_rate: 1.5
     seg2_speed_gain_damping: 0.25
     seg2_roi_top_ratio: 0.65
@@ -58,11 +58,16 @@ line_follower_node:
     seg3_sharp_curve_speed: 0.41
     seg3_steer_ff_gain: 0.0
     seg3_steer_ff_use_v: false
-    max_speed: 0.7
+    max_speed: 1.0
     min_speed: 0.0
     yellow_stop_min_time: 0.3
     odom_still_threshold: 0.02
     odom_still_hold: 0.1
+    yellow_brake_speed: 0.6
+    yellow_brake_period_s: 0.0
+    yellow_brake_pulse_s: 0.0
+    yellow_brake_release_speed: 0.1
+    yellow_brake_max_time_s: 0.8
     gaussian_kernel: 5
     binary_threshold: 160.0
     morph_kernel: 3
@@ -79,7 +84,7 @@ line_follower_node:
     yellow_h_high: 40
     yellow_s_min: 80
     yellow_v_min: 120
-    yellow_area_ratio_threshold: 0.008
+    yellow_area_ratio_threshold: 0.01
     yellow_stop_duration: 1.0
     yellow_permanent_count: 4
     yellow_clear_frames: 10

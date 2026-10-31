@@ -503,6 +503,32 @@ D1<=0：整段 B1；D2<=0：与 D1 等长（对称脉冲）
 | 转角/`angular.z` 变小 | 它测的是**跟踪误差**不是**路弯度**；环岛内跟得准时转角也是 0，6.6–6.8 m 处实测为 0 |
 | 视觉弯曲代理做扳机 | 有饱和死区（远带占满整幅时中点恒为 320，8.2–8.4 m 处假"直"），需要额外判别，收益不抵复杂度 |
 
+### 9.2.2 黄线刹车（反拖）
+
+检测到黄线后不再直接发 0 等惯性滑停，而是发一段**负的 `linear.x`** 让底盘反拖，
+速度降到阈值立刻撤回。五个参数（面板「黄线刹车（反拖）」组）：
+
+| 参数 | 作用 | 失败模式（它挡的就是这个） |
+|---|---|---|
+| `yellow_brake_speed` | 反拖速度大小 m/s，**0 = 关闭** | 太大直接倒车冲出去；启动时截断到 `max_speed` 并告警 |
+| `yellow_brake_period_s` | 反拖指令重发周期 s | 0 = 每帧都发 |
+| `yellow_brake_pulse_s` | 每周期里反拖多久 s（点刹） | 0 或 ≥周期 = 连续反拖 |
+| `yellow_brake_release_speed` | odom \|v\| 降到它以下就撤回 | 不设就会顶成倒车（压线/后退） |
+| `yellow_brake_max_time_s` | 兜底：最多反拖多久 | odom 异常时不会一直倒车 |
+
+**实现要点**：
+
+1. **反拖期间绝不能发 stop**。`cmd_mux` 的 stop 通道会锁存 `stop_timeout`（0.5 s），
+   一旦发过 stop，后面的负速度会被盖成 0 —— 所以刹车阶段 `publish_stop_cmd=false`，
+   连"点刹的间歇"也只发 0 到 follower 通道。
+2. 撤回后立刻交回原来的逻辑（0 + stop 通道），`can_release` 继续用 `yellow_stop_min_time`
+   / `odom_still_hold` / `yellow_stop_duration` 判定放行。
+3. 停稳判定用 `|v|`（`update_odom` 里已取绝对值），负速度不会被误判成静止。
+
+**前提（必须先做）**：`tools/brake_probe.py --probe-only` 确认固件对负速度是
+A 接受并反转（可用）、B 当 0 处理（无效但无害）、C 符号取反（**变成前进，绝不能开**）。
+默认 `yellow_brake_speed: 0.0` = 关闭，行为与原来完全一致。
+
 ### 9.3 两套参数文件
 
 `fork.yaml`（岔路图）/ `roundabout.yaml`（环岛图），从现有 `line_follower_params.yaml` 复制拆出来。切换靠 `start.sh --params <名字>` 传给 launch 的 `params_file`。

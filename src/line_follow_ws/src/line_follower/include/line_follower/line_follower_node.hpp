@@ -49,6 +49,9 @@ private:
   // 当前段是否在等一个"里程"边界（岔路段2→3 / 环岛段3→4），用于 2Hz 打 d= 方便校准
   bool awaiting_dist_boundary() const;
 
+  // 反拖脉冲相位：true = 这一帧该发 -v（周期<=0 或脉冲>=周期 时永远是 true，即连续反拖）
+  bool brake_pulse_on(double elapsed_s) const;
+
   // 此刻实际施加的转向偏置（段内两段时序：B1 走 D1 米 → B2 走 D2 米 → 0）
   double current_bias() const
   {
@@ -148,6 +151,25 @@ private:
   double yellow_stop_min_time_{0.35};
   double odom_still_threshold_{0.02};
   double odom_still_hold_{0.25};
+
+  // ============================================================
+  // 黄线刹车（反拖）
+  //
+  // 检测到黄线后不再直接发 0，而是发一段**负的 linear.x** 让底盘反拖，
+  // 速度降到阈值就撤回（避免顶成倒车）。yellow_brake_speed=0 = 关闭，行为与原来一致。
+  //
+  // 前提：必须先用 tools/brake_probe.py --probe-only 确认固件对负速度是
+  // "接受并反转"（A），而不是"当 0"（B，无效果）或"符号取反"（C，会变成前进）。
+  // ============================================================
+  double yellow_brake_speed_{0.0};           // 反拖速度大小 m/s，0 = 关闭
+  double yellow_brake_period_s_{0.2};        // 反拖指令的发送周期
+  double yellow_brake_pulse_s_{0.0};         // 每个周期里反拖多久；0 或 >=周期 = 连续
+  double yellow_brake_release_speed_{0.08};  // odom |v| 降到它以下就停止反拖（0=不用）
+  double yellow_brake_max_time_s_{0.8};      // 兜底：最多反拖多久（0=不限，不建议）
+
+  bool yellow_brake_active_{false};          // 本次黄线停车是否处于反拖阶段
+  rclcpp::Time yellow_brake_start_;
+  rclcpp::Time last_brake_cmd_time_;
 
   // ============================================================
   // Parameterized lane band geometry & lost-line thresholds

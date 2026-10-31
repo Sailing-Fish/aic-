@@ -145,6 +145,25 @@ SCHEMA = _segment_groups() + [
     },
     {
         "section": "line_follower_node",
+        "group": "黄线刹车（反拖，替代直接发 0）",
+        "items": [
+            ("yellow_brake_speed", "反拖速度 (m/s)", "float", 0.0, 1.5, 0.05,
+             "检测到黄线后发的负速度大小；0 = 关闭（退回直接发 0）。"
+             "先跑 tools/brake_probe.py --probe-only 确认固件是「接受反转」"
+             "而不是「当 0」或「符号取反」"),
+            ("yellow_brake_period_s", "发送周期 (s)", "float", 0.0, 1.0, 0.02,
+             "反拖指令多久重发一次；0 = 每帧都发"),
+            ("yellow_brake_pulse_s", "每周期反拖时长 (s)", "float", 0.0, 1.0, 0.02,
+             "每个周期里发多久负速度，其余时间发 0（点刹）；"
+             "0 或 ≥发送周期 = 连续反拖"),
+            ("yellow_brake_release_speed", "撤回阈值 (m/s)", "float", 0.0, 0.4, 0.01,
+             "odom 速度降到它以下立刻停止反拖（防止顶成倒车）；0 = 不用这个条件"),
+            ("yellow_brake_max_time_s", "最长反拖时间 (s)", "float", 0.0, 3.0, 0.05,
+             "兜底：最多反拖这么久，到点无条件撤回"),
+        ],
+    },
+    {
+        "section": "line_follower_node",
         "group": "速度限幅（全段共用）",
         "items": [
             ("max_speed", "最大速度", "float", 0.0, 1.5, 0.01,

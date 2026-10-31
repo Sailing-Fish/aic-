@@ -194,6 +194,14 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("odom_still_threshold", 0.02);
   this->declare_parameter("odom_still_hold", 0.25);
 
+  // 黄线刹车（反拖）：检测到黄线发负速度把车压住，而不是直接发 0。
+  // speed=0 关闭（退回原来的发 0）。详见 tools/brake_probe.py 的 A/B/C 判定。
+  this->declare_parameter("yellow_brake_speed", 0.0);
+  this->declare_parameter("yellow_brake_period_s", 0.2);
+  this->declare_parameter("yellow_brake_pulse_s", 0.0);
+  this->declare_parameter("yellow_brake_release_speed", 0.08);
+  this->declare_parameter("yellow_brake_max_time_s", 0.8);
+
   // ============================================================
   // 分段：track_mode 决定几段，segN_<key> 是每段一套曲线参数
   //
@@ -311,6 +319,26 @@ void LineFollowerNode::declare_parameters()
     1, static_cast<int>(this->get_parameter("yellow_permanent_count").as_int()));
   yellow_clear_frames_required_ = std::max<int>(
     1, static_cast<int>(this->get_parameter("yellow_clear_frames").as_int()));
+
+  // 反拖速度上限单独给 1.5 m/s（不再受 max_speed 限制：急停需要比巡航更大的反向指令）。
+  // 超过 1.5 会截断并告警——再大就不是刹车，是倒车冲出去。
+  constexpr double kMaxBrakeSpeed = 1.5;
+  const double brake_raw = std::max(0.0, this->get_parameter("yellow_brake_speed").as_double());
+  yellow_brake_speed_ = std::min(brake_raw, kMaxBrakeSpeed);
+  if (brake_raw > kMaxBrakeSpeed + 1e-6) {
+    RCLCPP_WARN(
+      this->get_logger(),
+      "[DEC] param yellow_brake_speed=%.2f 超过上限 %.1f，已截断",
+      brake_raw, kMaxBrakeSpeed);
+  }
+  yellow_brake_period_s_ =
+    std::max(0.0, this->get_parameter("yellow_brake_period_s").as_double());
+  yellow_brake_pulse_s_ =
+    std::max(0.0, this->get_parameter("yellow_brake_pulse_s").as_double());
+  yellow_brake_release_speed_ =
+    std::max(0.0, this->get_parameter("yellow_brake_release_speed").as_double());
+  yellow_brake_max_time_s_ =
+    std::max(0.0, this->get_parameter("yellow_brake_max_time_s").as_double());
 
   far_band_top_ratio_ = this->get_parameter("far_band_top_ratio").as_double();
   far_band_bottom_ratio_ = this->get_parameter("far_band_bottom_ratio").as_double();
@@ -611,11 +639,15 @@ void LineFollowerNode::load_segment_parameters()
     this->get_logger(),
     "[DEC] param effective #0 mode=%s segs=%d max_speed=%.2f min_speed=%.2f "
     "seg2_start_count=%d seg3_start_count=%d seg3_start_dist_m=%.3f seg4_start_dist_m=%.3f "
-    "yellow_stop_dur=%.2f yellow_count=%d",
+    "yellow_stop_dur=%.2f yellow_count=%d "
+    "yellow_brake_speed=%.3f yellow_brake_period_s=%.3f yellow_brake_pulse_s=%.3f "
+    "yellow_brake_release_speed=%.3f yellow_brake_max_time_s=%.3f",
     track_mode_.c_str(), planner_.count(), max_speed_, min_speed_,
     planner_.plan().seg2_start_count, planner_.plan().seg3_start_count,
     planner_.plan().seg3_start_dist_m, planner_.plan().seg4_start_dist_m,
-    yellow_stop_duration_, yellow_permanent_count_);
+    yellow_stop_duration_, yellow_permanent_count_,
+    yellow_brake_speed_, yellow_brake_period_s_, yellow_brake_pulse_s_,
+    yellow_brake_release_speed_, yellow_brake_max_time_s_);
 
   // 键名必须与 YAML 完全一致（segN_<key>）：面板靠它把"待重启"标到对应的行上。
   for (int i = 1; i <= planner_.count(); ++i) {
@@ -696,6 +728,18 @@ bool LineFollowerNode::awaiting_dist_boundary() const
     return true;
   }
   return false;
+}
+
+bool LineFollowerNode::brake_pulse_on(double elapsed_s) const
+{
+  // 周期/脉宽任一为 0，或脉宽 >= 周期：连续反拖（最常见的用法）
+  if (yellow_brake_period_s_ <= 1e-3 ||
+    yellow_brake_pulse_s_ <= 0.0 ||
+    yellow_brake_pulse_s_ >= yellow_brake_period_s_)
+  {
+    return true;
+  }
+  return std::fmod(elapsed_s, yellow_brake_period_s_) < yellow_brake_pulse_s_;
 }
 
 void LineFollowerNode::update_segment()
@@ -1044,6 +1088,18 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
   // 每根黄线都是分段的里程锚点：新数到一根就把"距上一根黄线"清零。
   if (step_events.yellow_stop_begin) {
     dist_since_yellow_ = 0.0;
+
+    // 反拖刹车：每一根黄线重新起算。speed<=0 时整个刹车阶段关闭，行为与原来一样。
+    yellow_brake_active_ = yellow_brake_speed_ > 0.0;
+    yellow_brake_start_ = now;
+    last_brake_cmd_time_ = now;
+    if (yellow_brake_active_) {
+      RCLCPP_INFO(
+        this->get_logger(),
+        "[DEC] yellow brake_begin v=%.2f period=%.2f pulse=%.2f rel=%.2f max=%.2f",
+        yellow_brake_speed_, yellow_brake_period_s_, yellow_brake_pulse_s_,
+        yellow_brake_release_speed_, yellow_brake_max_time_s_);
+    }
   }
   update_segment();
 
@@ -1125,6 +1181,31 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     linear_speed = 0.0;
     yaw_rate = 0.0;
     publish_stop_cmd = true;
+
+    // ---- 黄线刹车（反拖）----
+    // 把"发 0 靠惯性滑停"换成"发负速度压住"，够慢了就撤回，避免顶成倒车。
+    if (yellow_brake_active_) {
+      const double brake_elapsed = (now - yellow_brake_start_).seconds();
+      const bool slow_enough =
+        yellow_brake_release_speed_ > 0.0 &&
+        brake_elapsed >= 0.1 &&
+        sm_state.odom_speed <= yellow_brake_release_speed_;
+      const bool timeout =
+        yellow_brake_max_time_s_ > 0.0 && brake_elapsed >= yellow_brake_max_time_s_;
+
+      if (slow_enough || timeout) {
+        yellow_brake_active_ = false;
+        RCLCPP_INFO(
+          this->get_logger(),
+          "[DEC] yellow brake_end dur=%.2f v=%.3f why=%s",
+          brake_elapsed, sm_state.odom_speed, timeout ? "timeout" : "slow");
+      } else {
+        // 反拖期间绝不能发 stop：cmd_mux 的 stop 通道会锁存 stop_timeout(0.5 s)，
+        // 一旦发过 stop，后面的负速度会被它盖成 0。
+        publish_stop_cmd = false;
+        linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed_ : 0.0;
+      }
+    }
   } else if (line_detected) {
     current_state = TrackState::TRACKING;
     const MotionCommand cmd =
