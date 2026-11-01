@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="diagram-design" content="type=architecture; size=fit; canvas=1440x1120; panels=main+safety-detail; detail=balanced; audience=mixed; font-source=system">
+  <title>自主循迹小车软件架构</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --paper:#f5f5f5; --ink:#2d3142; --muted:#4f5d75; --soft:#5a6580;
+      --accent:#bf4520; --link:#2e5aa8;
+      --sans:'Geist','Noto Sans SC','Microsoft YaHei','PingFang SC',system-ui,sans-serif;
+      --serif:'Instrument Serif','Noto Serif SC','SimSun',serif;
+      --mono:'Geist Mono','Consolas',ui-monospace,monospace;
+    }
+    body { margin:0; padding:28px 24px; background:var(--paper); color:var(--ink); font-family:var(--sans); }
+    main { width:100%; max-width:1600px; min-width:0; margin:0 auto; }
+    h1 { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+    .diagram-container { width:100%; overflow-x:auto; }
+    svg { width:100%; min-width:1440px; display:block; }
+    svg .title { font-family:var(--serif); font-size:40px; font-weight:400; fill:var(--ink); }
+    svg .node-name { font-family:var(--sans); font-size:16px; font-weight:600; fill:var(--ink); }
+    svg .group-name { font-family:var(--sans); font-size:14px; font-weight:600; fill:var(--ink); }
+    svg .prose { font-family:var(--sans); font-size:12px; font-weight:400; fill:var(--muted); }
+    svg .meta { font-family:var(--sans); font-size:12px; font-weight:500; fill:var(--soft); }
+    svg .code { font-family:var(--mono); font-size:12px; font-weight:400; fill:var(--soft); }
+    svg .edge-label { font-family:var(--sans); font-size:12px; font-weight:500; fill:var(--muted); }
+    svg .wire { fill:none; stroke:var(--muted); stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+    svg .return-wire { fill:none; stroke:var(--muted); stroke-width:1.4; stroke-dasharray:5 4; stroke-linecap:round; stroke-linejoin:round; }
+    svg .zone { fill:#f0f0f1; stroke:#c6c9ce; stroke-width:0.8; }
+    svg .box { fill:#fff; stroke:var(--ink); stroke-width:1.1; }
+    svg .input-box { fill:#e9ebee; stroke:var(--soft); stroke-width:1.1; }
+    svg .focus-box { fill:#faf0ec; stroke:var(--accent); stroke-width:1.5; }
+    svg .safe-box { fill:#f7f7f8; stroke:var(--muted); stroke-width:1.1; stroke-dasharray:5 4; }
+    svg .label-bg { fill:var(--paper); }
+    svg .bridge-mask { fill:none; stroke:var(--paper); stroke-width:6; stroke-linecap:round; }
+    svg .topic-strip { fill:#fff; stroke:#bfc0c0; stroke-width:0.8; }
+    svg .rule { stroke:#c6c9ce; stroke-width:0.8; }
+    .reading-notes { max-width:1040px; margin:28px auto 8px; border-top:1px solid #c6c9ce; padding-top:24px; }
+    .reading-notes h2 { margin:0 0 14px; font-size:18px; font-weight:600; }
+    .reading-notes p { margin:0 0 16px; font-size:14px; line-height:1.9; color:var(--muted); }
+    dl { display:grid; grid-template-columns:1fr 1fr; gap:18px 44px; margin:0; }
+    dl div { border-left:2px solid #c6c9ce; padding-left:14px; }
+    dt { font-size:14px; font-weight:600; margin-bottom:5px; }
+    dd { margin:0; font-size:13px; line-height:1.8; color:var(--muted); }
+    code { font-family:var(--mono); font-size:12px; }
+    .fine-print { margin-top:24px!important; font-size:12px!important; }
+    @media(max-width:640px) { body{padding:16px 12px;} dl{grid-template-columns:1fr;} }
+    @media print { body{padding:0;} .diagram-container{overflow-x:visible;} svg{min-width:0;} .reading-notes{break-before:avoid;} }
+  </style>
+</head>
+<body>
+<main>
+  <h1>自主循迹小车软件架构</h1>
+  <div class="diagram-container">
+<svg id="aic-architecture-root" viewBox="0 0 1440 1120" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="aic-architecture-title aic-architecture-desc">
+    <title id="aic-architecture-title">自主循迹小车软件架构</title>
+    <desc id="aic-architecture-desc">上图展示启停广播、两路视觉处理和三路独立指令仲裁，下图展开安全节点对同名三路上游话题的旁路订阅及向同一底盘直接发送零速的关系。</desc>
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
+      <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,8 3,0 6" fill="#bf4520"/></marker>
+      <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+    </defs>
+    <rect width="1440" height="1120" fill="#f5f5f5"/>
+    <text class="title" x="40" y="64">自主循迹小车软件架构</text>
+    <text class="meta" x="1400" y="56" text-anchor="end">2026 AIC · RDK X5 · ROS 2</text>
+    <text class="prose" x="40" y="96">道路循迹与数字任务协同决策，仲裁节点统一选择运动指令。</text>
+
+    <g id="aic-main-diagram" data-diagram="main" role="group" aria-labelledby="aic-main-title">
+      <title id="aic-main-title">A 主运行链路</title>
+      <text class="node-name" x="40" y="132">A　主运行链路</text>
+      <g id="aic-zones">
+        <rect class="zone" x="40" y="148" width="240" height="548" rx="8"/>
+        <rect class="zone" x="312" y="148" width="584" height="548" rx="8"/>
+        <rect class="zone" x="920" y="148" width="480" height="548" rx="8"/>
+        <text class="meta" x="56" y="172">01　输入与启停广播</text>
+        <text class="meta" x="328" y="172">02　视觉理解与任务决策</text>
+        <text class="meta" x="936" y="172">03　三路仲裁与底盘执行</text>
+      </g>
+
+      <g id="aic-main-connectors">
+        <path class="wire" data-edge="CAM-LF" data-from="CAM" data-to="LF" d="M232 456 H292 Q300 456 300 448 V444 Q300 436 308 436 H328" marker-end="url(#arrow)"/>
+        <path class="wire" data-edge="CAM-YOLO" data-from="CAM" data-to="YOLO" d="M232 496 H244 Q252 496 252 504 V636 Q252 644 260 644 H328" marker-end="url(#arrow)"/>
+        <path class="wire" data-trunk="START" d="M264 280 H288"/>
+        <path class="wire" data-edge="START-LF" data-from="START" data-to="LF" d="M288 280 H300 Q308 280 308 288 V332 Q308 340 316 340 H328" marker-end="url(#arrow)"/>
+        <path class="bridge-mask" d="M288 448 a8 8 0 0 0 0 16"/>
+        <path class="bridge-mask" d="M288 636 a8 8 0 0 0 0 16"/>
+        <path class="wire" data-edge="START-DIGIT" data-from="START" data-to="DIGIT" d="M288 280 V448 a8 8 0 0 0 0 16 V636 a8 8 0 0 0 0 16 V712 Q288 720 296 720 H744 Q752 720 752 712 V688" marker-end="url(#arrow)"/>
+        <circle cx="288" cy="280" r="3" fill="#4f5d75" data-junction="start-broadcast"/>
+
+        <path class="wire" data-edge="YOLO-DIGIT" data-from="YOLO" data-to="DIGIT" d="M528 644 H624" marker-end="url(#arrow)"/>
+        <path class="wire" data-edge="LF-DIGIT" data-from="LF" data-to="DIGIT" d="M472 532 V576 Q472 584 480 584 H744 Q752 584 752 592 V600" marker-end="url(#arrow)"/>
+        <path class="wire" data-edge="DIGIT-MUX" data-from="DIGIT" data-to="MUX" d="M880 644 H936 Q944 644 944 636 V380 Q944 372 952 372 H1008" marker-end="url(#arrow)"/>
+        <path class="wire" data-edge="LF-MUX-STOP" data-from="LF" data-to="MUX" d="M760 340 H856 Q864 340 864 332 V300 Q864 292 872 292 H1008" marker-end="url(#arrow)"/>
+        <path class="bridge-mask" d="M936 452 a8 8 0 0 1 16 0"/>
+        <path class="wire" data-edge="LF-MUX-FOLLOWER" data-from="LF" data-to="MUX" d="M760 436 H888 Q896 436 896 444 Q896 452 904 452 H936 a8 8 0 0 1 16 0 H1008" marker-end="url(#arrow)"/>
+        <path class="wire" data-edge="MUX-BASE" data-from="MUX" data-to="BASE" d="M1184 372 H1240" marker-end="url(#arrow)"/>
+        <path class="bridge-mask" d="M952 568 a8 8 0 0 1 -16 0"/>
+        <path class="return-wire" data-edge="BASE-LF" data-from="BASE" data-to="LF" d="M1312 452 V560 Q1312 568 1304 568 H952 a8 8 0 0 1 -16 0 H624 Q616 568 616 560 V532" marker-end="url(#arrow)"/>
+      </g>
+
+      <g id="aic-main-labels">
+        <g data-label="停车指令"><rect class="label-bg" x="908" y="264" width="64" height="20" rx="2"/><text class="edge-label" x="940" y="279" text-anchor="middle">停车指令</text></g>
+        <g data-label="循迹指令"><rect class="label-bg" x="792" y="408" width="64" height="20" rx="2"/><text class="edge-label" x="824" y="423" text-anchor="middle">循迹指令</text></g>
+        <g data-label="数字转向"><rect class="label-bg" x="856" y="496" width="80" height="20" rx="2"/><text class="edge-label" x="896" y="511" text-anchor="middle">数字转向</text></g>
+        <g data-label="数字与位置"><rect class="label-bg" x="536" y="616" width="80" height="20" rx="2"/><text class="edge-label" x="576" y="631" text-anchor="middle">数字与位置</text></g>
+        <g data-label="引导点·状态·停车"><rect class="label-bg" x="480" y="544" width="128" height="20" rx="2"/><text class="edge-label" x="544" y="559" text-anchor="middle">引导点·状态·停车</text></g>
+        <g data-label="执行"><rect class="label-bg" x="1192" y="344" width="40" height="20" rx="2"/><text class="edge-label" x="1212" y="359" text-anchor="middle">执行</text></g>
+        <g data-label="/odom·停稳与距离分段"><rect class="label-bg" x="1040" y="540" width="176" height="20" rx="2"/><text class="edge-label" x="1128" y="555" text-anchor="middle">/odom·停稳与距离分段</text></g>
+        <g data-label="同一启停话题"><rect class="label-bg" x="472" y="692" width="96" height="20" rx="2"/><text class="edge-label" x="520" y="707" text-anchor="middle">同一启停话题</text></g>
+      </g>
+
+      <g id="aic-main-nodes">
+        <g id="aic-node-start" data-node-id="START"><rect x="56" y="212" width="208" height="136" rx="6" fill="#f5f5f5"/><rect class="input-box" x="56" y="212" width="208" height="136" rx="6"/><text class="node-name" x="72" y="240">启停广播</text><text class="code" x="72" y="264">start_toggle_node</text><text class="code" x="72" y="288">/line_follower/start_cmd</text><text class="prose" x="72" y="312">空格切换 · 默认停止</text><text class="prose" x="72" y="332">循迹与数字任务共同订阅</text></g>
+        <g id="aic-node-cam" data-node-id="CAM"><rect x="56" y="412" width="176" height="120" rx="6" fill="#f5f5f5"/><rect class="input-box" x="56" y="412" width="176" height="120" rx="6"/><text class="node-name" x="72" y="440">相机采集</text><text class="code" x="72" y="464">camera.py</text><text class="prose" x="72" y="492">USB 采集 · 新帧优先</text><text class="code" x="72" y="516">/image_raw</text></g>
+        <g id="aic-node-lf" data-node-id="LF"><rect x="328" y="244" width="432" height="288" rx="6" fill="#f5f5f5"/><rect class="focus-box" x="328" y="244" width="432" height="288" rx="6"/><text class="node-name" x="344" y="272">循迹与行为控制</text><text class="code" x="744" y="272" text-anchor="end">line_follower_node</text><line class="rule" x1="344" y1="292" x2="744" y2="292"/><text class="group-name" x="344" y="320">图像处理</text><text class="code" x="744" y="320" text-anchor="end">ImageProcessor · detect_red()</text><text class="prose" x="344" y="344">分割白路与黄线；节点内另作红色检测</text><text class="group-name" x="344" y="376">道路几何</text><text class="code" x="744" y="376" text-anchor="end">LaneGeometry</text><text class="prose" x="344" y="400">近远带融合，得到引导点与道路观测置信度</text><text class="group-name" x="344" y="432">运动控制</text><text class="code" x="744" y="432" text-anchor="end">MotionController</text><text class="prose" x="344" y="456">转向、控速与红色目标软避让</text><text class="group-name" x="344" y="488">状态与赛段</text><text class="code" x="744" y="488" text-anchor="end">TrackStateMachine · SegmentPlanner</text><text class="prose" x="344" y="512">停车计数、停稳反馈与距离分段</text></g>
+        <g id="aic-node-yolo" data-node-id="YOLO"><rect x="328" y="600" width="200" height="88" rx="6" fill="#f5f5f5"/><rect class="box" x="328" y="600" width="200" height="88" rx="6"/><text class="node-name" x="344" y="628">数字识别</text><text class="code" x="344" y="648">bpu_yolov8_node.py</text><text class="prose" x="344" y="672">YOLOv8 / BPU · 检测 1—8</text></g>
+        <g id="aic-node-digit" data-node-id="DIGIT"><rect x="624" y="600" width="256" height="88" rx="6" fill="#f5f5f5"/><rect class="box" x="624" y="600" width="256" height="88" rx="6"/><text class="node-name" x="640" y="628">数字任务控制</text><text class="code" x="640" y="648">detection_turn_controller</text><text class="prose" x="640" y="672">连续确认 → 转向 → 恢复 / 冷却</text></g>
+        <g id="aic-node-mux" data-node-id="MUX"><rect x="1008" y="212" width="176" height="320" rx="6" fill="#f5f5f5"/><rect class="focus-box" x="1008" y="212" width="176" height="320" rx="6"/><text class="node-name" x="1024" y="244">命令仲裁</text><text class="code" x="1024" y="268">cmd_mux_node</text><line class="rule" x1="1024" y1="284" x2="1168" y2="284"/><text class="group-name" x="1024" y="304">① 停车 · 最高优先</text><text class="code" x="1024" y="328">/cmd_vel_stop</text><text class="group-name" x="1024" y="384">② 数字转向</text><text class="code" x="1024" y="408">/cmd_vel_detection</text><text class="group-name" x="1024" y="464">③ 常规循迹</text><text class="code" x="1024" y="488">/cmd_vel_follower</text><text class="prose" x="1024" y="516">按消息缓存有效期选取</text></g>
+        <g id="aic-node-base" data-node-id="BASE"><rect x="1240" y="292" width="144" height="160" rx="6" fill="#f5f5f5"/><rect class="box" x="1240" y="292" width="144" height="160" rx="6"/><text class="node-name" x="1256" y="320">底盘执行</text><text class="code" x="1256" y="344">wheeltec_robot</text><line class="rule" x1="1256" y1="360" x2="1368" y2="360"/><text class="prose" x="1256" y="384">串口控制运动</text><text class="code" x="1256" y="408">接收 /cmd_vel</text><text class="prose" x="1256" y="432">回传 /odom 与车速</text></g>
+      </g>
+      <text class="prose" x="40" y="752">引导点、道路状态与停车信号合并为上下文连线；三路运动命令在仲裁入口分别标明话题。</text>
+    </g>
+
+    <g id="aic-safety-diagram" data-diagram="safety-detail" role="group" aria-labelledby="aic-safety-title">
+      <title id="aic-safety-title">B 独立安全旁路</title>
+      <text class="node-name" x="40" y="792">B　独立安全旁路</text>
+      <text class="meta" x="1400" y="792" text-anchor="end">与主图同名话题、同一底盘；安全节点不经过仲裁器</text>
+      <text class="group-name" x="56" y="828">同一组三路上游命令</text>
+
+      <g id="aic-safety-connectors">
+        <path class="return-wire" data-edge="TOPIC-STOP-SAFE" data-from="TOPIC_STOP" data-to="SAFE" d="M368 864 H568" marker-end="url(#arrow)"/>
+        <path class="return-wire" data-edge="TOPIC-DIGIT-SAFE" data-from="TOPIC_DIGIT" data-to="SAFE" d="M368 904 H568" marker-end="url(#arrow)"/>
+        <path class="return-wire" data-edge="TOPIC-FOLLOWER-SAFE" data-from="TOPIC_FOLLOWER" data-to="SAFE" d="M368 944 H568" marker-end="url(#arrow)"/>
+        <path class="return-wire" data-edge="SAFE-BASE" data-from="SAFE" data-to="BASE_DETAIL" d="M1000 904 H1240" marker-end="url(#arrow)"/>
+      </g>
+      <g id="aic-safety-labels">
+        <g data-label="旁路订阅"><rect class="label-bg" x="428" y="876" width="80" height="20" rx="2"/><text class="edge-label" x="468" y="891" text-anchor="middle">旁路订阅</text></g>
+        <g data-label="直接零速"><rect class="label-bg" x="1080" y="876" width="80" height="20" rx="2"/><text class="edge-label" x="1120" y="891" text-anchor="middle">直接零速</text></g>
+      </g>
+
+      <g id="aic-safety-nodes">
+        <g data-topic-id="TOPIC_STOP"><rect class="topic-strip" x="56" y="848" width="312" height="32" rx="2"/><text class="prose" x="72" y="870">停车</text><text class="code" x="352" y="870" text-anchor="end">/cmd_vel_stop</text></g>
+        <g data-topic-id="TOPIC_DIGIT"><rect class="topic-strip" x="56" y="888" width="312" height="32" rx="2"/><text class="prose" x="72" y="910">数字</text><text class="code" x="352" y="910" text-anchor="end">/cmd_vel_detection</text></g>
+        <g data-topic-id="TOPIC_FOLLOWER"><rect class="topic-strip" x="56" y="928" width="312" height="32" rx="2"/><text class="prose" x="72" y="950">循迹</text><text class="code" x="352" y="950" text-anchor="end">/cmd_vel_follower</text></g>
+        <g id="aic-node-safe" data-node-id="SAFE"><rect x="568" y="824" width="432" height="160" rx="6" fill="#f5f5f5"/><rect class="safe-box" x="568" y="824" width="432" height="160" rx="6"/><text class="node-name" x="584" y="852">命令更新监测</text><text class="code" x="984" y="852" text-anchor="end">safety_node.py</text><text class="prose" x="584" y="880">收到过任一路消息后，开始判断静默</text><text class="prose" x="584" y="904">三路均超过更新时限 → 发布零速</text><text class="prose" x="584" y="928">任一路恢复更新，即停止安全零速</text><text class="prose" x="584" y="956">定时检查 · 三路上游命令独立订阅</text></g>
+        <g id="aic-node-base_detail" data-node-id="BASE_DETAIL" data-ref="BASE"><rect x="1240" y="824" width="144" height="160" rx="6" fill="#f5f5f5"/><rect class="box" x="1240" y="824" width="144" height="160" rx="6"/><text class="node-name" x="1256" y="852">同一底盘</text><text class="code" x="1256" y="876">wheeltec_robot</text><text class="code" x="1256" y="916">/cmd_vel</text><text class="prose" x="1256" y="940">接收仲裁与安全指令</text><text class="prose" x="1256" y="964">本框仅为旁路展开</text></g>
+      </g>
+    </g>
+    <text class="prose" x="40" y="1020">开发辅助：仿真、Web 控制台与决策日志，用于观察与调参，不参与实车自主决策。</text>
+    <g id="aic-legend">
+      <line class="rule" x1="40" y1="1052" x2="1400" y2="1052"/>
+      <line x1="40" y1="1080" x2="80" y2="1080" stroke="#4f5d75" stroke-width="1.6" marker-end="url(#arrow)"/>
+      <text class="meta" x="92" y="1084">数据与控制</text>
+      <line x1="272" y1="1080" x2="312" y2="1080" stroke="#4f5d75" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+      <text class="meta" x="324" y="1084">反馈 / 旁路监听 / 安全输出</text>
+      <circle cx="632" cy="1080" r="3" fill="#4f5d75"/>
+      <text class="meta" x="648" y="1084">同一话题的分支订阅</text>
+      <text class="meta" x="1400" y="1084" text-anchor="end">浅橙框：核心控制 · 灰色英文：代码与话题</text>
+    </g>
+  </svg>
+  </div>
+
+  <section class="reading-notes" aria-label="读图说明与术语解释">
+    <h2>读图说明</h2>
+    <p>上半图沿相机的两条输出阅读：道路循迹与数字识别分别处理图像；同一启停话题经分支供循迹和数字任务订阅。仲裁器通过三个独立话题接收停车、数字转向和循迹命令，按缓存时效与优先级选择输出。底盘车速经 LineFollowerNode::odom_callback() 更新停稳状态，并累计行驶距离供 SegmentPlanner 推进赛段。循迹节点内部的六个算法模块与分段控制关系见技术文档第 2、4 章。</p>
+    <dl>
+      <div><dt>近远带</dt><dd>在图像近处、远处各取一条区域：近处稳定当前位置，远处观察前方道路趋势。</dd></div>
+      <div><dt>引导点</dt><dd>从道路图像中选出的行驶目标位置，用来判断车头应向左还是向右修正。</dd></div>
+      <div><dt>道路观测可靠度（置信度）</dt><dd>根据道路宽度、远近一致性、连续帧变化和轮廓有效性，评估当前道路观测是否值得信任。</dd></div>
+      <div><dt>状态机</dt><dd>记录车辆处于巡线、黄线停车或丢线等状态，并按照条件决定何时切换。</dd></div>
+      <div><dt>命令仲裁</dt><dd>多个功能同时要求控制小车时，按照优先级决定采用哪一条速度和转向命令。</dd></div>
+      <div><dt>里程计反馈</dt><dd>底盘回传实际运动状态。本项目用其中的前向速度辅助判断小车是否停稳。</dd></div>
+    </dl>
+    <p class="fine-print">图示保留 8 个运行组件，拆为主链路与安全旁路两个视图合成一张图片。下半图的三路话题与底盘均与上半图为同一对象，并非新增节点；仅将循迹到数字任务的引导点、道路状态、停车信息合并显示，三路仲裁输入分别绘制。安全节点在此前收到过任一路消息后，定时检查三路上游的更新状态；全部超过更新时限后持续发零速，任一路恢复则停止安全零速输出。英文名称用于定位源码或 ROS 2 话题，运行细节以当前配置及源码为准。字体采用系统回退栈，离线中文优先使用微软雅黑与宋体；不依赖外部网络资源。</p>
+  </section>
+</main>
+</body>
+</html>
+
