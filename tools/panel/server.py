@@ -22,12 +22,25 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
 import yaml
-import rclpy
-from rclpy.node import Node
-from cv_bridge import CvBridge
-from geometry_msgs.msg import Twist
-from sensor_msgs.msg import Image
-from std_msgs.msg import Bool, String
+
+try:
+    import rclpy
+    from rclpy.node import Node
+    from cv_bridge import CvBridge
+    from geometry_msgs.msg import Twist
+    from sensor_msgs.msg import Image
+    from std_msgs.msg import Bool, Float32, String
+    HAS_ROS = True
+except ImportError:
+    HAS_ROS = False
+    rclpy = None
+    Node = object
+    CvBridge = None
+    Twist = None
+    Image = None
+    Bool = None
+    Float32 = None
+    String = None
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import params_schema  # noqa: E402
@@ -42,6 +55,7 @@ PANEL_DIR = os.path.dirname(os.path.abspath(__file__))
 STREAM_FPS = 6.0
 STREAM_PERIOD = 1.0 / STREAM_FPS
 JPEG_QUALITY = 70
+VOLTAGE_LOW_THRESHOLD = 11.6
 
 
 # ---------------------------------------------------------------- 共享状态
@@ -62,6 +76,8 @@ class Shared:
         self.round = 1
         self.restart = None       # {'name','t0','off'} 最近一次面板发起的重启
         self.segment = {}         # line_follower/segment 最近一次上报：seg/n/count/dist
+        self.voltage = None       # /PowerVoltage 最近一次读数 (V)
+        self.voltage_ts = 0.0     # 上次收到电压的时间戳
 
 
 SH = Shared()
@@ -91,6 +107,7 @@ class PanelNode(Node):
         self.create_subscription(String, 'line_follower/track_state', self._on_state, 10)
         # 当前段号：面板用它显示"现在跑的是哪一段"，并给段选择器打 ●
         self.create_subscription(String, 'line_follower/segment', self._on_segment, 10)
+        self.create_subscription(Float32, '/PowerVoltage', self._on_voltage, 10)
         self.estop_pub = self.create_publisher(Twist, '/cmd_vel_stop', 10)
 
         self.create_timer(0.2, self._tick)
@@ -169,6 +186,12 @@ class PanelNode(Node):
         if 'seg' in info:
             with SH.lock:
                 SH.segment = info
+
+    def _on_voltage(self, msg):
+        val = float(msg.data)
+        with SH.lock:
+            SH.voltage = val
+            SH.voltage_ts = time.time()
 
     def _tick(self):
         # 永久停车的判据：黄线状态持续 >2s（临时停车只有 yellow_stop_duration≈1s）
@@ -381,11 +404,18 @@ def load_params(map_name):
         for key, label, typ, lo, hi, step, helptext in g['items']:
             if key not in cur:
                 continue
-            items.append({
+            item_obj = {
                 'key': key, 'label': label, 'type': typ,
-                'min': lo, 'max': hi, 'step': step,
-                'value': cur[key], 'help': helptext,
-            })
+                'value': str(cur[key]) if typ == 'enum' else cur[key],
+                'help': helptext,
+            }
+            if typ == 'enum':
+                item_obj['options'] = list(lo)
+            else:
+                item_obj['min'] = lo
+                item_obj['max'] = hi
+                item_obj['step'] = step
+            items.append(item_obj)
         if items:
             grp = {'section': sec, 'group': g['group'], 'items': items}
             if g.get('segment'):
@@ -416,6 +446,10 @@ def save_params(map_name, values):
             _, _, typ, lo, hi, _step, _help = spec
             if typ == 'bool':
                 val = bool(val)
+            elif typ == 'enum':
+                val = str(val)
+                if val not in lo:
+                    return False, f'{key}={val} 不在可选项 {lo} 中'
             elif typ == 'int':
                 val = int(round(float(val)))
             else:
@@ -590,6 +624,8 @@ class Handler(BaseHTTPRequestHandler):
             rnd = SH.round
             seg_info = dict(SH.segment)
             frames_ok = {k: (v is not None) for k, v in SH.frames.items()}
+            volt = SH.voltage
+            volt_ts = SH.voltage_ts
 
         if ts is None:
             elapsed = 0.0
@@ -632,6 +668,12 @@ class Handler(BaseHTTPRequestHandler):
             'effective': read_effective_params(),
             'events': read_recent_events(10),
             'frames': frames_ok,
+            'voltage': {
+                'value': round(volt, 2) if volt is not None else None,
+                'low': bool(volt is not None and volt < VOLTAGE_LOW_THRESHOLD),
+                'stale': bool(volt_ts == 0.0 or (time.time() - volt_ts) > 5.0),
+                'threshold': VOLTAGE_LOW_THRESHOLD,
+            },
             'panel_port': PORT,
         })
 

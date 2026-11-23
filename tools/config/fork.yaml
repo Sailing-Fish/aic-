@@ -132,7 +132,78 @@ line_follower_node:
     line_lost_stop_time: 0.8
     line_lost_forward_speed: 0.3
     line_lost_yaw_hold_factor: 0.85
+    lost_line_safe_mode: false
+    lost_line_safe_speed: 0.12
+    lost_line_safe_stop_time: 0.35
+    odom_max_age_sec: 0.2
+    yellow_require_odom_still: false
+    yellow_max_hold_sec: 3.0
     publish_debug_image: true
+    # 决赛解耦模式开关（fork.yaml 保持复赛基线默认关闭；启用请用 finals_fork.yaml 或面板切换）
+    ekf_odom_topic: /odom_combined
+    detection_topic: hobot_dnn_detection
+    detection_timeout_sec: 0.35
+    planner_mode: legacy_segment
+    lane_seg_mode: legacy_hsv
+    yellow_detect_mode: legacy_area
+    enable_semantic_hole_fill: false
+    enable_obstacle_memory: false
+    allow_dual_digit_cover: false
+    blue_margin: 22
+    lab_blue_b_max: 116
+    black_block_size: 31
+    black_c_offset: 14.0
+    black_v_max: 115
+    lab_chroma_radius: 24.0
+    lab_l_min_offset: 38.0
+    hybrid_white_s_max: 75
+    hybrid_white_v_min: 65
+    semantic_hole_fill_dilate_px: 2
+    yellow_min_aspect_ratio: 2.5
+    yellow_min_width_ratio: 0.2
+    yellow_min_area_px: 120.0
+    yellow_ahead_strip_height_px: 28
+    yellow_dead_end_blue_ratio: 0.35
+    yellow_dead_end_dark_ratio: 0.2
+    yellow_dead_end_combined_ratio: 0.5
+    fork_min_gap_px: 14
+    fork_min_branch_width_px: 18
+    use_homography: false
+    homography_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    cam_height_m: 0.11
+    cam_pitch_deg: 12.5
+    focal_px: 325.0
+    cam_cx: 320.0
+    cam_cy: 240.0
+    front_overhang_m: 0.06
+    odom_scale_factor: 1.0
+    finish_min_dist_m: 8.5
+    finish_force_dist_m: 11.5
+    yellow_pre_brake_dist_m: 0.7
+    yellow_creep_speed_mps: 0.24
+    yellow_brake_decel_mps2: 1.8
+    yellow_control_latency_s: 0.1
+    yellow_bumper_margin_m: 0.08
+    yellow_rearm_dist_m: 0.35
+    border_margin_m: 0.025
+    cone_margin_m: 0.025
+    no_entry_margin_m: 0.03
+    obstacle_lookahead_m: 1.1
+    obstacle_rear_keep_m: 0.28
+    obstacle_speed_mps: 0.26
+    no_entry_speed_mps: 0.22
+    blocked_creep_speed_mps: 0.12
+    fork_outer_branch: -1
+    fork_outer_time_penalty_s: 3.0
+    fork_min_votes: 3
+    fork_commit_dist_m: 1.1
+    digit_min_conf: 0.55
+    digit_min_frames: 2
+    digit_lookahead_max_m: 1.15
+    max_digit_lateral_shift_m: 0.12
+    digit_approach_speed_mps: 0.3
+    corridor_kp_y: 3.8
+    corridor_heading_gain: 0.85
 detection_turn_controller:
   ros__parameters:
     detection_topic: hobot_dnn_detection
@@ -174,5 +245,9 @@ cmd_mux_node:
     high_topic: /cmd_vel_detection
     high_timeout: 0.12
     low_topic: /cmd_vel_follower
+    low_timeout: 0.35
     output_topic: /cmd_vel
+    heartbeat_topic: /cmd_mux/heartbeat
+    watchdog_rate_hz: 20.0
+    enable_detection_override: true
     session_cooldown: 2.0

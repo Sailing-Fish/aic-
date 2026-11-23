@@ -11,37 +11,86 @@
     tau_steer= 0.26 s     转向一阶响应
     max_steer= 21 deg     舵机极限（实测饱和点）
 
+支持光照扰动与决赛道具压力测试：
+    --gain 0.85 --color-cast warm --glare 0.4 --blur 0.8
+    --random-yellow 2 --cones 3 --no-entry 2
+
 用法：
     python3 tools/sim/world_node.py --track tools/sim/tracks/fork_s.json
 """
+from __future__ import annotations
+
 import argparse
 import math
 import os
 import sys
 
-import rclpy
-from cv_bridge import CvBridge
-from geometry_msgs.msg import TransformStamped, Twist
-from nav_msgs.msg import Odometry
-from rclpy.node import Node
-from sensor_msgs.msg import Image
-from std_msgs.msg import Empty
-from tf2_ros import TransformBroadcaster
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from render import TrackRenderer  # noqa: E402
+from render import TrackRenderer, parse_color_cast, point_to_polyline_distance_mm  # noqa: E402
+
+try:
+    import rclpy
+    from cv_bridge import CvBridge
+    from geometry_msgs.msg import TransformStamped, Twist
+    from nav_msgs.msg import Odometry
+    from rclpy.node import Node
+    from sensor_msgs.msg import Image
+    from std_msgs.msg import Empty
+    from tf2_ros import TransformBroadcaster
+    HAS_ROS = True
+except ImportError:
+    HAS_ROS = False
+    Node = object  # type: ignore[assignment,misc]
 
 
-def yaw_to_quat(yaw):
+def yaw_to_quat(yaw: float):
     return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
+
+
+class OffTrackTracker:
+    """纯计算离道监测器：按车辆中心到赛道中心线垂直距离 vs 半车道宽累计出界时长。"""
+
+    def __init__(self, centerline_mm, lane_width_mm: float = 430.0, margin_mm: float = 0.0):
+        self.centerline_mm = np.asarray(centerline_mm, dtype=np.float64)
+        self.half_lane_mm = 0.5 * float(lane_width_mm) + float(margin_mm)
+        self.off_track_s = 0.0
+        self.last_dist_mm = 0.0
+        self.is_off_track = False
+
+    def reset(self) -> None:
+        self.off_track_s = 0.0
+        self.last_dist_mm = 0.0
+        self.is_off_track = False
+
+    def update(self, x_mm: float, y_mm: float, dt: float) -> float:
+        dist = point_to_polyline_distance_mm(x_mm, y_mm, self.centerline_mm)
+        self.last_dist_mm = dist
+        self.is_off_track = dist > self.half_lane_mm
+        if self.is_off_track and dt > 0.0:
+            self.off_track_s += dt
+        return self.off_track_s
 
 
 class SimWorld(Node):
     def __init__(self, args):
+        if not HAS_ROS:
+            raise RuntimeError("ROS2 (rclpy) 未安装，无法启动 SimWorld 节点")
         super().__init__("sim_world")
-        self.renderer = TrackRenderer(args.track)
+        self.renderer = TrackRenderer(
+            args.track,
+            random_yellow=args.random_yellow,
+            cones=args.cones,
+            no_entry=args.no_entry,
+            prop_seed=args.prop_seed,
+        )
         meta = self.renderer.meta
         self.track = meta["name"]
+        self.render_blur = float(args.blur)
+        self.render_gain = float(args.gain)
+        self.render_color_cast = parse_color_cast(args.color_cast)
+        self.render_glare = float(args.glare)
 
         self.L = args.wheelbase_mm / 1000.0
         self.tau_v = args.tau_speed
@@ -64,7 +113,10 @@ class SimWorld(Node):
         self.v_cmd = 0.0
         self.w_cmd = 0.0
         self.s = 0.0                # 累计里程 m
-        self.off_track = 0.0        # 累计出界时长 s（用于判断该速度档是否失效）
+        self.off_tracker = OffTrackTracker(
+            cl, lane_width_mm=float(meta.get("lane_width_mm", 430.0))
+        )
+        self.off_track = 0.0        # 累计出界时长 s（实时计算）
         self._frame = 0
         # 起始位姿快照，供 /sim/reset 复位（串行扫参时复用同一个世界节点）
         self.x0, self.y0, self.yaw0 = self.x, self.y, self.yaw
@@ -85,7 +137,8 @@ class SimWorld(Node):
         self.get_logger().info(
             f"sim_world up: track={self.track} start=({self.x:.0f},{self.y:.0f})mm "
             f"yaw={math.degrees(self.yaw):.1f}deg L={self.L*1000:.1f}mm "
-            f"rate={args.rate}Hz")
+            f"rate={args.rate}Hz gain={self.render_gain:.2f} glare={self.render_glare:.2f} "
+            f"props=(Y+{args.random_yellow},C={args.cones},NE={args.no_entry})")
 
     def on_cmd(self, msg):
         self.v_cmd = float(msg.linear.x)
@@ -96,6 +149,7 @@ class SimWorld(Node):
         self.x, self.y, self.yaw = self.x0, self.y0, self.yaw0
         self.v = self.delta = self.v_cmd = self.w_cmd = 0.0
         self.s = 0.0
+        self.off_tracker.reset()
         self.off_track = 0.0
         self._frame = 0
         self.get_logger().info("[sim] reset")
@@ -118,6 +172,9 @@ class SimWorld(Node):
         self.y += v_mm * math.sin(self.yaw) * dt
         self.yaw += self.v * math.tan(self.delta) / self.L * dt
         self.s += abs(self.v) * dt
+
+        # 修复：实时计算车辆到赛道中心线垂直距离，超过半车道宽累加出界时长
+        self.off_track = self.off_tracker.update(self.x, self.y, dt)
 
         stamp = self.get_clock().now().to_msg()
         qx, qy, qz, qw = yaw_to_quat(self.yaw)
@@ -146,16 +203,21 @@ class SimWorld(Node):
 
         gt = Twist()
         gt.linear.x = self.s
-        gt.linear.y = float(self.track == "fork_s")
+        gt.linear.y = self.off_tracker.last_dist_mm / 1000.0
+        gt.linear.z = self.off_track
         gt.angular.z = self.yaw
         self.pub_gt.publish(gt)
 
-        img = self.renderer.render(self.x, self.y, self.yaw)
+        img = self.renderer.render(
+            self.x, self.y, self.yaw,
+            blur=self.render_blur,
+            gain=self.render_gain,
+            color_cast=self.render_color_cast,
+            glare=self.render_glare,
+        )
         im = self.bridge.cv2_to_imgmsg(img, encoding="bgr8")
         im.header.stamp = stamp
         im.header.frame_id = "camera_link"
-        # 单帧发布失败不应让整个仿真停摆：publish 抛异常会一路传到 executor，
-        # 导致 spin 退出、图像流中断，巡线节点随之判定丢线。
         try:
             self.pub_img.publish(im)
         except Exception as exc:  # noqa: BLE001
@@ -165,11 +227,12 @@ class SimWorld(Node):
         self._frame += 1
         if self._frame % 30 == 0:
             self.get_logger().info(
-                f"[sim] s={self.s:.2f} off={self.off_track:.2f} v={self.v:.3f} "
-                f"yaw={math.degrees(self.yaw):.1f}")
+                f"[sim] s={self.s:.2f} off={self.off_track:.2f} "
+                f"lat={self.off_tracker.last_dist_mm:.0f}mm "
+                f"v={self.v:.3f} yaw={math.degrees(self.yaw):.1f}")
 
 
-def main():
+def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--track", default=os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "tracks", "fork_s.json"))
@@ -185,8 +248,22 @@ def main():
     ap.add_argument("--init-x", type=float, default=None)
     ap.add_argument("--init-y", type=float, default=0.0)
     ap.add_argument("--init-yaw-deg", type=float, default=0.0)
-    args = ap.parse_args()
+    # 光照与画质扰动
+    ap.add_argument("--gain", type=float, default=1.0, help="亮度增益，如 0.75 或 1.25")
+    ap.add_argument("--color-cast", default="none",
+                    help="偏色/色温：none / warm / cool / yellowed 或 'b,g,r' 三元组")
+    ap.add_argument("--glare", type=float, default=0.0, help="定向眩光强度 0.0..1.0")
+    ap.add_argument("--blur", type=float, default=0.0, help="高斯模糊 sigma")
+    # 决赛道具注入
+    ap.add_argument("--random-yellow", type=int, default=0, help="额外注入随机黄线数量")
+    ap.add_argument("--cones", type=int, default=0, help="随机注入红锥数量")
+    ap.add_argument("--no-entry", type=int, default=0, help="随机注入空心红禁行区数量")
+    ap.add_argument("--prop-seed", type=int, default=42, help="道具随机种子")
+    return ap
 
+
+def main():
+    args = build_arg_parser().parse_args()
     rclpy.init()
     node = SimWorld(args)
     try:

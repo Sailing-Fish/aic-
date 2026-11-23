@@ -135,12 +135,12 @@ def run_one(cfg, idx, track, base_yaml):
             if final:
                 break
             time.sleep(0.5)
-        off, smax = parse_world(wlog)
+        off, smax, fps = parse_world(wlog)
         lap = (final - t0) if (final and t0) else None
         ok = bool(final) and off < 1.0
         with lock:
             results[tag] = {**cfg, "lap": lap, "stops": nstop, "off": off,
-                            "smax": smax, "ok": ok}
+                            "smax": smax, "fps": round(fps, 1), "ok": ok}
     except Exception as e:
         with lock:
             results[tag] = {**cfg, "lap": None, "stops": 0, "off": 0.0,

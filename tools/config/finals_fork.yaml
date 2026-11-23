@@ -1,0 +1,329 @@
+# AIC 2026 全国决赛 · 岔路 S 图 (5-3m地图岔路S.pdf) 专用配置
+# 启用：./tools/start.sh --params finals_fork
+# 如需一键回退复赛基线：./tools/start.sh --params fork
+line_follower_node:
+  ros__parameters:
+    image_topic: /image_raw
+    cmd_vel_topic: /cmd_vel_follower
+    debug_image_topic: line_follower/debug_image
+    line_state_topic: line_follower/track_state
+    start_topic: line_follower/start_cmd
+    stop_cmd_topic: /cmd_vel_stop
+    line_centroid_topic: line_follower/centroid
+    odom_topic: /odom
+    ekf_odom_topic: /odom_combined
+    detection_topic: hobot_dnn_detection
+    detection_timeout_sec: 0.35
+
+    # ================================
+    # 决赛核心解耦模式开关
+    # ================================
+    planner_mode: finals_corridor
+    lane_seg_mode: relative_border
+    yellow_detect_mode: geometric_cv
+    enable_semantic_hole_fill: true
+    enable_obstacle_memory: true
+    allow_dual_digit_cover: false
+
+    # 基础控制与分段兜底（Run 1 保底稳健巡航 0.44 m/s，Run 2/3 可通过面板提速）
+    track_mode: fork
+    target_speed: 0.44
+    max_speed: 0.85
+    min_speed: 0.0
+    kp: 3.1
+    max_yaw_rate: 1.6
+    speed_gain_damping: 0.45
+    roi_top_ratio: 0.68
+    roi_bottom_ratio: 0.18
+
+    # 分段参数保留（切回 legacy_segment 时仍可直接生效）
+    seg2_start_count: 2
+    seg3_start_count: 0
+    seg3_start_dist_m: 1.0
+    seg1_target_speed: 0.46
+    seg1_kp: 3.1
+    seg1_steer_bias: 0.0
+    seg1_max_yaw_rate: 1.6
+    seg1_speed_gain_damping: 0.50
+    seg1_roi_top_ratio: 0.68
+    seg1_roi_bottom_ratio: 0.18
+    seg1_enable_continuous_curve_assist: true
+    seg1_reverse_curve_speed: 0.30
+    seg1_reverse_curve_threshold: 0.35
+    seg1_sharp_curve_threshold: 0.48
+    seg1_sharp_curve_speed: 0.34
+    seg1_steer_ff_gain: 0.0
+    seg1_steer_ff_use_v: false
+    seg2_target_speed: 0.42
+    seg2_kp: 3.1
+    seg2_steer_bias: 0.0
+    seg2_steer_bias_dist_m: 0.0
+    seg2_steer_bias_gap_m: 0.3
+    seg2_steer_bias2: 0.0
+    seg2_steer_bias2_dist_m: 0.0
+    seg2_max_yaw_rate: 1.6
+    seg2_speed_gain_damping: 0.35
+    seg2_roi_top_ratio: 0.65
+    seg2_roi_bottom_ratio: 0.18
+    seg2_enable_continuous_curve_assist: true
+    seg2_reverse_curve_speed: 0.30
+    seg2_reverse_curve_threshold: 0.35
+    seg2_sharp_curve_threshold: 0.48
+    seg2_sharp_curve_speed: 0.34
+    seg2_steer_ff_gain: 0.0
+    seg2_steer_ff_use_v: false
+    seg3_target_speed: 0.44
+    seg3_kp: 3.1
+    seg3_steer_bias: 0.0
+    seg3_max_yaw_rate: 1.6
+    seg3_speed_gain_damping: 0.35
+    seg3_roi_top_ratio: 0.65
+    seg3_roi_bottom_ratio: 0.18
+    seg3_enable_continuous_curve_assist: true
+    seg3_reverse_curve_speed: 0.30
+    seg3_reverse_curve_threshold: 0.35
+    seg3_sharp_curve_threshold: 0.48
+    seg3_sharp_curve_speed: 0.34
+    seg3_steer_ff_gain: 0.0
+    seg3_steer_ff_use_v: false
+
+    # ================================
+    # 抗光照/抗老化相对分割 + 几何黄线 + 终点视觉封口
+    # ================================
+    gaussian_kernel: 5
+    binary_threshold: 160.0
+    morph_kernel: 3
+    morph_iterations: 2
+    min_contour_area: 2500.0
+    invert_binary: false
+    use_white_filter: true
+    white_h_low: 0
+    white_h_high: 180
+    white_s_max: 45
+    white_v_min: 80
+    blue_margin: 22
+    lab_blue_b_max: 116
+    black_block_size: 31
+    black_c_offset: 14.0
+    black_v_max: 115
+    lab_chroma_radius: 24.0
+    lab_l_min_offset: 38.0
+    hybrid_white_s_max: 75
+    hybrid_white_v_min: 65
+    semantic_hole_fill_dilate_px: 2
+
+    # 车道几何与岔路双峰检测
+    far_band_top_ratio: 0.28
+    far_band_bottom_ratio: 0.48
+    near_band_top_ratio: 0.55
+    near_band_bottom_ratio: 0.80
+    near_band_weight: 0.60
+    far_band_weight: 0.40
+    band_column_white_ratio: 0.40
+    band_min_run_width: 18
+    nominal_near_width_ratio: 0.68
+    nominal_far_width_ratio: 0.48
+    wide_road_ratio_threshold: 0.84
+    wide_band_min_reliability: 0.18
+    enable_width_adaptive_fusion: true
+    wide_lane_boundary_blend: 0.45
+    observation_filter_alpha: 0.85
+    fork_min_gap_px: 14
+    fork_min_branch_width_px: 18
+    heading_gain: 0.80
+    low_confidence_threshold: 0.55
+    low_confidence_speed: 0.24
+    low_confidence_yaw_hold: 0.80
+    enable_continuous_curve_assist: true
+    reverse_curve_min_error: 0.12
+    reverse_curve_threshold: 0.35
+    reverse_curve_confirm_frames: 3
+    reverse_curve_clear_frames: 4
+    reverse_curve_speed: 0.30
+    sharp_curve_threshold: 0.48
+    sharp_curve_speed: 0.34
+
+    # ================================
+    # 黄线两段式零压线停稳 + FinishGuard（摆脱黄线计数=4 耦合）
+    # ================================
+    use_yellow_filter: true
+    yellow_h_low: 20
+    yellow_h_high: 40
+    yellow_s_min: 80
+    yellow_v_min: 120
+    yellow_area_ratio_threshold: 0.012
+    yellow_min_aspect_ratio: 2.5
+    yellow_min_width_ratio: 0.20
+    yellow_min_area_px: 120.0
+    yellow_ahead_strip_height_px: 28
+    yellow_dead_end_blue_ratio: 0.35
+    yellow_dead_end_dark_ratio: 0.20
+    yellow_dead_end_combined_ratio: 0.50
+    yellow_stop_min_time: 0.35
+    yellow_stop_duration: 1.0
+    yellow_permanent_count: 4
+    yellow_clear_frames: 10
+    odom_still_threshold: 0.02
+    odom_still_hold: 0.18
+    odom_max_age_sec: 0.20
+    yellow_require_odom_still: true
+    yellow_max_hold_sec: 3.0
+    # 反拖急停（已在 C++ 修复锁死 bug；上车前请先用 brake_probe.py 确认固件）
+    yellow_brake_speed: 0.45
+    yellow_brake_period_s: 0.0
+    yellow_brake_pulse_s: 0.0
+    yellow_brake_release_speed: 0.10
+    yellow_brake_max_time_s: 0.8
+
+    # FinishGuard & 两段式刹车距离律
+    odom_scale_factor: 1.0
+    finish_min_dist_m: 8.5
+    finish_force_dist_m: 11.5
+    finish_min_cum_yaw_rad: 0.0
+    yellow_pre_brake_dist_m: 0.70
+    yellow_creep_speed_mps: 0.24
+    yellow_brake_decel_mps2: 1.8
+    yellow_control_latency_s: 0.10
+    yellow_bumper_margin_m: 0.08
+    yellow_rearm_dist_m: 0.35
+
+    # ================================
+    # GroundProjector (IPM 单应 / 针孔自动回退)
+    # ================================
+    use_homography: false
+    homography_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    cam_height_m: 0.11
+    cam_pitch_deg: 12.5
+    focal_px: 325.0
+    cam_cx: 320.0
+    cam_cy: 240.0
+    front_overhang_m: 0.06
+
+    # ================================
+    # ObstacleMemory & CorridorPlanner（动态可行走廊 + 岔路静态投票 + 直道吃数字）
+    # ================================
+    obstacle_merge_radius_m: 0.16
+    obstacle_memory_ttl_sec: 1.8
+    car_length_m: 0.280
+    obstacle_rear_keep_margin_m: 0.15
+    car_width_m: 0.191
+    default_lane_width_m: 0.430
+    border_margin_m: 0.025
+    cone_margin_m: 0.025
+    no_entry_margin_m: 0.030
+    obstacle_lookahead_m: 1.10
+    obstacle_rear_keep_m: 0.28
+    obstacle_speed_mps: 0.26
+    no_entry_speed_mps: 0.22
+    blocked_creep_speed_mps: 0.12
+    # 岔路 S 图：左侧为外道 (+3.0s 代价)，右为内道
+    fork_outer_branch: -1
+    fork_outer_time_penalty_s: 3.0
+    fork_min_votes: 3
+    fork_commit_dist_m: 1.10
+    digit_min_conf: 0.55
+    digit_min_frames: 2
+    digit_lookahead_max_m: 1.15
+    max_digit_lateral_shift_m: 0.12
+    digit_approach_speed_mps: 0.30
+    corridor_kp_y: 3.8
+    corridor_heading_gain: 0.85
+
+    # 红色 HSV 兜底（仅在切回 planner_mode: legacy_segment 时由 detect_red() 使用；finals_corridor 使用 11 类 YOLO 红锥/禁行区）
+    enable_red_filter: true
+    red_h_low_1: 0
+    red_h_high_1: 10
+    red_h_low_2: 160
+    red_h_high_2: 180
+    red_s_min: 90
+    red_v_min: 70
+    red_area_ratio_threshold: 0.0035
+    red_divider_angle_deg: 8.0
+    red_vote_frames: 3
+    red_turn_yaw: 0.4
+    red_turn_linear: 0.3
+    red_turn_duration: 0.2
+    red_line_aspect_ratio_min: 3.0
+    red_line_min_width_ratio: 0.30
+    red_line_fallback_direction: -1
+    red_line_soft_yaw: 0.35
+    red_line_speed: 0.12
+    red_cone_area_ratio_threshold: 0.0006
+    red_cone_min_bbox_width: 4
+    red_cone_min_bbox_height: 4
+    enable_soft_red_avoidance: true
+    red_soft_yaw: 0.15
+    red_repulsion_gain: 1.5
+    red_near_ratio: 0.38
+    red_very_close_ratio: 0.72
+    red_corridor_half_width_ratio: 0.35
+    red_soft_curve_yaw_limit: 0.15
+    red_lane_keep_min_factor: 0.40
+    red_soft_speed: 0.25
+    red_min_forward_speed: 0.15
+
+    # 丢线安全减速（防止盲跑冲出赛道触发 +15s/s 压线罚时）
+    enable_intersection_probe: false
+    intersection_band_height: 50
+    intersection_dark_ratio_threshold: 1.0
+    intersection_turn_speed: 0.2
+    intersection_turn_yaw_rate: 1.8
+    intersection_turn_duration: 2.0
+    intersection_cooldown: 2.0
+    line_lost_stop_time: 0.6
+    line_lost_forward_speed: 0.15
+    line_lost_yaw_hold_factor: 0.85
+    lost_line_safe_mode: true
+    lost_line_safe_speed: 0.12
+    lost_line_safe_stop_time: 0.35
+    publish_debug_image: true
+
+detection_turn_controller:
+  ros__parameters:
+    detection_topic: hobot_dnn_detection
+    state_topic: line_follower/track_state
+    cmd_vel_topic: /cmd_vel_detection
+    start_topic: line_follower/start_cmd
+    stop_cmd_topic: /cmd_vel_stop
+    require_start_cmd: true
+    stop_cmd_timeout: 0.5
+    det_frame_width: 640
+    det_frame_height: 480
+    confidence_threshold: 0.45
+    frame_window: 2
+    max_detection_gap: 0.35
+    max_missed_frames: 1
+    max_position_jump: 0.18
+    min_position_consistency: 0.45
+    min_x_diff: 0.01
+    weight_confidence: 0.45
+    weight_count: 0.35
+    weight_consistency: 0.2
+    turn_cooldown: 0.8
+    turn_duration: 0.38
+    min_turn_duration: 0.12
+    recovery_center_tolerance: 0.12
+    recovery_confirm_frames: 2
+    dedup_clear_time: 2.0
+    turn_linear: 0.2
+    yaw_gain: 1.6
+    max_yaw_rate: 1.3
+    turn_direction_sign: -1.0
+    y_align_tolerance: 0.01
+    line_centroid_topic: line_follower/centroid
+    centroid_timeout: 0.5
+
+cmd_mux_node:
+  ros__parameters:
+    stop_topic: /cmd_vel_stop
+    stop_timeout: 0.5
+    high_topic: /cmd_vel_detection
+    high_timeout: 0.12
+    low_topic: /cmd_vel_follower
+    low_timeout: 0.35
+    output_topic: /cmd_vel
+    heartbeat_topic: /cmd_mux/heartbeat
+    watchdog_rate_hz: 20.0
+    # 决赛核心安全开关：禁止 detection_turn_controller 抢占 /cmd_vel 压制红障避让
+    enable_detection_override: false
+    session_cooldown: 2.0

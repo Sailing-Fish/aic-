@@ -124,8 +124,30 @@ line_follower_node:
     line_lost_stop_time: 0.8
     line_lost_forward_speed: 0.3
     line_lost_yaw_hold_factor: 0.85
+    lost_line_safe_mode: false
+    lost_line_safe_speed: 0.12
+    lost_line_safe_stop_time: 0.35
+    odom_max_age_sec: 0.2
+    yellow_require_odom_still: false
+    yellow_max_hold_sec: 3.0
     speed_gain_damping: 0.65
     publish_debug_image: true
+
+    # Finals decoupled switches (defaults preserve legacy_segment + legacy_hsv)
+    ekf_odom_topic: "/odom_combined"
+    detection_topic: "hobot_dnn_detection"
+    detection_timeout_sec: 0.35
+    planner_mode: "legacy_segment"
+    lane_seg_mode: "legacy_hsv"
+    yellow_detect_mode: "legacy_area"
+    enable_semantic_hole_fill: false
+    enable_obstacle_memory: false
+    allow_dual_digit_cover: false
+    use_homography: false
+    homography_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    odom_scale_factor: 1.0
+    finish_min_dist_m: 8.5
+    finish_force_dist_m: 11.5
 
 detection_turn_controller:
   ros__parameters:
@@ -168,5 +190,9 @@ cmd_mux_node:
     high_topic: "/cmd_vel_detection"
     high_timeout: 0.12
     low_topic: "/cmd_vel_follower"
+    low_timeout: 0.35
     output_topic: "/cmd_vel"
+    heartbeat_topic: "/cmd_mux/heartbeat"
+    watchdog_rate_hz: 20.0
+    enable_detection_override: true
     session_cooldown: 2.0

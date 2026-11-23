@@ -34,6 +34,11 @@
   .spacer{flex:1}
   .round{font-size:11.5px;color:var(--dim);padding:3px 9px;border-radius:6px;
          background:#10161f;border:1px solid var(--line);white-space:nowrap}
+  .volt{font:600 12px/1 Consolas,monospace;padding:4px 10px;border-radius:6px;
+        background:#10161f;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+  .volt.ok{color:#9bf2c2;border-color:#1f6b45;background:#0e2318}
+  .volt.low{color:#ffe0e0;border-color:#c93838;background:#3a1212;
+            box-shadow:0 0 12px rgba(255,90,90,.45);font-weight:700}
   .clock{font:700 34px/1 Consolas,monospace;letter-spacing:1px;color:#fff;
          text-shadow:0 0 18px rgba(74,158,255,.35);min-width:150px;text-align:right}
   .clock.run{color:#8fe3ff}
@@ -89,14 +94,14 @@
   details.grp>summary::-webkit-details-marker{display:none}
   details.grp>summary::before{content:"▸";color:var(--mute);transition:.15s;display:inline-block}
   details.grp[open]>summary::before{transform:rotate(90deg)}
-  .row{display:grid;grid-template-columns:1fr 88px;gap:8px;align-items:center;padding:2px 0 2px 14px}
+  .row{display:grid;grid-template-columns:1fr 122px;gap:8px;align-items:center;padding:2px 0 2px 14px}
   .row .lbl{font-size:12px}
   .row .hint{display:block;color:var(--mute);font-size:10.5px;line-height:1.35}
-  .row input[type=number]{width:100%;background:#080c12;color:#fff;border:1px solid var(--line);
+  .row input[type=number],.row select{width:100%;background:#080c12;color:#fff;border:1px solid var(--line);
                           border-radius:5px;padding:3px 6px;font:12px Consolas,monospace}
-  .row input[type=number]:focus{outline:none;border-color:var(--acc)}
+  .row input[type=number]:focus,.row select:focus{outline:none;border-color:var(--acc)}
   .row input[type=checkbox]{width:15px;height:15px;accent-color:var(--acc)}
-  .row.dirty input[type=number]{border-color:var(--warn);background:#1d1a10}
+  .row.dirty input[type=number],.row.dirty select{border-color:var(--warn);background:#1d1a10}
   .row.pending .lbl::after{content:"待重启";margin-left:6px;font-size:10px;color:#12181f;
     background:var(--warn);border-radius:4px;padding:0 5px;font-weight:700}
   .footbar{display:flex;gap:8px;align-items:center;padding:8px 10px;
@@ -165,6 +170,7 @@
 <header>
   <div class="brand">RDK X5<small>智能车面板</small></div>
   <div class="lights" id="lights"></div>
+  <div class="volt" id="voltBadge" title="底盘电池电压 (/PowerVoltage)，低于 11.6V 告警">--.-V</div>
   <div class="round" id="round">第 1 轮</div>
   <div class="spacer"></div>
   <div class="clock" id="clock">00:00.0</div>
@@ -222,6 +228,8 @@
         <select id="mapSel">
           <option value="fork">岔路 fork</option>
           <option value="roundabout">环岛 roundabout</option>
+          <option value="finals_fork">决赛岔路 finals_fork</option>
+          <option value="finals_roundabout">决赛环岛 finals_roundabout</option>
         </select>
         <select id="segSel" title="选择要编辑的段；切换只改显隐，跨段的改动会一起保存"></select>
         <button class="primary" id="btnSaveRestart">保存并重启巡线</button>
@@ -411,6 +419,7 @@ let logOffset = 0, logFile = 'follow', lastStarted = null, lastLocked = null;
 let paramsState = null, dirty = false, lastEff = {}, effMismatch = false;
 let runningMap = null, yamlStale = false, restarting = false, pendingChanged = '';
 let lastFollowEpoch = null, mapMismatchPrev = null, mapAutoSynced = false, lastRunId = null;
+let lowVoltWarned = false;
 
 function toast(msg, bad){
   const t = $('toast');
@@ -445,6 +454,28 @@ async function pollStatus(){
     c.textContent = fmt(d.timer.elapsed);
     c.className = 'clock' + (d.timer.final ? ' final' : (d.timer.running ? ' run' : ''));
     $('round').textContent = '第 ' + d.round + ' 轮';
+
+    // 电池电压 (/PowerVoltage)
+    const vb = $('voltBadge');
+    const vt = d.voltage || {};
+    if(typeof vt.value === 'number' && !vt.stale){
+      const low = !!vt.low;
+      vb.textContent = (low ? '⚠ 低压 ' : '⚡ ') + vt.value.toFixed(2) + 'V';
+      vb.className = 'volt ' + (low ? 'low' : 'ok');
+      vb.title = low
+        ? `电池低于 ${vt.threshold || 11.6}V！动力与速度响应会明显衰减，请尽快换电`
+        : `底盘电压正常 (/PowerVoltage，告警阈值 ${vt.threshold || 11.6}V)`;
+      if(low && !lowVoltWarned){
+        lowVoltWarned = true;
+        toast(`电池低压告警：${vt.value.toFixed(2)}V (< ${vt.threshold || 11.6}V)，请换电！`, true);
+      } else if(!low){
+        lowVoltWarned = false;
+      }
+    } else {
+      vb.textContent = '--.-V';
+      vb.className = 'volt';
+      vb.title = '未收到 /PowerVoltage 数据';
+    }
 
     // 卡1 黄线
     const yc = d.yellow.count, yp = d.yellow.permanent;
@@ -569,7 +600,7 @@ function updateButtons(){
   $('btnSaveRestart').title = mismatch
     ? ('当前运行的是 ' + runningMap + '.yaml；改 ' + sel + '.yaml 再重启不会生效')
     : (restarting ? '重启进行中，等新进程就绪' : '');
-  document.querySelectorAll('#params input').forEach(el=>{ el.disabled = locked; });
+  document.querySelectorAll('#params input, #params select').forEach(el=>{ el.disabled = locked; });
 }
 
 function refreshMapWarn(){
@@ -636,15 +667,25 @@ async function loadParams(map){
       lab.innerHTML = `${it.label}<span class="hint">${it.help||''}</span>`;
       let inp;
       if(it.type==='bool'){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=!!it.value; }
+      else if(it.type==='enum'){
+        inp=document.createElement('select');
+        (it.options||[]).forEach(opt=>{
+          const o=document.createElement('option'); o.value=opt; o.textContent=opt; inp.appendChild(o);
+        });
+        inp.value=String(it.value);
+      }
       else { inp=document.createElement('input'); inp.type='number';
              inp.min=it.min; inp.max=it.max; inp.step=it.step; inp.value=it.value; }
-      inp.addEventListener('input',()=>{
-        const cur = inp.type==='checkbox' ? String(inp.checked) : String(parseFloat(inp.value));
-        const changedRow = cur !== String(it.type==='bool'?it.value:parseFloat(it.value));
-        row.classList.toggle('dirty', changedRow);
+      const onChange = ()=>{
+        const cur = it.type==='bool' ? String(inp.checked)
+                  : (it.type==='enum' ? String(inp.value) : String(parseFloat(inp.value)));
+        const base = it.type==='bool' ? String(it.value)
+                   : (it.type==='enum' ? String(it.value) : String(parseFloat(it.value)));
+        row.classList.toggle('dirty', cur !== base);
         dirty = !!document.querySelector('#params .row.dirty');
         $('memo').textContent = dirty ? '有未保存修改' : '未修改';
-      });
+      };
+      inp.addEventListener(it.type==='enum' ? 'change' : 'input', onChange);
       row.appendChild(lab); row.appendChild(inp); det.appendChild(row);
     });
     box.appendChild(det);
@@ -672,6 +713,13 @@ function markPending(){
     const effKey = (lastEff[key] !== undefined) ? key : alias[key];
     row.classList.remove('pending');
     if(!effKey || lastEff[effKey] === undefined) return;
+    if(row.dataset.type === 'enum'){
+      if(String(row.dataset.orig) !== String(lastEff[effKey])){
+        row.classList.add('pending');
+        effMismatch = true;
+      }
+      return;
+    }
     const cur = parseFloat(row.dataset.orig);
     if(Math.abs(cur - lastEff[effKey]) > 1e-6){
       row.classList.add('pending');
@@ -685,8 +733,10 @@ async function saveParams(thenRestart){
   const values = {};
   document.querySelectorAll('#params .row').forEach(row=>{
     const sec=row.dataset.section, key=row.dataset.key, typ=row.dataset.type;
-    const inp=row.querySelector('input'); if(!inp||inp.disabled) return;
-    let v = typ==='bool' ? inp.checked : (typ==='int'?parseInt(inp.value||'0',10):parseFloat(inp.value||'0'));
+    const inp=row.querySelector('input, select'); if(!inp||inp.disabled) return;
+    let v = typ==='bool' ? inp.checked
+          : (typ==='enum' ? String(inp.value)
+          : (typ==='int'?parseInt(inp.value||'0',10):parseFloat(inp.value||'0')));
     (values[sec] = values[sec]||{})[key]=v;
   });
   const map = $('mapSel').value;
@@ -700,8 +750,9 @@ async function saveParams(thenRestart){
   dirty=false;
   // 立刻把表单基准值换成刚保存的值，这样“待重启”标记马上按新值算，不用等重载
   document.querySelectorAll('#params .row').forEach(row=>{
-    const inp=row.querySelector('input'); if(!inp) return;
-    row.dataset.orig = row.dataset.type==='bool' ? String(inp.checked) : String(parseFloat(inp.value));
+    const inp=row.querySelector('input, select'); if(!inp) return;
+    row.dataset.orig = row.dataset.type==='bool' ? String(inp.checked)
+                     : (row.dataset.type==='enum' ? String(inp.value) : String(parseFloat(inp.value)));
   });
   markPending();
   if(thenRestart){
