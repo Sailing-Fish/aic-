@@ -3,6 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -51,6 +52,11 @@ def generate_launch_description():
         default_value="line_follower/track_state",
         description="巡线状态话题（用于黄线标志）",
     )
+    enable_detection_turn_arg = DeclareLaunchArgument(
+        "enable_detection_turn_controller",
+        default_value="true",
+        description="是否启动旧版独立 detection_turn_controller 节点（决赛统一走廊模式可设为 false）",
+    )
 
     image_topic = LaunchConfiguration("image_topic")
     cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
@@ -60,27 +66,29 @@ def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     detection_topic = LaunchConfiguration("detection_topic")
     state_topic = LaunchConfiguration("state_topic")
+    enable_detection_turn = LaunchConfiguration("enable_detection_turn_controller")
 
     line_follower_node = Node(
-    package="line_follower",
-    executable="line_follower_node",
-    name="line_follower_node",
-    output="screen",
-    parameters=[
-        params_file,
-        {
-            "image_topic": image_topic,
-            "cmd_vel_topic": follower_cmd_topic,
-            "stop_cmd_topic": stop_cmd_topic,
-         },
-     ],
-   )
+        package="line_follower",
+        executable="line_follower_node",
+        name="line_follower_node",
+        output="screen",
+        parameters=[
+            params_file,
+            {
+                "image_topic": image_topic,
+                "cmd_vel_topic": follower_cmd_topic,
+                "stop_cmd_topic": stop_cmd_topic,
+            },
+        ],
+    )
 
     detection_turn_node = Node(
         package="line_follower",
         executable="detection_turn_controller",
         name="detection_turn_controller",
         output="screen",
+        condition=IfCondition(enable_detection_turn),
         parameters=[
             params_file,
             {
@@ -91,6 +99,8 @@ def generate_launch_description():
         ],
     )
 
+    # 注意：不要在 launch dict 中硬编码 high_timeout / stop_timeout / enable_detection_override，
+    # 否则会覆盖 params_file (YAML) 中的配置（历史上 high_timeout=0.5 覆盖了 YAML 的 0.12）。
     mux_node = Node(
         package="line_follower",
         executable="cmd_mux_node",
@@ -100,9 +110,7 @@ def generate_launch_description():
             params_file,
             {
                 "stop_topic": stop_cmd_topic,
-                "stop_timeout": 0.5,
                 "high_topic": detection_cmd_topic,
-                "high_timeout": 0.5,
                 "low_topic": follower_cmd_topic,
                 "output_topic": cmd_vel_topic,
             },
@@ -118,6 +126,7 @@ def generate_launch_description():
         params_arg,
         detection_topic_arg,
         state_topic_arg,
+        enable_detection_turn_arg,
         line_follower_node,
         detection_turn_node,
         mux_node,

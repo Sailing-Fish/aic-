@@ -121,7 +121,12 @@ ekf_filter_node:
 #         odom0_pose_rejection_threshold: 5.0
 #         odom0_twist_rejection_threshold: 1.0
 
-        imu0: /imu/data_raw
+        # Use Madgwick-filtered /imu/data instead of /imu/data_raw:
+        # wheeltec_robot's raw Quaternion_Solution.cpp hardcodes SAMPLING_FREQ=20.0f
+        # with twoKi=0.0f, causing yaw drift when actual serial frequency varies (~20-23 Hz).
+        # imu_filter_madgwick_node (launched by turn_on_wheeltec_robot.launch.py)
+        # computes dt-aware orientation on /imu/data for cleaner /odom_combined yaw.
+        imu0: /imu/data
         imu0_config: [false, false, false,
                       false, false, true,
                       false, false, false,
