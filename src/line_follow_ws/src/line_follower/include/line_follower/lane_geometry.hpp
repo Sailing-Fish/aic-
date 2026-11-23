@@ -35,6 +35,10 @@ struct LaneGeometryConfig
   bool enable_width_adaptive_fusion{false};
   double wide_lane_boundary_blend{0.0};
   double observation_filter_alpha{1.0};
+
+  // Multi-run fork split detection parameters
+  int fork_min_gap_px{14};
+  int fork_min_branch_width_px{18};
 };
 
 class LaneGeometry
@@ -54,21 +58,25 @@ public:
     double column_white_ratio = 0.30,
     int min_run_width = 20);
 
+  // preferred_branch: -1 = left branch, +1 = right branch, 0 = closest to reference_x
   BandObservation observe_band(
     const cv::Mat & binary,
     int y0,
     int y1,
     double reference_x,
     double nominal_width_ratio,
-    double dir_hint_norm) const;
+    double dir_hint_norm = 0.0,
+    int preferred_branch = 0) const;
 
   LaneObservation observe(
     const SegmentedFrame & seg,
-    CurveAssistState & curve_state) const;
+    CurveAssistState & curve_state,
+    int preferred_branch = 0) const;
 
   ProcessingResult evaluate(
     const SegmentedFrame & seg,
-    CurveAssistState & curve_state) const;
+    CurveAssistState & curve_state,
+    int preferred_branch = 0) const;
 
 private:
   LaneGeometryConfig config_{};

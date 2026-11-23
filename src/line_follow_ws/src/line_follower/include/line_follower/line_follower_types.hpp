@@ -1,8 +1,58 @@
 #pragma once
 
 #include <algorithm>
-#include <opencv2/core.hpp>
 #include <string>
+
+#if defined(__has_include)
+#if __has_include(<opencv2/core.hpp>) && !defined(LINE_FOLLOWER_NO_OPENCV)
+#define LINE_FOLLOWER_HAS_OPENCV 1
+#endif
+#elif !defined(LINE_FOLLOWER_NO_OPENCV)
+#define LINE_FOLLOWER_HAS_OPENCV 1
+#endif
+
+#if defined(LINE_FOLLOWER_HAS_OPENCV)
+#include <opencv2/core.hpp>
+#else
+namespace cv
+{
+struct Rect
+{
+  int x{0};
+  int y{0};
+  int width{0};
+  int height{0};
+  Rect() = default;
+  Rect(int x_, int y_, int w_, int h_)
+  : x(x_), y(y_), width(w_), height(h_) {}
+};
+
+struct Point2f
+{
+  float x{0.0F};
+  float y{0.0F};
+  Point2f() = default;
+  Point2f(float x_, float y_)
+  : x(x_), y(y_) {}
+};
+
+struct Point2d
+{
+  double x{0.0};
+  double y{0.0};
+  Point2d() = default;
+  Point2d(double x_, double y_)
+  : x(x_), y(y_) {}
+};
+
+struct Mat
+{
+  int rows{0};
+  int cols{0};
+  bool empty() const {return rows <= 0 || cols <= 0;}
+};
+}  // namespace cv
+#endif
 
 namespace line_follower
 {
@@ -45,6 +95,19 @@ struct BandObservation
   bool left_clipped{false};
   bool right_clipped{false};
   double reliability{1.0};
+
+  // Explicit lane-edge geometry & multi-run fork detection (finals)
+  double left_edge_px{0.0};
+  double right_edge_px{0.0};
+  bool left_valid{false};
+  bool right_valid{false};
+
+  int run_count{0};
+  bool has_fork_split{false};
+  double left_branch_center_px{0.0};
+  double right_branch_center_px{0.0};
+  bool left_branch_valid{false};
+  bool right_branch_valid{false};
 };
 
 struct LaneObservation
@@ -64,6 +127,20 @@ struct LaneObservation
   double near_width_ratio{0.0};
   double far_width_ratio{0.0};
   double lane_width_ratio{0.0};
+
+  // Explicit near-band boundary coordinates (full-width pixel x)
+  double near_left_edge_px{0.0};
+  double near_right_edge_px{0.0};
+  bool near_left_valid{false};
+  bool near_right_valid{false};
+
+  // Multi-run fork split detection & branch selection state
+  bool has_fork_split{false};
+  double left_branch_center_px{0.0};
+  double right_branch_center_px{0.0};
+  bool left_branch_valid{false};
+  bool right_branch_valid{false};
+  int active_branch_choice{0};
 
   double lateral_error{0.0};
   double heading_proxy{0.0};
@@ -90,6 +167,20 @@ struct ProcessingResult
   int roi_top{0};
   int roi_bottom{0};
 
+  // Geometric yellow bar, YOLO-hybrid refinement & dead-end-ahead cues
+  double yellow_area_ratio{0.0};
+  bool yellow_is_geometric{false};
+  double yellow_bottom_y_full{0.0};
+  double yellow_top_y_full{0.0};
+  double yellow_bar_width_px{0.0};
+  double yellow_center_x_full{0.0};
+  cv::Rect yellow_bbox_full{};
+  bool yellow_from_yolo_hybrid{false};
+  double yellow_ahead_blue_ratio{0.0};
+  double yellow_ahead_dark_ratio{0.0};
+  bool yellow_has_dead_end_ahead{false};
+  std::string active_lane_seg_mode{"legacy_hsv"};
+
   LaneObservation observation{};
 };
 
@@ -107,6 +198,20 @@ struct SegmentedFrame
   bool contour_valid{false};
   cv::Rect bounding_box{};
   cv::Point2f contour_centroid{0.0F, 0.0F};
+
+  // Geometric yellow bar, YOLO-hybrid refinement & dead-end-ahead cues
+  double yellow_area_ratio{0.0};
+  bool yellow_is_geometric{false};
+  double yellow_bottom_y_full{0.0};
+  double yellow_top_y_full{0.0};
+  double yellow_bar_width_px{0.0};
+  double yellow_center_x_full{0.0};
+  cv::Rect yellow_bbox_full{};
+  bool yellow_from_yolo_hybrid{false};
+  double yellow_ahead_blue_ratio{0.0};
+  double yellow_ahead_dark_ratio{0.0};
+  bool yellow_has_dead_end_ahead{false};
+  std::string active_lane_seg_mode{"legacy_hsv"};
 };
 
 struct CurveAssistState

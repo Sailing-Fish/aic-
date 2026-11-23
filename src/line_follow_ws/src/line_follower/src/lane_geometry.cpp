@@ -48,6 +48,9 @@ void LaneGeometry::set_config(const LaneGeometryConfig & config)
   config_.wide_band_min_reliability = clamp_value(config_.wide_band_min_reliability, 0.05, 1.0);
   config_.wide_lane_boundary_blend = clamp_value(config_.wide_lane_boundary_blend, 0.0, 1.0);
   config_.observation_filter_alpha = clamp_value(config_.observation_filter_alpha, 0.05, 1.0);
+
+  config_.fork_min_gap_px = std::max(2, config_.fork_min_gap_px);
+  config_.fork_min_branch_width_px = std::max(1, config_.fork_min_branch_width_px);
 }
 
 const LaneGeometryConfig & LaneGeometry::config() const
@@ -61,8 +64,11 @@ BandObservation LaneGeometry::observe_band(
   int y1,
   double reference_x,
   double nominal_width_ratio,
-  double dir_hint_norm) const
+  double dir_hint_norm,
+  int preferred_branch) const
 {
+  (void)dir_hint_norm;
+
   BandObservation obs{};
   if (binary.empty() || binary.rows <= 0 || binary.cols <= 0) {
     return obs;
@@ -88,11 +94,15 @@ BandObservation LaneGeometry::observe_band(
     }
   }
 
-  bool found = false;
-  int best_start = 0;
-  int best_end = 0;
-  double best_distance = 1e9;
-  int best_width = 0;
+  struct ColumnRun
+  {
+    int start{0};
+    int end{0};
+    int width{0};
+    double center{0.0};
+  };
+
+  std::vector<ColumnRun> runs;
   int run_start = -1;
 
   for (int x = 0; x <= binary.cols; ++x) {
@@ -108,37 +118,81 @@ BandObservation LaneGeometry::observe_band(
       const int run_width = run_end - run_start + 1;
 
       if (run_width >= config_.min_run_width) {
-        const double center = 0.5 * static_cast<double>(run_start + run_end);
-
-        double distance;
-        if (reference_x >= static_cast<double>(run_start) &&
-            reference_x <= static_cast<double>(run_end))
-        {
-          distance = 0.0;
-        } else {
-          distance = std::abs(center - reference_x);
-        }
-
-        if (!found ||
-            distance < best_distance ||
-            (std::abs(distance - best_distance) < 1e-6 &&
-             run_width > best_width))
-        {
-          found = true;
-          best_start = run_start;
-          best_end = run_end;
-          best_distance = distance;
-          best_width = run_width;
-        }
+        runs.push_back(ColumnRun{
+          run_start,
+          run_end,
+          run_width,
+          0.5 * static_cast<double>(run_start + run_end)});
       }
 
       run_start = -1;
     }
   }
 
-  if (!found) {
+  if (runs.empty()) {
     return obs;
   }
+
+  obs.run_count = static_cast<int>(runs.size());
+
+  // Multi-run fork split detection: leftmost & rightmost qualifying branch runs separated by gap
+  int left_branch_idx = -1;
+  int right_branch_idx = -1;
+  for (size_t i = 0; i < runs.size(); ++i) {
+    if (runs[i].width < config_.fork_min_branch_width_px) {
+      continue;
+    }
+    if (left_branch_idx < 0) {
+      left_branch_idx = static_cast<int>(i);
+    }
+    right_branch_idx = static_cast<int>(i);
+  }
+
+  if (left_branch_idx >= 0 && right_branch_idx > left_branch_idx) {
+    const ColumnRun & lrun = runs[static_cast<size_t>(left_branch_idx)];
+    const ColumnRun & rrun = runs[static_cast<size_t>(right_branch_idx)];
+    const int gap_px = rrun.start - lrun.end - 1;
+    if (gap_px >= config_.fork_min_gap_px) {
+      obs.has_fork_split = true;
+      obs.left_branch_valid = true;
+      obs.left_branch_center_px = lrun.center;
+      obs.right_branch_valid = true;
+      obs.right_branch_center_px = rrun.center;
+    }
+  }
+
+  // Select active run: honor preferred_branch when a fork split is present, else closest to ref
+  size_t chosen_idx = 0;
+  if (preferred_branch < 0 && obs.left_branch_valid) {
+    chosen_idx = static_cast<size_t>(left_branch_idx);
+  } else if (preferred_branch > 0 && obs.right_branch_valid) {
+    chosen_idx = static_cast<size_t>(right_branch_idx);
+  } else {
+    double best_distance = 1e9;
+    int best_width = 0;
+    for (size_t i = 0; i < runs.size(); ++i) {
+      const ColumnRun & r = runs[i];
+      double distance = 0.0;
+      if (reference_x < static_cast<double>(r.start) ||
+          reference_x > static_cast<double>(r.end))
+      {
+        distance = std::abs(r.center - reference_x);
+      }
+      if (i == 0 ||
+          distance < best_distance ||
+          (std::abs(distance - best_distance) < 1e-6 && r.width > best_width))
+      {
+        chosen_idx = i;
+        best_distance = distance;
+        best_width = r.width;
+      }
+    }
+  }
+
+  const ColumnRun & best = runs[chosen_idx];
+  const int best_start = best.start;
+  const int best_end = best.end;
+  const int best_width = best.width;
 
   const double cols_d = static_cast<double>(binary.cols);
   const double image_center_x = 0.5 * cols_d;
@@ -150,6 +204,10 @@ BandObservation LaneGeometry::observe_band(
   obs.width_ratio = clamp_value(static_cast<double>(best_width) / cols_d, 0.0, 1.0);
   obs.left_clipped = (best_start <= 1);
   obs.right_clipped = (best_end >= binary.cols - 2);
+  obs.left_edge_px = static_cast<double>(best_start);
+  obs.right_edge_px = static_cast<double>(best_end);
+  obs.left_valid = !obs.left_clipped;
+  obs.right_valid = !obs.right_clipped;
   obs.raw_center_px = 0.5 * static_cast<double>(best_start + best_end);
 
   if (obs.width_ratio <= config_.wide_road_ratio_threshold) {
@@ -210,7 +268,7 @@ std::optional<double> LaneGeometry::find_band_center(
   cfg.min_run_width = min_run_width;
   cfg.wide_lane_boundary_blend = 0.0;
   LaneGeometry geo(cfg);
-  const auto band_obs = geo.observe_band(binary, y0, y1, reference_x, 0.70, 0.0);
+  const auto band_obs = geo.observe_band(binary, y0, y1, reference_x, 0.70, 0.0, 0);
   if (!band_obs.valid) {
     return std::nullopt;
   }
@@ -219,12 +277,14 @@ std::optional<double> LaneGeometry::find_band_center(
 
 LaneObservation LaneGeometry::observe(
   const SegmentedFrame & seg,
-  CurveAssistState & curve_state) const
+  CurveAssistState & curve_state,
+  int preferred_branch) const
 {
   LaneObservation obs{};
   obs.valid = false;
   obs.yellow_detected = seg.yellow_line_detected;
   obs.roi = cv::Rect(0, seg.roi_top, seg.frame_width, seg.roi_bottom - seg.roi_top);
+  obs.active_branch_choice = preferred_branch;
 
   if (seg.binary_mask.empty() || seg.frame_width <= 0) {
     curve_state.last_confidence = 0.0;
@@ -240,40 +300,28 @@ LaneObservation LaneGeometry::observe(
   const int near_y0 = static_cast<int>(static_cast<double>(roi_height) * config_.near_band_top_ratio);
   const int near_y1 = static_cast<int>(static_cast<double>(roi_height) * config_.near_band_bottom_ratio);
 
-  const double prior_dir_hint =
-    curve_state.filter_initialized ? curve_state.filtered_error : 0.0;
-
-  BandObservation near_obs = observe_band(
+  const BandObservation near_obs = observe_band(
     seg.binary_mask,
     near_y0,
     near_y1,
     image_center_x,
     config_.nominal_near_width_ratio,
-    prior_dir_hint);
+    0.0,
+    preferred_branch);
 
   double far_reference = image_center_x;
   if (near_obs.valid) {
     far_reference = near_obs.center_px;
   }
 
-  BandObservation far_obs = observe_band(
+  const BandObservation far_obs = observe_band(
     seg.binary_mask,
     far_y0,
     far_y1,
     far_reference,
     config_.nominal_far_width_ratio,
-    prior_dir_hint);
-
-  // 若远带有效且近带较宽，用远带方向线索精化近带边界中心
-  if (config_.wide_lane_boundary_blend > 0.0 && near_obs.valid && far_obs.valid) {
-    near_obs = observe_band(
-      seg.binary_mask,
-      near_y0,
-      near_y1,
-      image_center_x,
-      config_.nominal_near_width_ratio,
-      far_obs.center_norm);
-  }
+    0.0,
+    preferred_branch);
 
   const bool near_valid = near_obs.valid;
   const bool far_valid = far_obs.valid;
@@ -395,6 +443,25 @@ LaneObservation LaneGeometry::observe(
   obs.far_center_norm = far_obs.center_norm;
   obs.near_width_ratio = near_obs.width_ratio;
   obs.far_width_ratio = far_obs.width_ratio;
+
+  obs.near_left_edge_px = near_obs.left_edge_px;
+  obs.near_right_edge_px = near_obs.right_edge_px;
+  obs.near_left_valid = near_obs.valid && near_obs.left_valid;
+  obs.near_right_valid = near_obs.valid && near_obs.right_valid;
+
+  if (far_obs.has_fork_split) {
+    obs.has_fork_split = true;
+    obs.left_branch_center_px = far_obs.left_branch_center_px;
+    obs.right_branch_center_px = far_obs.right_branch_center_px;
+    obs.left_branch_valid = far_obs.left_branch_valid;
+    obs.right_branch_valid = far_obs.right_branch_valid;
+  } else if (near_obs.has_fork_split) {
+    obs.has_fork_split = true;
+    obs.left_branch_center_px = near_obs.left_branch_center_px;
+    obs.right_branch_center_px = near_obs.right_branch_center_px;
+    obs.left_branch_valid = near_obs.left_branch_valid;
+    obs.right_branch_valid = near_obs.right_branch_valid;
+  }
 
   if (near_valid && far_valid) {
     obs.lane_width_ratio = 0.5 * (near_obs.width_ratio + far_obs.width_ratio);
@@ -524,18 +591,32 @@ LaneObservation LaneGeometry::observe(
 
 ProcessingResult LaneGeometry::evaluate(
   const SegmentedFrame & seg,
-  CurveAssistState & curve_state) const
+  CurveAssistState & curve_state,
+  int preferred_branch) const
 {
   ProcessingResult result{};
   result.line_detected = false;
   result.yellow_line_detected = seg.yellow_line_detected;
+  result.yellow_area_ratio = seg.yellow_area_ratio;
+  result.yellow_is_geometric = seg.yellow_is_geometric;
+  result.yellow_bottom_y_full = seg.yellow_bottom_y_full;
+  result.yellow_top_y_full = seg.yellow_top_y_full;
+  result.yellow_bar_width_px = seg.yellow_bar_width_px;
+  result.yellow_center_x_full = seg.yellow_center_x_full;
+  result.yellow_bbox_full = seg.yellow_bbox_full;
+  result.yellow_from_yolo_hybrid = seg.yellow_from_yolo_hybrid;
+  result.yellow_ahead_blue_ratio = seg.yellow_ahead_blue_ratio;
+  result.yellow_ahead_dark_ratio = seg.yellow_ahead_dark_ratio;
+  result.yellow_has_dead_end_ahead = seg.yellow_has_dead_end_ahead;
+  result.active_lane_seg_mode = seg.active_lane_seg_mode;
+
   result.bounding_box = seg.bounding_box;
   result.roi_bgr = seg.roi_bgr;
   result.binary_mask = seg.binary_mask;
   result.roi_top = seg.roi_top;
   result.roi_bottom = seg.roi_bottom;
 
-  const LaneObservation obs = observe(seg, curve_state);
+  const LaneObservation obs = observe(seg, curve_state, preferred_branch);
   result.observation = obs;
 
   if (!obs.valid) {
