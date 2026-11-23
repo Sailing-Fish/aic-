@@ -2,6 +2,8 @@
 # coding=utf-8
 
 from collections import deque
+import json
+import math
 import os
 import sys
 import threading
@@ -37,6 +39,7 @@ except ImportError:
 # 模型与类别文件默认放在脚本同级的 mod1 目录下。
 # 用 __file__ 推导，避免把工作区绝对路径写死（工作区改名后仍可用）。
 DEFAULT_MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mod1')
+NMS_CLASS_OFFSET_PX = 4096.0
 
 
 def bgr2nv12_fast(image):
@@ -89,13 +92,252 @@ def letterbox(img, target_shape=(640, 640), color=(114, 114, 114)):
     return padded_img, r, (pad_w, pad_h)
 
 
+def load_class_list(cls_list_path):
+    """
+    从文本文件读取类别列表（每行一类，忽略空行）。
+    """
+    with open(cls_list_path, 'r', encoding='utf-8') as f:
+        return [line.strip() for line in f.readlines() if line.strip()]
+
+
+def infer_model_num_classes(bpu_model):
+    """
+    从 BPU 模型输出张量形状中自动推断分类头通道数 C（排除 DFL 回归头 64 通道）。
+    若模型对象不暴露 outputs 元数据（例如测试桩），返回 None。
+    """
+    outputs = getattr(bpu_model, 'outputs', None)
+    if not outputs:
+        return None
+
+    cls_channels = []
+    for out in outputs:
+        props = getattr(out, 'properties', None)
+        shape = getattr(props, 'shape', None)
+        if shape is None or len(shape) != 4:
+            continue
+        dims = [int(d) for d in shape]
+        # YOLOv8 BPU 输出一般为 NHWC (1, H, W, C) 或 NCHW (1, C, H, W)
+        # 其中 H == W ∈ {80, 40, 20}，C 为 64 (reg) 或 num_classes (cls)
+        if dims[1] == dims[2] and dims[3] != dims[1]:
+            ch = dims[3]
+        elif dims[2] == dims[3] and dims[1] != dims[2]:
+            ch = dims[1]
+        else:
+            ch = dims[-1]
+        if ch != 64:
+            cls_channels.append(ch)
+
+    if len(cls_channels) == 3 and len(set(cls_channels)) == 1:
+        return int(cls_channels[0])
+    return None
+
+
+def validate_model_classes(bpu_model, classes):
+    """
+    动态校验类别文件数量与 BPU 模型输出头通道数是否一致。
+    支持任意类别数（如旧 8 类数字模型、决赛 11 类模型等），不再硬编码 == 8。
+    """
+    if not classes:
+        raise RuntimeError('类别列表为空，无法初始化 YOLOv8 检测节点')
+
+    model_cls = infer_model_num_classes(bpu_model)
+    if model_cls is not None and model_cls != len(classes):
+        raise RuntimeError(
+            f'模型类别数不匹配: BPU 模型输出 {model_cls} 类，'
+            f'但类别文件包含 {len(classes)} 类 ({classes})'
+        )
+    return len(classes)
+
+
+def parse_class_conf_overrides(overrides_spec, classes, default_conf, logger=None):
+    """
+    解析每类置信度阈值覆盖配置（JSON 字符串或 dict），返回长度为 len(classes) 的 float32 数组。
+    支持用类别名（如 "red_no_entry"）或类别下标字符串（如 "9"）指定阈值。
+    """
+    base = float(np.clip(float(default_conf), 1e-4, 1.0 - 1e-4))
+    thresholds = np.full(len(classes), base, dtype=np.float32)
+    if overrides_spec is None:
+        return thresholds
+
+    parsed = None
+    if isinstance(overrides_spec, dict):
+        parsed = overrides_spec
+    elif isinstance(overrides_spec, str):
+        raw = overrides_spec.strip()
+        if not raw:
+            return thresholds
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                parsed = obj
+            elif logger is not None:
+                logger(f'class_conf_overrides 必须为 JSON 对象，已忽略: {raw}')
+        except Exception as exc:
+            if logger is not None:
+                logger(f'解析 class_conf_overrides 失败，已回退默认阈值: {exc}')
+            return thresholds
+
+    if not parsed:
+        return thresholds
+
+    name_to_idx = {name: idx for idx, name in enumerate(classes)}
+    for key, val in parsed.items():
+        try:
+            thr = float(np.clip(float(val), 1e-4, 1.0 - 1e-4))
+        except (TypeError, ValueError):
+            if logger is not None:
+                logger(f'无效的类别阈值 {key}={val}，已忽略')
+            continue
+
+        key_str = str(key).strip()
+        if key_str in name_to_idx:
+            thresholds[name_to_idx[key_str]] = thr
+        elif key_str.isdigit() and 0 <= int(key_str) < len(classes):
+            thresholds[int(key_str)] = thr
+        elif logger is not None:
+            logger(f'class_conf_overrides 包含未知类别 "{key_str}"，已忽略')
+
+    return thresholds
+
+
+class SimpleBoxTracker:
+    """
+    轻量级跨帧 IoU + 质心距离目标跟踪器（纯 Python/NumPy）：
+    - 仅在相同类别内做一对一贪心匹配，防止不同类别互抢 track_id；
+    - 优先按 IoU >= iou_thresh 匹配，高速移动小框回退按质心像素距离匹配；
+    - 赋予单调递增持久化整数 track_id，并在连续丢失 > max_missed_frames 帧后回收。
+    """
+
+    def __init__(self, iou_thresh=0.30, max_center_dist_px=80.0, max_missed_frames=5):
+        self.iou_thresh = float(max(0.0, iou_thresh))
+        self.max_center_dist_px = float(max(1.0, max_center_dist_px))
+        self.max_missed_frames = int(max(0, max_missed_frames))
+        self._next_track_id = 1
+        self._tracks = {}
+
+    @staticmethod
+    def _box_iou(a, b):
+        ax1, ay1, aw, ah = a
+        bx1, by1, bw, bh = b
+        ax2, ay2 = ax1 + aw, ay1 + ah
+        bx2, by2 = bx1 + bw, by1 + bh
+
+        ix1 = max(ax1, bx1)
+        iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2)
+        iy2 = min(ay2, by2)
+        iw = max(0.0, ix2 - ix1)
+        ih = max(0.0, iy2 - iy1)
+        inter = iw * ih
+        if inter <= 0.0:
+            return 0.0
+        union = max(1e-6, aw * ah + bw * bh - inter)
+        return float(inter / union)
+
+    def reset(self):
+        self._tracks.clear()
+        self._next_track_id = 1
+
+    def update(self, detections):
+        """
+        更新跟踪状态并原地/浅拷贝返回带持久化 track_id 与 track_hits 的检测列表。
+        """
+        out_dets = [dict(d) for d in detections]
+
+        # 按类别分组匹配
+        det_indices_by_cls = {}
+        for idx, det in enumerate(out_dets):
+            det_indices_by_cls.setdefault(det['type'], []).append(idx)
+
+        matched_track_ids = set()
+        matched_det_indices = set()
+
+        for cls_name, det_indices in det_indices_by_cls.items():
+            cls_tracks = [
+                (tid, trk) for tid, trk in self._tracks.items() if trk['type'] == cls_name
+            ]
+            if not cls_tracks:
+                continue
+
+            # 构建候选匹配边 (score, tid, det_idx)
+            # IoU 达标边得分 = 2.0 + iou（必高于纯质心回退边 [0, 1]）
+            candidates = []
+            for tid, trk in cls_tracks:
+                t_box = (trk['bx'], trk['by'], trk['bw'], trk['bh'])
+                tcx, tcy = trk['cx'], trk['cy']
+                for det_idx in det_indices:
+                    det = out_dets[det_idx]
+                    d_box = (det['bx'], det['by'], det['bw'], det['bh'])
+                    iou = self._box_iou(t_box, d_box)
+                    if iou >= self.iou_thresh:
+                        candidates.append((2.0 + iou, tid, det_idx))
+                    else:
+                        dist = math.hypot(det['cx'] - tcx, det['cy'] - tcy)
+                        if dist <= self.max_center_dist_px:
+                            score = 1.0 - (dist / self.max_center_dist_px)
+                            candidates.append((score, tid, det_idx))
+
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            for _score, tid, det_idx in candidates:
+                if tid in matched_track_ids or det_idx in matched_det_indices:
+                    continue
+                matched_track_ids.add(tid)
+                matched_det_indices.add(det_idx)
+
+                det = out_dets[det_idx]
+                trk = self._tracks[tid]
+                trk['bx'] = det['bx']
+                trk['by'] = det['by']
+                trk['bw'] = det['bw']
+                trk['bh'] = det['bh']
+                trk['cx'] = det['cx']
+                trk['cy'] = det['cy']
+                trk['missed'] = 0
+                trk['hits'] += 1
+
+                det['track_id'] = int(tid)
+                det['track_hits'] = int(trk['hits'])
+
+        # 未匹配的检测生成新轨迹
+        for idx, det in enumerate(out_dets):
+            if idx in matched_det_indices:
+                continue
+            tid = self._next_track_id
+            self._next_track_id += 1
+            self._tracks[tid] = {
+                'type': det['type'],
+                'bx': det['bx'],
+                'by': det['by'],
+                'bw': det['bw'],
+                'bh': det['bh'],
+                'cx': det['cx'],
+                'cy': det['cy'],
+                'missed': 0,
+                'hits': 1,
+            }
+            det['track_id'] = int(tid)
+            det['track_hits'] = 1
+
+        # 未匹配的旧轨迹累加 missed 并清理过期轨迹
+        expired = []
+        for tid, trk in self._tracks.items():
+            if tid not in matched_track_ids:
+                trk['missed'] += 1
+                if trk['missed'] > self.max_missed_frames:
+                    expired.append(tid)
+        for tid in expired:
+            del self._tracks[tid]
+
+        return out_dets
+
+
 class StageLatencyTracker:
     """
     统计各阶段耗时（ms）的滑动窗口 P50 / P95：
     - preprocess: 图像解码 + letterbox + BGR->NV12
     - infer:      BPU forward 推理
-    - postprocess:反量化 + YOLOv8 DFL 解码与坐标映射
-    - nms:        NMS + ai_msgs/PerceptionTargets 组装
+    - postprocess:反量化 + YOLOv8 预过滤与 DFL 解码
+    - nms:        Per-class NMS + 跨帧跟踪 + ai_msgs/PerceptionTargets 组装
     - draw:       OpenCV 调试图绘制（跳过时为 0）
     - publish:    话题发布耗时（检测结果 + 可选调试图）
     - total:      单帧总处理耗时
@@ -203,9 +445,13 @@ def decode_yolov8_outputs(
     scale_r,
     orig_w,
     orig_h,
+    class_conf_thresholds=None,
 ):
     """
-    YOLOv8 BPU 输出反量化与 DFL 解码（保持原有解码数学逻辑与坐标反映射完全不变）。
+    YOLOv8 BPU 输出反量化、Pre-sigmoid Logit 预过滤与 DFL 解码。
+    - 先在 raw logit 空间用 min_logit = log(min_conf / (1 - min_conf)) 过滤掉绝大部分背景 anchor，
+      仅对候选 anchor 计算 sigmoid 与 DFL，显著降低 RDK X5 CPU 后处理耗时。
+    - 支持任意类别数与每类独立置信度阈值 (class_conf_thresholds)。
     返回: (all_boxes, all_scores, all_cls_ids, status_ok, cls_head_cnt, reg_head_cnt)
     """
     tensors = []
@@ -216,7 +462,8 @@ def decode_yolov8_outputs(
             data *= scale[0] if len(scale) == 1 else scale
 
         if len(data.shape) == 4 and (data.shape[1] == num_classes or data.shape[1] == 64):
-            data = np.transpose(data, (0, 2, 3, 1))
+            if data.shape[-1] != num_classes and data.shape[-1] != 64:
+                data = np.transpose(data, (0, 2, 3, 1))
         tensors.append(data)
 
     cls_heads = sorted(
@@ -233,24 +480,47 @@ def decode_yolov8_outputs(
     if len(cls_heads) != 3 or len(reg_heads) != 3:
         return [], [], [], False, len(cls_heads), len(reg_heads)
 
+    if class_conf_thresholds is not None:
+        cls_thresh_arr = np.asarray(class_conf_thresholds, dtype=np.float32).reshape(-1)
+        if len(cls_thresh_arr) != num_classes:
+            cls_thresh_arr = np.full(num_classes, float(conf_thresh), dtype=np.float32)
+    else:
+        cls_thresh_arr = np.full(num_classes, float(conf_thresh), dtype=np.float32)
+
+    cls_thresh_arr = np.clip(cls_thresh_arr, 1e-6, 1.0 - 1e-6)
+    min_conf = float(np.min(cls_thresh_arr))
+    min_logit = math.log(min_conf / (1.0 - min_conf))
+
     all_boxes, all_scores, all_cls_ids = [], [], []
 
     for (grid, stride), cls_feat, reg_feat in zip(grids, cls_heads, reg_heads):
         cls_feat_flat = cls_feat.reshape(-1, num_classes)
-        cls_p = 1.0 / (1.0 + np.exp(-np.clip(cls_feat_flat, -30.0, 30.0)))
 
-        max_scores = np.max(cls_p, axis=1)
-        mask = max_scores > conf_thresh
-
-        if not np.any(mask):
+        # Pre-sigmoid logit filter: skip exp() on >99% background anchors
+        max_logits = np.max(cls_feat_flat, axis=1)
+        cand_indices = np.flatnonzero(max_logits > min_logit)
+        if len(cand_indices) == 0:
             continue
 
-        valid_cls_ids = np.argmax(cls_p[mask], axis=1)
-        valid_scores = max_scores[mask]
-        valid_grid = grid[mask]
+        cand_logits = np.clip(cls_feat_flat[cand_indices], -30.0, 30.0)
+        cand_p = 1.0 / (1.0 + np.exp(-cand_logits))
+
+        pass_mask = cand_p > cls_thresh_arr
+        keep_local = np.any(pass_mask, axis=1)
+        if not np.any(keep_local):
+            continue
+
+        valid_indices = cand_indices[keep_local]
+        valid_p = cand_p[keep_local]
+        valid_pass_mask = pass_mask[keep_local]
+
+        masked_p = np.where(valid_pass_mask, valid_p, -1.0)
+        valid_cls_ids = np.argmax(masked_p, axis=1)
+        valid_scores = masked_p[np.arange(len(valid_cls_ids)), valid_cls_ids]
+        valid_grid = grid[valid_indices]
 
         # DFL
-        valid_reg = reg_feat.reshape(-1, 4, 16)[mask]
+        valid_reg = reg_feat.reshape(-1, 4, 16)[valid_indices]
         exp_reg = np.exp(valid_reg - np.max(valid_reg, axis=-1, keepdims=True))
         reg_p = exp_reg / np.sum(exp_reg, axis=-1, keepdims=True)
         dfl = np.dot(reg_p, dfl_weights)
@@ -285,10 +555,13 @@ def run_nms_filter(
     min_box_size,
     orig_w,
     orig_h,
+    class_agnostic_nms=False,
+    class_conf_thresholds=None,
 ):
     """
-    执行 NMS 并过滤过小检测框，返回结构化检测列表供消息封装和可选绘图复用。
-    不改变任何原有阈值、坐标截断与类别映射语义。
+    执行 Per-class NMS（默认）或 class-agnostic NMS 并过滤过小检测框。
+    Per-class NMS 通过按 cls_id * 4096 偏移坐标实现，确保相邻双数字（10~15cm）
+    或靠近禁行区的路锥不会跨类别互相抑制。
     """
     detections = []
     if len(all_boxes) == 0:
@@ -298,8 +571,20 @@ def run_nms_filter(
     scores = np.concatenate(all_scores, axis=0)
     cls_ids = np.concatenate(all_cls_ids, axis=0)
 
+    if class_agnostic_nms:
+        nms_boxes = boxes
+    else:
+        offsets = cls_ids.astype(np.float32) * NMS_CLASS_OFFSET_PX
+        nms_boxes = boxes.copy()
+        nms_boxes[:, 0] += offsets
+        nms_boxes[:, 1] += offsets
+
+    nms_score_thresh = float(conf_thresh)
+    if class_conf_thresholds is not None and len(class_conf_thresholds) > 0:
+        nms_score_thresh = min(nms_score_thresh, float(np.min(class_conf_thresholds)))
+
     indices = cv2.dnn.NMSBoxes(
-        boxes.tolist(), scores.tolist(), float(conf_thresh), float(iou_thresh)
+        nms_boxes.tolist(), scores.tolist(), nms_score_thresh, float(iou_thresh)
     )
 
     if len(indices) == 0:
@@ -334,6 +619,7 @@ def run_nms_filter(
         detections.append({
             'track_id': int(det_index),
             'type': raw_name,
+            'cls_id': cid,
             'confidence': conf,
             'bx': float(bx),
             'by': float(by),
@@ -350,16 +636,27 @@ def run_nms_filter(
     return detections
 
 
+def _overlay_color_for_type(raw_name):
+    if raw_name == 'red_no_entry':
+        return (0, 0, 255)
+    if raw_name == 'red_cone':
+        return (0, 128, 255)
+    if raw_name == 'yellow_stop_line':
+        return (0, 255, 255)
+    return (0, 255, 0)
+
+
 def draw_debug_overlay(orig_frame, detections, current_fps):
     """
-    在需要发布调试图时绘制检测框与 FPS 信息。
+    在需要发布调试图时绘制检测框、持久化 track_id 与 FPS 信息。
     """
-    color = (0, 255, 0)
     for det in detections:
         bx, by, bw, bh = det['bx'], det['by'], det['bw'], det['bh']
         cx, cy = det['cx'], det['cy']
         raw_name = det['type']
         conf = det['confidence']
+        tid = det.get('track_id', 0)
+        color = _overlay_color_for_type(raw_name)
 
         draw_x1, draw_y1 = int(bx), int(by)
         draw_x2, draw_y2 = int(bx + bw), int(by + bh)
@@ -367,7 +664,7 @@ def draw_debug_overlay(orig_frame, detections, current_fps):
         cv2.rectangle(orig_frame, (draw_x1, draw_y1), (draw_x2, draw_y2), color, 2)
         cv2.circle(orig_frame, (int(cx), int(cy)), 3, (0, 0, 255), -1)
 
-        label = f'{raw_name} {conf:.2f}'
+        label = f'{raw_name}#{tid} {conf:.2f}'
         (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         lbl_y = max(draw_y1, th + baseline + 2)
 
@@ -389,7 +686,7 @@ def draw_debug_overlay(orig_frame, detections, current_fps):
             cv2.LINE_AA,
         )
 
-    fps_text = f'FPS: {current_fps:.1f} | Digits: {len(detections)}'
+    fps_text = f'FPS: {current_fps:.1f} | Dets: {len(detections)}'
     cv2.putText(
         orig_frame,
         fps_text,
@@ -408,12 +705,19 @@ class BPUYoloV8DigitNode(Node):
         self.bridge = CvBridge() if CvBridge is not None else None
 
         # =====================================================
-        # 1. YOLO 参数与调试/性能统计参数
+        # 1. YOLO 参数、Per-class NMS、跨帧跟踪与性能统计参数
         # =====================================================
         self.declare_parameter('conf_thresh', 0.25)
         self.declare_parameter('iou_thresh', 0.55)
         self.declare_parameter('nms_top_k', 20)
         self.declare_parameter('min_box_size', 6)
+        self.declare_parameter('class_agnostic_nms', False)
+        self.declare_parameter('class_conf_overrides', '{}')
+
+        self.declare_parameter('enable_tracker', True)
+        self.declare_parameter('tracker_iou_thresh', 0.30)
+        self.declare_parameter('tracker_max_center_dist_px', 80.0)
+        self.declare_parameter('tracker_max_missed_frames', 5)
 
         env_pub_dbg = os.environ.get('YOLO_PUBLISH_DEBUG_IMAGE', '1').strip().lower()
         default_pub_dbg = env_pub_dbg not in ('0', 'false', 'no', 'off')
@@ -427,7 +731,7 @@ class BPUYoloV8DigitNode(Node):
         self.declare_parameter('stats_log_interval_sec', default_stats_sec)
 
         # =====================================================
-        # 2. 类别文件
+        # 2. 类别文件（动态支持任意类别数：8 类旧模型 / 11 类决赛模型）
         # =====================================================
         self.declare_parameter('model_dir', DEFAULT_MODEL_DIR)
         self.declare_parameter('cls_list_path', '')
@@ -442,20 +746,14 @@ class BPUYoloV8DigitNode(Node):
         )
 
         if os.path.exists(cls_list_path):
-            with open(cls_list_path, 'r', encoding='utf-8') as f:
-                self.classes = [line.strip() for line in f.readlines() if line.strip()]
-            self.get_logger().info(f'加载 {len(self.classes)} 类: {self.classes}')
+            self.classes = load_class_list(cls_list_path)
+            self.get_logger().info(f'加载 {len(self.classes)} 类 ({cls_list_path}): {self.classes}')
         else:
             self.classes = ['1', '2', '3', '4', '5', '6', '7', '8']
             self.get_logger().warn(f'类别文件不存在: {cls_list_path}，使用预设8类数字标签')
 
-        if len(self.classes) != 8:
-            raise RuntimeError(
-                f'类别数量错误: 当前 out.list 有 {len(self.classes)} 类，新模型应只有 8 类（1~8）'
-            )
-
         # =====================================================
-        # 3. 加载 X5 BPU 模型
+        # 3. 加载 X5 BPU 模型并动态校验类别通道数
         # =====================================================
         if bpu_model_override is not None:
             self.bpu_model = bpu_model_override
@@ -468,16 +766,28 @@ class BPUYoloV8DigitNode(Node):
             self.get_logger().info(f'模型文件: {model_path}')
             self.bpu_model = dnn.load(model_path)[0]
 
-        self.get_logger().info('RDK X5 BPU YOLOv8 视觉检测节点就绪')
+        validate_model_classes(self.bpu_model, self.classes)
+        self.get_logger().info(
+            f'RDK X5 BPU YOLOv8 视觉检测节点就绪 (num_classes={len(self.classes)})'
+        )
 
         # =====================================================
-        # 4. YOLOv8 模型参数
+        # 4. YOLOv8 模型参数 & 跟踪器
         # =====================================================
         self.model_w = 640
         self.model_h = 640
         self.strides = [8, 16, 32]
         self.grids = self._make_grid(self.model_w, self.model_h)
         self.dfl_weights = np.arange(16, dtype=np.float32)
+
+        self.tracker = SimpleBoxTracker(
+            iou_thresh=float(self.get_parameter('tracker_iou_thresh').value),
+            max_center_dist_px=float(self.get_parameter('tracker_max_center_dist_px').value),
+            max_missed_frames=int(self.get_parameter('tracker_max_missed_frames').value),
+        )
+        self._cached_overrides_raw = None
+        self._cached_conf_thresh = None
+        self._cached_cls_thresholds = None
 
         # =====================================================
         # 5. FPS 与各阶段耗时统计
@@ -519,11 +829,14 @@ class BPUYoloV8DigitNode(Node):
         pub_dbg = bool(self.get_parameter('publish_debug_image').value)
         dbg_fps = float(self.get_parameter('debug_image_max_fps').value)
         async_mode = bool(self.get_parameter('async_latest_frame').value)
+        class_agnostic = bool(self.get_parameter('class_agnostic_nms').value)
+        enable_tracker = bool(self.get_parameter('enable_tracker').value)
 
         self.get_logger().info('订阅图像: /image_raw')
         self.get_logger().info('发布检测结果: /hobot_dnn_detection [ai_msgs/msg/PerceptionTargets]')
         self.get_logger().info(
-            f'发布检测图像: /yolo_detection_image (enabled={pub_dbg}, max_fps={dbg_fps:.1f}, async_latest={async_mode})'
+            f'发布检测图像: /yolo_detection_image (enabled={pub_dbg}, max_fps={dbg_fps:.1f}, '
+            f'async_latest={async_mode}, class_agnostic_nms={class_agnostic}, tracker={enable_tracker})'
         )
 
         if start_worker and async_mode:
@@ -531,6 +844,19 @@ class BPUYoloV8DigitNode(Node):
                 target=self._worker_loop, name='bpu_yolov8_worker', daemon=True
             )
             self._worker_thread.start()
+
+    def _get_class_conf_thresholds(self, conf_thresh):
+        raw = str(self.get_parameter('class_conf_overrides').value or '{}')
+        if raw != self._cached_overrides_raw or conf_thresh != self._cached_conf_thresh:
+            self._cached_cls_thresholds = parse_class_conf_overrides(
+                raw,
+                self.classes,
+                conf_thresh,
+                logger=lambda m: self.get_logger().warn(m),
+            )
+            self._cached_overrides_raw = raw
+            self._cached_conf_thresh = conf_thresh
+        return self._cached_cls_thresholds
 
     def _make_grid(self, w, h):
         grids = []
@@ -606,6 +932,9 @@ class BPUYoloV8DigitNode(Node):
         iou_thresh = float(self.get_parameter('iou_thresh').value)
         top_k = int(self.get_parameter('nms_top_k').value)
         min_box_size = float(self.get_parameter('min_box_size').value)
+        class_agnostic_nms = bool(self.get_parameter('class_agnostic_nms').value)
+        enable_tracker = bool(self.get_parameter('enable_tracker').value)
+        cls_thresholds = self._get_class_conf_thresholds(conf_thresh)
 
         # =====================================================
         # 1 & 2. 预处理：ROS Image -> OpenCV -> Letterbox -> NV12
@@ -633,7 +962,7 @@ class BPUYoloV8DigitNode(Node):
         t_infer_end = time.perf_counter()
 
         # =====================================================
-        # 4. 后处理：反量化 + YOLOv8 DFL 解码
+        # 4. 后处理：反量化 + Pre-sigmoid 预过滤 + YOLOv8 DFL 解码
         # =====================================================
         num_classes = len(self.classes)
         all_boxes, all_scores, all_cls_ids, ok, cls_cnt, reg_cnt = decode_yolov8_outputs(
@@ -647,17 +976,18 @@ class BPUYoloV8DigitNode(Node):
             scale_r=r,
             orig_w=orig_w,
             orig_h=orig_h,
+            class_conf_thresholds=cls_thresholds,
         )
         t_postprocess_end = time.perf_counter()
 
         if not ok:
             self.get_logger().warn(
-                f'YOLOv8输出头数量异常: cls={cls_cnt}, reg={reg_cnt}'
+                f'YOLOv8输出头数量异常: cls={cls_cnt}, reg={reg_cnt} (expected num_classes={num_classes})'
             )
             return
 
         # =====================================================
-        # 5. NMS + ai_msgs/PerceptionTargets 消息封装
+        # 5. Per-class NMS + 跨帧跟踪 + ai_msgs/PerceptionTargets 封装
         # =====================================================
         detections = run_nms_filter(
             all_boxes=all_boxes,
@@ -670,7 +1000,12 @@ class BPUYoloV8DigitNode(Node):
             min_box_size=min_box_size,
             orig_w=orig_w,
             orig_h=orig_h,
+            class_agnostic_nms=class_agnostic_nms,
+            class_conf_thresholds=cls_thresholds,
         )
+
+        if enable_tracker:
+            detections = self.tracker.update(detections)
 
         det_msg = PerceptionTargets()
         det_msg.header = msg.header
@@ -679,7 +1014,7 @@ class BPUYoloV8DigitNode(Node):
         for det in detections:
             target = Target()
             target.type = det['type']
-            target.track_id = det['track_id']
+            target.track_id = int(det['track_id'])
 
             roi = Roi()
             roi.type = det['type']
