@@ -128,14 +128,94 @@ MotionCommand MotionController::compute_lane_command(
   return MotionCommand{speed_cmd, yaw_cmd, false};
 }
 
+MotionCommand MotionController::compute_corridor_command(
+  double target_y_m,
+  double current_y_m,
+  double heading_proxy,
+  double curvature_proxy,
+  double confidence,
+  double speed_cap_mps,
+  const CurveAssistState & curve_state,
+  const MotionState & motion_state) const
+{
+  // +y is LEFT, +yaw_rate is LEFT; heading_proxy > 0 means far lane bends RIGHT
+  const double lateral_err_m = target_y_m - current_y_m;
+  const double eff_heading_gain =
+    curve_state.reverse_curve_active ? 0.0 : config_.corridor_heading_gain;
+
+  double yaw_cmd = clamp_value(
+    config_.corridor_kp_y * lateral_err_m - eff_heading_gain * heading_proxy,
+    -config_.max_yaw_rate,
+    config_.max_yaw_rate);
+
+  const double norm_lat = clamp_value(std::abs(lateral_err_m) / 0.215, 0.0, 1.0);
+  const double curve_proxy = std::max(
+    std::abs(curve_state.far_error - curve_state.near_error),
+    std::abs(curvature_proxy));
+  const double slow_factor = std::min(
+    1.0,
+    config_.deviation_weight * norm_lat + config_.curve_weight * curve_proxy);
+  const double speed_scale = 1.0 - config_.speed_gain_damping * slow_factor;
+
+  const double base_target = std::min(config_.target_speed, std::max(0.0, speed_cap_mps));
+  double speed_cmd =
+    clamp_value(base_target * speed_scale, config_.min_speed, config_.max_speed);
+  speed_cmd = std::min(speed_cmd, std::max(0.0, speed_cap_mps));
+
+  if (config_.enable_continuous_curve_assist) {
+    const double reverse_curve_speed = std::max(0.0, config_.reverse_curve_speed);
+    const double sharp_curve_threshold = std::max(0.0, config_.sharp_curve_threshold);
+    const double sharp_curve_speed = std::max(0.0, config_.sharp_curve_speed);
+    const double effective_curve_level = std::max(curve_state.curve_level, curvature_proxy);
+
+    if (curve_state.reverse_curve_active) {
+      speed_cmd = std::min(speed_cmd, reverse_curve_speed);
+    } else if (effective_curve_level >= sharp_curve_threshold) {
+      speed_cmd = std::min(speed_cmd, sharp_curve_speed);
+    }
+  }
+
+  const double low_conf_thresh = clamp_value(config_.low_confidence_threshold, 0.0, 1.0);
+  if (low_conf_thresh > 0.0 && confidence < low_conf_thresh) {
+    speed_cmd = std::min(
+      speed_cmd,
+      clamp_value(config_.low_confidence_speed, config_.min_speed, config_.max_speed));
+    if (motion_state.valid) {
+      const double hold_factor = clamp_value(config_.low_confidence_yaw_hold, 0.0, 1.0);
+      const double held_yaw = clamp_value(
+        motion_state.last_yaw * hold_factor,
+        -config_.max_yaw_rate,
+        config_.max_yaw_rate);
+      if (std::abs(yaw_cmd) < std::abs(held_yaw)) {
+        const double deficit = clamp_value(
+          (low_conf_thresh - confidence) / std::max(1e-3, low_conf_thresh),
+          0.0,
+          1.0);
+        yaw_cmd = clamp_value(
+          (1.0 - deficit) * yaw_cmd + deficit * held_yaw,
+          -config_.max_yaw_rate,
+          config_.max_yaw_rate);
+      }
+    }
+  }
+
+  return MotionCommand{speed_cmd, yaw_cmd, false};
+}
+
 MotionCommand MotionController::compute_lost_line_command(
   double since_detection_sec,
   const MotionState & motion_state) const
 {
-  const double base_lost_speed = std::max(0.01, config_.line_lost_forward_speed);
-  const double slow_time = std::max(0.0, config_.line_lost_slow_time);
-  const double full_stop_time = std::max(slow_time, config_.line_lost_full_stop_time);
+  double base_lost_speed = std::max(0.01, config_.line_lost_forward_speed);
+  double slow_time = std::max(0.0, config_.line_lost_slow_time);
+  double full_stop_time = std::max(slow_time, config_.line_lost_full_stop_time);
   const double slow_factor = clamp_value(config_.line_lost_slow_factor, 0.0, 1.0);
+
+  if (config_.lost_line_safe_mode) {
+    base_lost_speed = std::min(base_lost_speed, std::max(0.0, config_.lost_line_safe_speed));
+    full_stop_time = std::min(full_stop_time, std::max(0.05, config_.lost_line_safe_stop_time));
+    slow_time = std::min(slow_time, 0.5 * full_stop_time);
+  }
 
   double lost_speed = base_lost_speed;
   if (since_detection_sec > full_stop_time) {

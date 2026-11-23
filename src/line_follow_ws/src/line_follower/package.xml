@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>line_follower</name>
-  <version>0.1.0</version>
-  <description>ROS 2 line following node implementing the official OriginCar image-processing pipeline using C++.</description>
-  <maintainer email="maintainer@example.com">OriginCar Dev</maintainer>
+  <version>1.0.0</version>
+  <description>ROS 2 C++ visual lane perception, corridor planning, obstacle memory, and motion control stack for the AIC 2026 Smart Car Visual Planning Competition.</description>
+  <maintainer email="aic-team@example.com">AIC 2026 Smart Car Team</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

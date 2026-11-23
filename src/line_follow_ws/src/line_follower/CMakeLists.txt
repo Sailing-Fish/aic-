@@ -7,12 +7,21 @@ endif()
 
 add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
+set(LINE_FOLLOWER_PURE_SOURCES
+  src/ground_projector.cpp
+  src/obstacle_memory.cpp
+  src/corridor_planner.cpp
+  src/finish_guard.cpp
+  src/segment_planner.cpp
+  src/track_state_machine.cpp
+  src/motion_controller.cpp
+)
+
 set(LINE_FOLLOWER_ALGO_SOURCES
   src/image_processor.cpp
   src/lane_geometry.cpp
-  src/track_state_machine.cpp
-  src/motion_controller.cpp
   src/debug_renderer.cpp
+  ${LINE_FOLLOWER_PURE_SOURCES}
 )
 
 option(LINE_FOLLOWER_STANDALONE_TESTS "Build offline pure-algorithm tests without ROS" OFF)
@@ -25,8 +34,13 @@ if(LINE_FOLLOWER_STANDALONE_TESTS)
   add_executable(test_line_follower_refactoring test/test_line_follower_refactoring.cpp)
   target_link_libraries(test_line_follower_refactoring PRIVATE ${PROJECT_NAME}_algo)
 
+  add_executable(test_finals_modules test/test_finals_modules.cpp ${LINE_FOLLOWER_PURE_SOURCES})
+  target_include_directories(test_finals_modules PRIVATE include ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(test_finals_modules PRIVATE ${OpenCV_LIBS})
+
   enable_testing()
   add_test(NAME test_line_follower_refactoring COMMAND test_line_follower_refactoring)
+  add_test(NAME test_finals_modules COMMAND test_finals_modules)
   return()
 endif()
 
@@ -49,7 +63,6 @@ include_directories(
 add_library(${PROJECT_NAME}_core
   src/line_follower_node.cpp
   ${LINE_FOLLOWER_ALGO_SOURCES}
-  src/segment_planner.cpp
 )
 ament_target_dependencies(${PROJECT_NAME}_core
   rclcpp
@@ -71,12 +84,14 @@ ament_target_dependencies(detection_turn_controller
   rclcpp
   ai_msgs
   geometry_msgs
+  std_msgs
 )
 
 add_executable(cmd_mux_node src/cmd_mux_node.cpp)
 ament_target_dependencies(cmd_mux_node
   rclcpp
   geometry_msgs
+  std_msgs
 )
 
 add_executable(start_toggle_node src/start_toggle_node.cpp)
@@ -93,6 +108,14 @@ if(BUILD_TESTING)
   target_include_directories(test_line_follower_refactoring PRIVATE include ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(test_line_follower_refactoring ${OpenCV_LIBS})
   add_test(NAME test_line_follower_refactoring COMMAND test_line_follower_refactoring)
+
+  add_executable(test_finals_modules
+    test/test_finals_modules.cpp
+    ${LINE_FOLLOWER_PURE_SOURCES}
+  )
+  target_include_directories(test_finals_modules PRIVATE include ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(test_finals_modules ${OpenCV_LIBS})
+  add_test(NAME test_finals_modules COMMAND test_finals_modules)
 endif()
 
 install(TARGETS ${PROJECT_NAME}_core line_follower_node

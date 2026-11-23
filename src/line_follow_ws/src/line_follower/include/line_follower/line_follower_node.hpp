@@ -3,7 +3,9 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
+#include <ai_msgs/msg/perception_targets.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <image_transport/image_transport.hpp>
@@ -14,11 +16,16 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 
+#include "line_follower/corridor_planner.hpp"
 #include "line_follower/debug_renderer.hpp"
+#include "line_follower/finals_types.hpp"
+#include "line_follower/finish_guard.hpp"
+#include "line_follower/ground_projector.hpp"
 #include "line_follower/image_processor.hpp"
 #include "line_follower/lane_geometry.hpp"
 #include "line_follower/line_follower_types.hpp"
 #include "line_follower/motion_controller.hpp"
+#include "line_follower/obstacle_memory.hpp"
 #include "line_follower/segment_planner.hpp"
 #include "line_follower/track_state_machine.hpp"
 
@@ -31,6 +38,16 @@ public:
   LineFollowerNode();
 
 private:
+  struct RawYoloBox
+  {
+    SemanticObjectType type{SemanticObjectType::UNKNOWN};
+    int digit{0};
+    std::string label{};
+    double confidence{0.0};
+    cv::Rect bbox_img{};
+    int track_id{-1};
+  };
+
   void declare_parameters();
   void sync_runtime_parameters();
   void setup_interfaces();
@@ -38,8 +55,18 @@ private:
   void start_callback(const std_msgs::msg::Bool::SharedPtr msg);
   void image_callback(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void ekf_odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void detection_callback(const ai_msgs::msg::PerceptionTargets::SharedPtr msg);
 
-  std::optional<ProcessingResult> process_image(const cv::Mat & frame_bgr);
+  static SemanticObjectType classify_detection_label(const std::string & label, int & digit_out);
+  static double quat_to_yaw(double qx, double qy, double qz, double qw);
+  static double wrap_angle_rad(double angle);
+
+  std::optional<ProcessingResult> process_image(
+    const cv::Mat & frame_bgr,
+    const std::vector<cv::Rect> & fill_white_rects,
+    const std::vector<cv::Rect> & yolo_yellow_rects,
+    int preferred_branch);
 
   // 分段：读参数 -> 判定当前段 -> 把该段参数镜像到热循环使用的成员变量
   void load_segment_parameters();
@@ -83,7 +110,8 @@ private:
   void publish_debug_image(
     const sensor_msgs::msg::Image::ConstSharedPtr & source,
     const cv::Mat & frame_bgr,
-    const ProcessingResult & result) const;
+    const ProcessingResult & result,
+    const FinalsDebugOverlay & finals_overlay) const;
 
   static double clamp(double value, double min_value, double max_value);
 
@@ -98,6 +126,19 @@ private:
   std::string stop_cmd_topic_;
   std::string line_centroid_topic_;
   std::string odom_topic_;
+  std::string ekf_odom_topic_;
+  std::string detection_topic_;
+
+  // ============================================================
+  // Decoupled Finals Mode Switches
+  // ============================================================
+  std::string planner_mode_{"legacy_segment"};      // "legacy_segment" | "finals_corridor"
+  std::string lane_seg_mode_{"legacy_hsv"};         // "legacy_hsv" | "relative_border" | "hybrid"
+  std::string yellow_detect_mode_{"legacy_area"};   // "legacy_area" | "geometric_cv" | "yolo_cv_hybrid"
+  bool enable_semantic_hole_fill_{false};
+  bool enable_obstacle_memory_{true};
+  bool allow_dual_digit_cover_{false};
+  double detection_timeout_sec_{0.35};
 
   // ============================================================
   // Basic motion & ROI parameters
@@ -107,17 +148,11 @@ private:
   double min_speed_{0.0};
   double max_yaw_rate_{1.2};
   double kp_{1.8};
-  // 主动转向偏置（rad/s，负=向右）。稳态平衡点 error = -steer_bias_ / kp_，
-  // 用来故意把车偏到线的一侧（岔路选支）。默认 0 = 完全不影响原行为。
-  // 段内可分两段施加：前 bias_phase1_dist_m_ 米用 steer_bias_，
-  // 之后 bias_phase2_dist_m_ 米用 steer_bias2_（拐进去再拐出来），再之后归零。
   double steer_bias_{0.0};
   double steer_bias2_{0.0};
   double bias_phase1_dist_m_{0.0};
   double bias_gap_m_{0.0};
   double bias_phase2_dist_m_{0.0};
-  // 进入本段后走过的里程（分段偏置时序用；与 dist_since_yellow_ 分开，
-  // 免得中途压到黄线把时序重置）
   double seg_dist_m_{0.0};
 
   double roi_top_ratio_{0.5};
@@ -151,23 +186,20 @@ private:
   double yellow_stop_min_time_{0.35};
   double odom_still_threshold_{0.02};
   double odom_still_hold_{0.25};
+  double odom_max_age_sec_{0.20};
+  bool yellow_require_odom_still_{false};
+  double yellow_max_hold_sec_{3.0};
 
   // ============================================================
   // 黄线刹车（反拖）
-  //
-  // 检测到黄线后不再直接发 0，而是发一段**负的 linear.x** 让底盘反拖，
-  // 速度降到阈值就撤回（避免顶成倒车）。yellow_brake_speed=0 = 关闭，行为与原来一致。
-  //
-  // 前提：必须先用 tools/brake_probe.py --probe-only 确认固件对负速度是
-  // "接受并反转"（A），而不是"当 0"（B，无效果）或"符号取反"（C，会变成前进）。
   // ============================================================
-  double yellow_brake_speed_{0.0};           // 反拖速度大小 m/s，0 = 关闭
-  double yellow_brake_period_s_{0.2};        // 反拖指令的发送周期
-  double yellow_brake_pulse_s_{0.0};         // 每个周期里反拖多久；0 或 >=周期 = 连续
-  double yellow_brake_release_speed_{0.08};  // odom |v| 降到它以下就停止反拖（0=不用）
-  double yellow_brake_max_time_s_{0.8};      // 兜底：最多反拖多久（0=不限，不建议）
+  double yellow_brake_speed_{0.0};
+  double yellow_brake_period_s_{0.2};
+  double yellow_brake_pulse_s_{0.0};
+  double yellow_brake_release_speed_{0.08};
+  double yellow_brake_max_time_s_{0.8};
 
-  bool yellow_brake_active_{false};          // 本次黄线停车是否处于反拖阶段
+  bool yellow_brake_active_{false};
   rclcpp::Time yellow_brake_start_;
   rclcpp::Time last_brake_cmd_time_;
 
@@ -189,12 +221,9 @@ private:
   double line_lost_full_stop_time_{1.2};
 
   double speed_gain_damping_{0.5};
-  // 视觉前馈：用 far-near 的带符号差提前打方向。默认 0 = 关闭，行为与原来完全一致。
   double steer_ff_gain_{0.0};
   bool steer_ff_use_v_{false};
   double ff_state_{0.0};
-  // 连续弯辅助：默认由全局参数初始化，apply_segment() 之后按段生效，
-  // sync_runtime_parameters() 每帧从这几个成员重建 cfg，所以必须留在成员里。
   bool enable_curve_assist_{true};
   double reverse_curve_speed_{0.34};
   double reverse_curve_threshold_{0.35};
@@ -218,7 +247,7 @@ private:
   rclcpp::Time intersection_cooldown_until_;
 
   // ============================================================
-  // Red obstacle avoidance
+  // Red obstacle avoidance (legacy HSV path)
   // ============================================================
   bool enable_red_filter_{false};
   int red_h_low_1_{0};
@@ -255,20 +284,35 @@ private:
   MotionController motion_controller_;
   DebugRenderer debug_renderer_;
 
+  // Finals decoupled domain components
+  GroundProjector ground_projector_;
+  ObstacleMemory obstacle_memory_;
+  CorridorPlanner corridor_planner_;
+  FinishGuard finish_guard_;
+
   CurveAssistState curve_assist_{};
   RedAvoidState red_avoid_{};
   MotionState motion_state_{};
+
+  // Latest EKF/odom poses & YOLO detections
+  VehiclePose2D odom_pose_{};
+  VehiclePose2D ekf_pose_{};
+  bool ekf_pose_seen_{false};
+  double last_odom_yaw_{0.0};
+  bool last_odom_yaw_valid_{false};
+  double last_ekf_yaw_{0.0};
+  bool last_ekf_yaw_valid_{false};
+  rclcpp::Time last_ekf_odom_time_;
+
+  std::vector<RawYoloBox> latest_raw_boxes_{};
+  double latest_det_stamp_sec_{-1e9};
 
   bool start_enabled_{false};
   bool waiting_log_initialized_{false};
   rclcpp::Time last_waiting_log_time_;
 
   // ============================================================
-  // 分段参数（track_mode 决定 2 段还是 4 段）
-  //
-  // 注意：上面 target_speed_ / kp_ / max_yaw_rate_ / roi_*_ / speed_gain_damping_ /
-  // steer_ff_* 都是"当前段的生效值"，由 apply_segment() 从 seg_params_ 镜像过来。
-  // 热循环、红锥避让、限幅一律读这些镜像，算法层不知道"段"的存在。
+  // 分段参数（legacy_segment 模式）
   // ============================================================
   SegmentPlanner planner_;
   SegmentParams seg_params_[kMaxSegments]{};
@@ -276,8 +320,6 @@ private:
   std::string track_mode_{"fork"};
   std::string segment_topic_;
 
-  // odom 里程积分：只服务分段切换（横向控制仍然只用视觉）。
-  // 每根黄线把 dist_since_yellow_ 归零，黄线在这里起"里程锚点"作用。
   double odom_arc_s_{0.0};
   double dist_since_yellow_{0.0};
   bool odom_arc_valid_{false};
@@ -292,16 +334,17 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr stop_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Point>::SharedPtr centroid_pub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr segment_pub_;   // 当前段号，面板用
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr segment_pub_;
 
   image_transport::Subscriber image_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr start_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ekf_odom_sub_;
+  rclcpp::Subscription<ai_msgs::msg::PerceptionTargets>::SharedPtr detection_sub_;
 
   image_transport::Publisher debug_pub_;
   bool debug_enabled_{false};
 
-  // 段号心跳：不依赖图像与 odom，相机没起来时面板也要能显示当前段
   rclcpp::TimerBase::SharedPtr segment_timer_;
 };
 

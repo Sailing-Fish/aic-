@@ -25,6 +25,8 @@ void TrackStateMachine::set_config(const TrackStateConfig & config)
   config_.yellow_stop_min_time = std::max(0.0, config_.yellow_stop_min_time);
   config_.odom_still_threshold = std::max(0.0, config_.odom_still_threshold);
   config_.odom_still_hold = std::max(0.0, config_.odom_still_hold);
+  config_.odom_max_age_sec = std::max(0.0, config_.odom_max_age_sec);
+  config_.yellow_max_hold_sec = std::max(config_.yellow_stop_min_time, config_.yellow_max_hold_sec);
   config_.line_lost_stop_time = std::max(0.0, config_.line_lost_stop_time);
 }
 
@@ -39,6 +41,7 @@ void TrackStateMachine::reset(double now_sec)
   const bool prev_odom_still_valid = state_.odom_still_valid;
   const bool prev_odom_seen = state_.odom_seen;
   const double prev_odom_still_since = state_.odom_still_since_sec;
+  const double prev_last_odom_time = state_.last_odom_time_sec;
 
   state_ = TrackRuntimeState{};
   state_.yellow_line_detection_time_sec = now_sec;
@@ -49,6 +52,7 @@ void TrackStateMachine::reset(double now_sec)
   state_.odom_still_valid = prev_odom_still_valid;
   state_.odom_seen = prev_odom_seen;
   state_.odom_still_since_sec = prev_odom_still_since;
+  state_.last_odom_time_sec = prev_last_odom_time;
 }
 
 bool TrackStateMachine::on_start_command(bool old_enabled, bool new_enabled, double now_sec)
@@ -64,6 +68,7 @@ void TrackStateMachine::update_odom(double linear_x, double now_sec)
 {
   state_.odom_speed = std::abs(linear_x);
   state_.odom_seen = true;
+  state_.last_odom_time_sec = now_sec;
   if (state_.odom_speed < config_.odom_still_threshold) {
     if (!state_.odom_still_valid) {
       state_.odom_still_valid = true;
@@ -79,6 +84,15 @@ TrackStepEvents TrackStateMachine::step(
   bool line_detected,
   double now_sec)
 {
+  return step(yellow_detected, line_detected, now_sec, false);
+}
+
+TrackStepEvents TrackStateMachine::step(
+  bool yellow_detected,
+  bool line_detected,
+  double now_sec,
+  bool external_is_finish)
+{
   TrackStepEvents events{};
 
   if (yellow_detected) {
@@ -90,7 +104,11 @@ TrackStepEvents TrackStateMachine::step(
       state_.yellow_line_detection_time_sec = now_sec;
       events.yellow_stop_begin = true;
 
-      if (state_.yellow_line_detection_count >= config_.yellow_permanent_count) {
+      const bool is_final = config_.use_external_finish_decision ?
+        external_is_finish :
+        (state_.yellow_line_detection_count >= config_.yellow_permanent_count);
+
+      if (is_final) {
         state_.permanent_stop = true;
         state_.yellow_line_stop_active = false;
         events.yellow_final_stop = true;
@@ -110,12 +128,25 @@ TrackStepEvents TrackStateMachine::step(
   }
 
   events.since_yellow_detection = now_sec - state_.yellow_line_detection_time_sec;
+  events.odom_fresh =
+    state_.odom_seen &&
+    (config_.odom_max_age_sec <= 0.0 ||
+    (now_sec - state_.last_odom_time_sec) <= config_.odom_max_age_sec);
+
   events.odom_still_ok =
+    events.odom_fresh &&
     state_.odom_still_valid &&
     (now_sec - state_.odom_still_since_sec) >= config_.odom_still_hold;
-  events.can_release =
-    (events.since_yellow_detection >= config_.yellow_stop_min_time && events.odom_still_ok) ||
-    (events.since_yellow_detection >= config_.yellow_stop_duration);
+
+  if (config_.yellow_require_odom_still) {
+    events.can_release =
+      (events.since_yellow_detection >= config_.yellow_stop_min_time && events.odom_still_ok) ||
+      (events.since_yellow_detection >= config_.yellow_max_hold_sec);
+  } else {
+    events.can_release =
+      (events.since_yellow_detection >= config_.yellow_stop_min_time && events.odom_still_ok) ||
+      (events.since_yellow_detection >= config_.yellow_stop_duration);
+  }
 
   if (state_.permanent_stop) {
     events.yellow_hold_stop = true;
@@ -141,13 +172,11 @@ TrackStepEvents TrackStateMachine::step(
     }
   }
 
-  events.yellow_stop_now =
-    state_.permanent_stop ||
-    (state_.yellow_line_stop_active && events.since_yellow_detection < config_.yellow_stop_duration);
-
   events.yellow_hold_stop =
     state_.permanent_stop ||
     (state_.yellow_line_stop_active && !events.can_release);
+
+  events.yellow_stop_now = events.yellow_hold_stop;
 
   return events;
 }

@@ -34,6 +34,15 @@ struct MotionControllerConfig
   double line_lost_slow_factor{0.4};
   double line_lost_full_stop_time{1.2};
 
+  // Finals safe lost-line override (default false preserves legacy unit tests)
+  bool lost_line_safe_mode{false};
+  double lost_line_safe_speed{0.12};
+  double lost_line_safe_stop_time{0.35};
+
+  // Finals metric lateral corridor tracking gains
+  double corridor_kp_y{3.8};
+  double corridor_heading_gain{0.85};
+
   double red_near_ratio{0.35};
   double red_very_close_ratio{0.72};
   double red_soft_speed{0.15};
@@ -59,6 +68,17 @@ public:
 
   MotionCommand compute_lane_command(
     const LaneObservation & obs,
+    const CurveAssistState & curve_state,
+    const MotionState & motion_state) const;
+
+  // Finals metric lateral corridor command (+y_m is LEFT, +yaw_rate is LEFT)
+  MotionCommand compute_corridor_command(
+    double target_y_m,
+    double current_y_m,
+    double heading_proxy,
+    double curvature_proxy,
+    double confidence,
+    double speed_cap_mps,
     const CurveAssistState & curve_state,
     const MotionState & motion_state) const;
 

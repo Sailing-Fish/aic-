@@ -15,6 +15,16 @@ struct TrackStateConfig
   double odom_still_threshold{0.02};
   double odom_still_hold{0.25};
 
+  // Odom freshness check (<= 0 disables freshness check for legacy unit-test compat;
+  // LineFollowerNode defaults ROS param odom_max_age_sec to 0.20s)
+  double odom_max_age_sec{0.0};
+  // Finals mode: require fresh odom standstill before releasing from yellow stop
+  // (up to yellow_max_hold_sec anti-deadlock cap)
+  bool yellow_require_odom_still{false};
+  double yellow_max_hold_sec{3.0};
+  // Finals mode: use FinishGuard external_is_finish instead of yellow_count == permanent_count
+  bool use_external_finish_decision{false};
+
   double line_lost_stop_time{0.8};
 };
 
@@ -31,6 +41,7 @@ struct TrackRuntimeState
   bool odom_still_valid{false};
   bool odom_seen{false};
   double odom_still_since_sec{0.0};
+  double last_odom_time_sec{-1e9};
 
   TrackState last_state{TrackState::LOST};
   double last_detection_time_sec{0.0};
@@ -45,6 +56,7 @@ struct TrackStepEvents
   bool yellow_stop_end{false};
 
   double since_yellow_detection{0.0};
+  bool odom_fresh{false};
   bool odom_still_ok{false};
   bool can_release{false};
   bool yellow_stop_now{false};
@@ -68,6 +80,11 @@ public:
   void update_odom(double linear_x, double now_sec);
 
   TrackStepEvents step(bool yellow_detected, bool line_detected, double now_sec);
+  TrackStepEvents step(
+    bool yellow_detected,
+    bool line_detected,
+    double now_sec,
+    bool external_is_finish);
   void commit_state(TrackState final_state);
 
   const TrackRuntimeState & state() const;
