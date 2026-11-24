@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
@@ -56,6 +57,7 @@ LOGROOT = os.path.join(TOOLS, 'logs')
 CONFIG_DIR = os.path.join(TOOLS, 'config')
 PANEL_DIR = os.path.dirname(os.path.abspath(__file__))
 CAPTURE_DIR = os.path.join(WS, 'dataset_capture', 'raw_videos')
+DEBUG_RUNS_DIR = os.path.join(WS, 'dataset_capture', 'debug_runs')
 
 STREAM_FPS = 6.0
 STREAM_PERIOD = 1.0 / STREAM_FPS
@@ -80,10 +82,12 @@ class RawVideoRecorder:
       - 自动限制最长时长（默认 120s），单段 30-45s 仅 ~2-4MB，便于直接 git push 上 GitHub
     """
 
-    def __init__(self, capture_dir=None):
+    def __init__(self, capture_dir=None, debug_dir=None):
         self.capture_dir = capture_dir or CAPTURE_DIR
+        self.debug_dir = debug_dir or DEBUG_RUNS_DIR
         self._lock = threading.Lock()
         self.is_active = False
+        self.source = 'raw'       # 'raw' (/image_raw) | 'debug' (debug_image + synchronized log bundle)
         self._queue = None
         self._thread = None
         self._filename = ''
@@ -95,21 +99,32 @@ class RawVideoRecorder:
         self._frames_written = 0
         self._frames_dropped = 0
         self._last_error = ''
+        self._frame_stamps = []   # (frame_idx, t_rel_s, wall_epoch)
+        self._log_dir = None
+        self._follow_off = 0
+        self._events_off = 0
 
     def start(self, scene='mixed_full', lighting='normal',
-              fps=RECORD_DEFAULT_FPS, max_duration_sec=RECORD_MAX_DURATION_SEC):
+              fps=RECORD_DEFAULT_FPS, max_duration_sec=RECORD_MAX_DURATION_SEC,
+              source='raw', log_dir=None):
+        src = 'debug' if str(source or '').strip().lower() == 'debug' else 'raw'
         with self._lock:
             if self.is_active:
                 return False, f'正在录制 {self._filename}，请先停止'
-            os.makedirs(self.capture_dir, exist_ok=True)
-            s_tag = _sanitize_tag(scene, 'clip')
+            target_dir = self.debug_dir if src == 'debug' else self.capture_dir
+            os.makedirs(target_dir, exist_ok=True)
+            s_tag = _sanitize_tag(scene, 'run' if src == 'debug' else 'clip')
             l_tag = _sanitize_tag(lighting, 'normal')
             fps_val = max(2.0, min(30.0, float(fps or RECORD_DEFAULT_FPS)))
             max_dur = max(5.0, min(300.0, float(max_duration_sec or RECORD_MAX_DURATION_SEC)))
             ts_str = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            fname = f'{ts_str}_{s_tag}_{l_tag}.mp4'
-            fpath = os.path.join(self.capture_dir, fname)
+            if src == 'debug':
+                fname = f'{ts_str}_{s_tag}_debug.mp4'
+            else:
+                fname = f'{ts_str}_{s_tag}_{l_tag}.mp4'
+            fpath = os.path.join(target_dir, fname)
 
+            self.source = src
             self._filename = fname
             self._filepath = fpath
             self._fps = fps_val
@@ -119,6 +134,20 @@ class RawVideoRecorder:
             self._frames_written = 0
             self._frames_dropped = 0
             self._last_error = ''
+            self._frame_stamps = []
+            self._log_dir = log_dir
+            self._follow_off = 0
+            self._events_off = 0
+            if src == 'debug' and log_dir:
+                try:
+                    self._follow_off = os.path.getsize(os.path.join(log_dir, 'follow.log'))
+                except OSError:
+                    self._follow_off = 0
+                try:
+                    self._events_off = os.path.getsize(os.path.join(log_dir, 'events.csv'))
+                except OSError:
+                    self._events_off = 0
+
             self._queue = queue.Queue(maxsize=64)
             self.is_active = True
             self._thread = threading.Thread(
@@ -126,7 +155,7 @@ class RawVideoRecorder:
             )
             self._thread.start()
 
-        print(f'[DEC] panel record_start file={fname} fps={fps_val:.1f}', flush=True)
+        print(f'[DEC] panel record_start src={src} file={fname} fps={fps_val:.1f}', flush=True)
         return True, fname
 
     def push_frame(self, frame, now=None):
@@ -135,10 +164,13 @@ class RawVideoRecorder:
         ts = time.time() if now is None else float(now)
         auto_stop = False
         q = None
+        is_debug = False
+        t_rel = 0.0
         with self._lock:
             if not self.is_active:
                 return False
-            if (ts - self._t0) >= self._max_duration:
+            t_rel = max(0.0, ts - self._t0)
+            if t_rel >= self._max_duration:
                 auto_stop = True
             else:
                 min_dt = 1.0 / self._fps
@@ -146,13 +178,28 @@ class RawVideoRecorder:
                     return False
                 self._last_enq_ts = ts
                 q = self._queue
+                is_debug = (self.source == 'debug')
 
         if auto_stop:
             threading.Thread(target=self.stop, daemon=True).start()
             return False
 
+        img = frame.copy()
+        if is_debug:
+            # 烧录与 follow.log / events.csv 精确对齐的相对时间与墙钟时间
+            with self._lock:
+                f_idx = len(self._frame_stamps)
+                self._frame_stamps.append((f_idx, round(t_rel, 3), round(ts, 3)))
+            hms = datetime.datetime.fromtimestamp(ts).strftime('%H:%M:%S')
+            stamp = f't={t_rel:05.2f}s #{f_idx:04d} {hms}'
+            cv2.rectangle(img, (max(0, img.shape[1] - 258), 2), (img.shape[1] - 2, 24), (10, 14, 20), -1)
+            cv2.putText(
+                img, stamp, (max(4, img.shape[1] - 252), 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 235, 255), 1, cv2.LINE_AA
+            )
+
         try:
-            q.put_nowait(frame.copy())
+            q.put_nowait(img)
             return True
         except queue.Full:
             with self._lock:
@@ -218,12 +265,17 @@ class RawVideoRecorder:
             th.join(timeout=5.0)
 
         with self._lock:
+            src = self.source
             fname = self._filename
             fpath = self._filepath
             frames = self._frames_written
             dropped = self._frames_dropped
             err = self._last_error
             elapsed = max(0.0, time.time() - t0) if t0 > 0 else 0.0
+            frame_stamps = list(self._frame_stamps)
+            log_dir = self._log_dir
+            follow_off = self._follow_off
+            events_off = self._events_off
 
         if frames == 0:
             try:
@@ -231,25 +283,88 @@ class RawVideoRecorder:
                     os.remove(fpath)
             except OSError:
                 pass
-            msg = err or '未收到 /image_raw 画面（请确认②相机已运行），未生成空文件'
+            topic_hint = 'line_follower/debug_image' if src == 'debug' else '/image_raw'
+            msg = err or f'未收到 {topic_hint} 画面（请确认相机/巡线节点已运行），未生成空文件'
             return False, {'error': msg, 'frames': 0}
+
+        out_path = fpath
+        out_name = fname
+
+        # 故障复盘模式：把带时间戳的调试图视频 + 同步窗口内的 follow.log / events.csv / params / 帧时间戳
+        # 一并打成单个紧凑 .zip（约 2~4MB），既可一键下载也可直接 git push！
+        if src == 'debug':
+            zip_path = os.path.splitext(fpath)[0] + '.zip'
+            zip_name = os.path.basename(zip_path)
+            try:
+                with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+                    zf.write(fpath, arcname=os.path.basename(fpath))
+                    # 帧级精确时间戳表（视频帧号 <-> 相对秒 <-> 墙钟 epoch）
+                    ts_lines = ['frame_idx,t_rel_s,wall_epoch\n']
+                    for fi, tr, we in frame_stamps:
+                        ts_lines.append(f'{fi},{tr:.3f},{we:.3f}\n')
+                    zf.writestr('frame_timestamps.csv', ''.join(ts_lines))
+
+                    meta_obj = {
+                        'created_iso': datetime.datetime.now().isoformat(timespec='seconds'),
+                        'source': 'debug',
+                        't0_epoch': round(t0, 3),
+                        'duration_sec': round(elapsed, 2),
+                        'frames': frames,
+                        'dropped': dropped,
+                        'log_dir': log_dir or '',
+                    }
+                    zf.writestr('meta.json', json.dumps(meta_obj, ensure_ascii=False, indent=2))
+
+                    if log_dir and os.path.isdir(log_dir):
+                        def _read_slice(p, off):
+                            if not os.path.isfile(p):
+                                return b''
+                            sz = os.path.getsize(p)
+                            start_o = off if (0 <= off <= sz) else 0
+                            with open(p, 'rb') as rf:
+                                rf.seek(start_o)
+                                return rf.read(min(4 * 1024 * 1024, max(0, sz - start_o)))
+
+                        f_bytes = _read_slice(os.path.join(log_dir, 'follow.log'), follow_off)
+                        if f_bytes:
+                            zf.writestr('follow_slice.log', f_bytes)
+                        e_path = os.path.join(log_dir, 'events.csv')
+                        if os.path.isfile(e_path):
+                            with open(e_path, 'rb') as ef:
+                                header = ef.readline()
+                            e_slice = _read_slice(e_path, events_off)
+                            if events_off > 0 and header and not e_slice.startswith(header):
+                                e_slice = header + e_slice
+                            zf.writestr('events_slice.csv', e_slice)
+                        snap = os.path.join(log_dir, 'params_snapshot.yaml')
+                        if os.path.isfile(snap):
+                            zf.write(snap, arcname='params_snapshot.yaml')
+                try:
+                    os.remove(fpath)
+                except OSError:
+                    pass
+                out_path = zip_path
+                out_name = zip_name
+            except Exception as exc:  # noqa: BLE001
+                print(f'[panel] debug zip bundle warning: {exc}', flush=True)
 
         size_mb = 0.0
         try:
-            size_mb = round(os.path.getsize(fpath) / (1024.0 * 1024.0), 2)
+            size_mb = round(os.path.getsize(out_path) / (1024.0 * 1024.0), 2)
         except OSError:
             pass
         try:
-            rel_path = os.path.relpath(fpath, WS).replace('\\', '/')
+            rel_path = os.path.relpath(out_path, WS).replace('\\', '/')
         except ValueError:
-            rel_path = fpath.replace('\\', '/')
+            rel_path = out_path.replace('\\', '/')
         print(
-            f'[DEC] panel record_stop file={fname} frames={frames} '
+            f'[DEC] panel record_stop src={src} file={out_name} frames={frames} '
             f'dur={elapsed:.1f}s size_mb={size_mb:.2f} dropped={dropped}',
             flush=True,
         )
         return True, {
-            'filename': fname,
+            'source': src,
+            'filename': out_name,
             'rel_path': rel_path,
             'frames': frames,
             'dropped': dropped,
@@ -258,37 +373,46 @@ class RawVideoRecorder:
         }
 
     def list_files(self, limit=30):
-        if not os.path.isdir(self.capture_dir):
-            return []
         out = []
         active_name = self._filename if self.is_active else ''
-        try:
-            for name in os.listdir(self.capture_dir):
-                if not name.lower().endswith(('.mp4', '.avi')):
-                    continue
-                if name == active_name:
-                    continue
-                fp = os.path.join(self.capture_dir, name)
-                if not os.path.isfile(fp):
-                    continue
-                st = os.stat(fp)
-                out.append({
-                    'name': name,
-                    'size_mb': round(st.st_size / (1024.0 * 1024.0), 2),
-                    'mtime': st.st_mtime,
-                    'mtime_str': datetime.datetime.fromtimestamp(st.st_mtime).strftime('%m-%d %H:%M:%S'),
-                })
-        except OSError:
-            return []
+        scan_dirs = [
+            ('debug', self.debug_dir, ('.zip', '.mp4', '.avi')),
+            ('raw', self.capture_dir, ('.mp4', '.avi')),
+        ]
+        for kind, folder, exts in scan_dirs:
+            if not os.path.isdir(folder):
+                continue
+            try:
+                for name in os.listdir(folder):
+                    if not name.lower().endswith(exts):
+                        continue
+                    if name == active_name:
+                        continue
+                    fp = os.path.join(folder, name)
+                    if not os.path.isfile(fp):
+                        continue
+                    st = os.stat(fp)
+                    out.append({
+                        'kind': kind,
+                        'name': name,
+                        'size_mb': round(st.st_size / (1024.0 * 1024.0), 2),
+                        'mtime': st.st_mtime,
+                        'mtime_str': datetime.datetime.fromtimestamp(st.st_mtime).strftime('%m-%d %H:%M:%S'),
+                    })
+            except OSError:
+                continue
         out.sort(key=lambda x: x['mtime'], reverse=True)
         return out[:limit]
 
     def resolve_safe_path(self, filename):
         base = os.path.basename(str(filename or ''))
-        if not base or base != filename or not base.lower().endswith(('.mp4', '.avi')):
+        if not base or base != filename or not base.lower().endswith(('.mp4', '.avi', '.zip')):
             return None
-        fp = os.path.join(self.capture_dir, base)
-        return fp if os.path.isfile(fp) else None
+        for folder in (self.debug_dir, self.capture_dir):
+            fp = os.path.join(folder, base)
+            if os.path.isfile(fp):
+                return fp
+        return None
 
     def delete_file(self, filename):
         with self._lock:
@@ -307,6 +431,7 @@ class RawVideoRecorder:
     def status(self):
         with self._lock:
             active = self.is_active
+            src = self.source
             fname = self._filename
             frames = self._frames_written
             dropped = self._frames_dropped
@@ -322,6 +447,7 @@ class RawVideoRecorder:
                 cur_mb = 0.0
         return {
             'active': active,
+            'source': src if active else '',
             'filename': fname if active else '',
             'frames': frames if active else 0,
             'dropped': dropped if active else 0,
@@ -329,7 +455,7 @@ class RawVideoRecorder:
             'size_mb': cur_mb,
             'fps': fps,
             'max_duration_sec': max_dur,
-            'dir_rel': 'dataset_capture/raw_videos',
+            'dir_rel': 'dataset_capture/debug_runs' if (active and src == 'debug') else 'dataset_capture/raw_videos',
             'files': self.list_files(),
         }
 
@@ -399,10 +525,13 @@ class PanelNode(Node):
         return buf.tobytes() if ok else None
 
     def _on_debug(self, msg):
-        data = self._encode(msg)
-        if data:
+        frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+        if RECORDER.is_active and RECORDER.source == 'debug':
+            RECORDER.push_frame(frame)
+        ok, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+        if ok:
             with SH.lock:
-                SH.frames['debug'] = data
+                SH.frames['debug'] = buf.tobytes()
 
     def _on_yolo(self, msg):
         data = self._encode(msg)
@@ -411,8 +540,8 @@ class PanelNode(Node):
                 SH.frames['yolo'] = data
 
     def _on_raw_image(self, msg):
-        # 空闲时直接返回，不做任何图像拷贝或解码，保证正常比赛零开销
-        if not RECORDER.is_active:
+        # 空闲或处于调试复盘模式时直接返回，不做任何图像拷贝或解码
+        if not RECORDER.is_active or RECORDER.source != 'raw':
             return
         frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
         RECORDER.push_frame(frame)
@@ -906,18 +1035,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({'ok': True, 'msg': '已发送 30 帧零速'})
 
             if path == '/api/record/start':
-                if self._is_running():
-                    return self._err(423, '发车运行中禁止开启采集录制（请在停稳/手推采集时使用）')
                 body = self._body()
+                src = 'debug' if str(body.get('source', 'raw')).lower() == 'debug' else 'raw'
+                if src == 'raw' and self._is_running():
+                    return self._err(423, '发车运行中禁止原始训练集录制（故障复盘请切「调试图+同步日志」）')
                 ok, info = RECORDER.start(
-                    scene=body.get('scene', 'mixed_full'),
+                    scene=body.get('scene', 'run' if src == 'debug' else 'mixed_full'),
                     lighting=body.get('lighting', 'normal'),
-                    fps=body.get('fps', RECORD_DEFAULT_FPS),
+                    fps=body.get('fps', 12.0 if src == 'debug' else RECORD_DEFAULT_FPS),
                     max_duration_sec=body.get('max_duration_sec', RECORD_MAX_DURATION_SEC),
+                    source=src,
+                    log_dir=run_dir() if src == 'debug' else None,
                 )
                 if not ok:
                     return self._err(409, info)
-                return self._json({'ok': True, 'filename': info, 'msg': f'开始录制原始画面：{info}',
+                label = '故障复盘（调试图+同步日志）' if src == 'debug' else '原始画面 /image_raw'
+                return self._json({'ok': True, 'filename': info, 'msg': f'开始录制 {label}：{info}',
                                    'recording': RECORDER.status()})
 
             if path == '/api/record/stop':
@@ -1022,8 +1155,11 @@ class Handler(BaseHTTPRequestHandler):
     def _download_recording(self, filename):
         fp = RECORDER.resolve_safe_path(filename)
         if not fp:
-            return self._err(404, f'视频不存在：{filename}')
-        ctype = 'video/mp4' if fp.lower().endswith('.mp4') else 'video/x-msvideo'
+            return self._err(404, f'文件不存在：{filename}')
+        low = fp.lower()
+        ctype = 'application/zip' if low.endswith('.zip') else (
+            'video/mp4' if low.endswith('.mp4') else 'video/x-msvideo'
+        )
         size = os.path.getsize(fp)
         self.send_response(200)
         self.send_header('Content-Type', ctype)

@@ -520,6 +520,68 @@ void test_red_obstacle_or_fusion_and_attribution()
   }
 }
 
+void test_corridor_two_zone_staggered_and_curve_horizon()
+{
+  CorridorPlannerConfig cfg{};
+  cfg.car_width_m = 0.191;
+  cfg.default_lane_width_m = 0.430;
+  cfg.obstacle_lookahead_m = 1.10;
+  cfg.obstacle_steer_horizon_m = 0.65;
+  cfg.obstacle_curve_min_horizon_m = 0.45;
+  cfg.obstacle_stagger_gap_m = 0.25;
+  cfg.cruise_speed_mps = 0.45;
+  cfg.obstacle_speed_mps = 0.26;
+  cfg.no_entry_speed_mps = 0.22;
+
+  CorridorPlanner planner(cfg);
+
+  // Staggered S-slalom: no-entry on LEFT at 0.28..0.40m, cone on RIGHT at 0.85..0.98m
+  // Must steer RIGHT around near no-entry first (NOT deadlocked as blocked!)
+  LocalObstacle near_left{};
+  near_left.type = SemanticObjectType::RED_NO_ENTRY;
+  near_left.d_bumper_m = 0.34;
+  near_left.d_min_m = 0.28;
+  near_left.d_max_m = 0.40;
+  near_left.y_lat_m = +0.13;
+  near_left.y_min_m = +0.065;
+  near_left.y_max_m = +0.195;
+
+  LocalObstacle far_right{};
+  far_right.type = SemanticObjectType::RED_CONE;
+  far_right.d_bumper_m = 0.90;
+  far_right.d_min_m = 0.84;
+  far_right.d_max_m = 0.96;
+  far_right.y_lat_m = -0.13;
+  far_right.y_min_m = -0.195;
+  far_right.y_max_m = -0.065;
+
+  const CorridorPlan slalom = planner.plan(
+    +0.215, -0.215, 0.0, {near_left, far_right}, {}, false, 1.0, 10.0, 0.0);
+  CHECK(!slalom.has_blocking_obstacle);
+  CHECK(slalom.target_y_m < -0.04);  // Steers right around near_left
+  CHECK(slalom.near_obstacle_count == 1 && slalom.far_obstacle_count == 1);
+  CHECK(slalom.speed_cap_mps <= cfg.no_entry_speed_mps + 1e-6);
+
+  // Curve far-view interference: cone at 0.58m on a sharp curve (curve_level=0.8 -> horizon=0.49m)
+  // Must slow down (far_obs_slow) WITHOUT steering sideways prematurely!
+  LocalObstacle curve_far{};
+  curve_far.type = SemanticObjectType::RED_CONE;
+  curve_far.d_bumper_m = 0.64;
+  curve_far.d_min_m = 0.58;
+  curve_far.d_max_m = 0.70;
+  curve_far.y_lat_m = +0.12;
+  curve_far.y_min_m = +0.055;
+  curve_far.y_max_m = +0.185;
+
+  const CorridorPlan curve_plan = planner.plan(
+    +0.215, -0.215, 0.0, {curve_far}, {}, false, 2.0, 11.0, 0.8);
+  CHECK(!curve_plan.has_blocking_obstacle);
+  CHECK(curve_plan.near_obstacle_count == 0 && curve_plan.far_obstacle_count == 1);
+  CHECK(curve_plan.active_mode_tag == "far_obs_slow");
+  CHECK(std::abs(curve_plan.target_y_m) < 0.01);  // stays on lane center
+  CHECK(curve_plan.speed_cap_mps <= cfg.obstacle_speed_mps + 1e-6);
+}
+
 }  // namespace
 
 int main()
@@ -532,6 +594,7 @@ int main()
   test_track_state_machine_odom_freshness_and_finals_mode();
   test_motion_controller_corridor_and_safe_lost();
   test_red_obstacle_or_fusion_and_attribution();
+  test_corridor_two_zone_staggered_and_curve_horizon();
   std::cout << "ALL_FINALS_CPP_TESTS_PASSED" << std::endl;
   return 0;
 }

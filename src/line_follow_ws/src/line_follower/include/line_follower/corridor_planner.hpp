@@ -21,8 +21,13 @@ struct CorridorPlannerConfig
   double cone_margin_m{0.025};
   double no_entry_margin_m{0.030};
 
-  // Obstacle lookahead window (includes rear-wheel cut-in retention down to -0.28m)
+  // Two-zone obstacle horizon:
+  //   - Far preview [eff_steer_horizon, obstacle_lookahead_m]: smooth pre-decel only (no curve lateral distortion)
+  //   - Near steering [-obstacle_rear_keep_m, eff_steer_horizon]: immediate corridor carving (staggered gap split)
   double obstacle_lookahead_m{1.10};
+  double obstacle_steer_horizon_m{0.65};
+  double obstacle_curve_min_horizon_m{0.45};
+  double obstacle_stagger_gap_m{0.25};
   double obstacle_rear_keep_m{0.28};
 
   // Speed caps by active hazard/mode
@@ -109,7 +114,8 @@ public:
     const std::vector<GroundDetection> & raw_detections,
     bool is_stopped_at_yellow,
     double current_arc_s_m,
-    double now_sec);
+    double now_sec,
+    double curve_level = 0.0);
 
   // Pure helper exposed for unit testing
   static std::vector<LateralInterval> subtract_interval(

@@ -124,6 +124,8 @@ struct CorridorPlan
   int target_digit{0};               // 1..8 when targeting a digit
   double safe_y_min_m{-0.095};       // Chosen feasible interval right bound
   double safe_y_max_m{0.095};        // Chosen feasible interval left bound
+  int near_obstacle_count{0};        // Obstacles in immediate steering horizon
+  int far_obstacle_count{0};         // Obstacles in far preview decel horizon
   std::string active_mode_tag{"cruise"};
 };
 

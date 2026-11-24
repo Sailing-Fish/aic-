@@ -22,6 +22,11 @@ void CorridorPlanner::set_config(const CorridorPlannerConfig & config)
   config_.cone_margin_m = std::max(0.0, config_.cone_margin_m);
   config_.no_entry_margin_m = std::max(0.0, config_.no_entry_margin_m);
   config_.obstacle_lookahead_m = std::max(0.2, config_.obstacle_lookahead_m);
+  config_.obstacle_steer_horizon_m = std::clamp(
+    config_.obstacle_steer_horizon_m, 0.25, config_.obstacle_lookahead_m);
+  config_.obstacle_curve_min_horizon_m = std::clamp(
+    config_.obstacle_curve_min_horizon_m, 0.20, config_.obstacle_steer_horizon_m);
+  config_.obstacle_stagger_gap_m = std::max(0.05, config_.obstacle_stagger_gap_m);
   config_.obstacle_rear_keep_m = std::max(0.0, config_.obstacle_rear_keep_m);
   config_.fork_min_votes = std::max(1, config_.fork_min_votes);
   config_.digit_min_frames = std::max(1, config_.digit_min_frames);
@@ -320,7 +325,8 @@ CorridorPlan CorridorPlanner::plan(
   const std::vector<GroundDetection> & raw_detections,
   bool is_stopped_at_yellow,
   double current_arc_s_m,
-  double now_sec)
+  double now_sec,
+  double curve_level)
 {
   CorridorPlan out{};
   out.speed_cap_mps = config_.cruise_speed_mps;
@@ -340,7 +346,7 @@ CorridorPlan CorridorPlanner::plan(
   const double lane_mid = 0.5 * (y_lane_left_m + y_lane_right_m);
 
   auto compute_gaps = [&](double border_m, double cone_m, double no_entry_m,
-      const std::vector<const LocalObstacle *> & active_obs) {
+      const std::vector<const LocalObstacle *> & obs_list) {
       double y_min_base = y_lane_right_m + half_car + border_m;
       double y_max_base = y_lane_left_m - half_car - border_m;
       if (y_min_base > y_max_base) {
@@ -348,7 +354,7 @@ CorridorPlan CorridorPlanner::plan(
         y_max_base = lane_mid;
       }
       std::vector<LateralInterval> ivs{LateralInterval{y_min_base, y_max_base}};
-      for (const auto * obs : active_obs) {
+      for (const auto * obs : obs_list) {
         const double m =
           (obs->type == SemanticObjectType::RED_NO_ENTRY) ? no_entry_m : cone_m;
         const double ex_min = obs->y_min_m - half_car - m;
@@ -358,9 +364,18 @@ CorridorPlan CorridorPlanner::plan(
       return ivs;
     };
 
-  // Filter active obstacles in lookahead + rear-wheel retention window
-  std::vector<const LocalObstacle *> active_obs;
-  bool has_no_entry = false;
+  // Two-zone longitudinal window:
+  //   - Tighten steering horizon smoothly in curves to prevent far-around-the-bend lateral interference
+  const double c_norm = std::clamp(std::abs(curve_level), 0.0, 1.0);
+  const double eff_steer_horizon =
+    config_.obstacle_steer_horizon_m -
+    c_norm * (config_.obstacle_steer_horizon_m - config_.obstacle_curve_min_horizon_m);
+
+  std::vector<const LocalObstacle *> near_obs;
+  std::vector<const LocalObstacle *> far_obs;
+  bool any_no_entry_in_lookahead = false;
+  bool any_obs_in_lookahead = false;
+
   for (const auto & obs : obstacles) {
     if (obs.type != SemanticObjectType::RED_CONE &&
       obs.type != SemanticObjectType::RED_NO_ENTRY)
@@ -372,11 +387,46 @@ CorridorPlan CorridorPlanner::plan(
     {
       continue;
     }
-    active_obs.push_back(&obs);
+    any_obs_in_lookahead = true;
     if (obs.type == SemanticObjectType::RED_NO_ENTRY) {
-      has_no_entry = true;
+      any_no_entry_in_lookahead = true;
+    }
+    if (obs.d_min_m <= eff_steer_horizon) {
+      near_obs.push_back(&obs);
+    } else {
+      far_obs.push_back(&obs);
     }
   }
+
+  // Sort near obstacles closest-first so staggered front/back obstacles are solved sequentially
+  std::sort(
+    near_obs.begin(),
+    near_obs.end(),
+    [](const LocalObstacle * a, const LocalObstacle * b) {
+      return a->d_min_m < b->d_min_m;
+    });
+
+  // Staggered S-slalom separation: only carve lateral corridor for the immediate longitudinal cluster
+  // (obstacles overlapping or within obstacle_stagger_gap_m behind the closest obstacle).
+  // Farther staggered obstacles still apply speed caps without locking out the immediate escape gap!
+  std::vector<const LocalObstacle *> active_obs;
+  bool has_no_entry = false;
+  if (!near_obs.empty()) {
+    const double cluster_d_limit = near_obs.front()->d_max_m + config_.obstacle_stagger_gap_m;
+    for (const auto * obs : near_obs) {
+      if (obs->d_min_m <= cluster_d_limit) {
+        active_obs.push_back(obs);
+        if (obs->type == SemanticObjectType::RED_NO_ENTRY) {
+          has_no_entry = true;
+        }
+      } else {
+        far_obs.push_back(obs);
+      }
+    }
+  }
+
+  out.near_obstacle_count = static_cast<int>(active_obs.size());
+  out.far_obstacle_count = static_cast<int>(far_obs.size());
 
   std::vector<LateralInterval> gaps =
     compute_gaps(config_.border_margin_m, config_.cone_margin_m, config_.no_entry_margin_m, active_obs);
@@ -395,6 +445,16 @@ CorridorPlan CorridorPlanner::plan(
       0.002,
       std::min(0.010, config_.no_entry_margin_m),
       active_obs);
+  }
+  // If multiple overlapping near obstacles mutually block the corridor, solve the single closest one
+  // first rather than freezing in the middle of an S-slalom!
+  if (gaps.empty() && active_obs.size() >= 2) {
+    std::vector<const LocalObstacle *> nearest_only{active_obs.front()};
+    gaps = compute_gaps(
+      std::min(0.008, config_.border_margin_m),
+      std::min(0.008, config_.cone_margin_m),
+      std::min(0.015, config_.no_entry_margin_m),
+      nearest_only);
   }
 
   LateralInterval chosen_gap{lane_mid, lane_mid};
@@ -417,12 +477,20 @@ CorridorPlan CorridorPlanner::plan(
 
     if (active_obs.empty()) {
       out.target_y_m = std::clamp(lane_mid, chosen_gap.y_min, chosen_gap.y_max);
-      out.speed_cap_mps = config_.cruise_speed_mps;
-      out.active_mode_tag = "cruise";
+      if (any_obs_in_lookahead) {
+        // Far preview zone: pre-decelerate smoothly without premature lateral steering
+        out.speed_cap_mps = any_no_entry_in_lookahead ?
+          config_.no_entry_speed_mps : config_.obstacle_speed_mps;
+        out.active_mode_tag = "far_obs_slow";
+      } else {
+        out.speed_cap_mps = config_.cruise_speed_mps;
+        out.active_mode_tag = "cruise";
+      }
     } else {
       // Maximize symmetric clearance inside the feasible gap
       out.target_y_m = chosen_gap.center();
-      out.speed_cap_mps = has_no_entry ? config_.no_entry_speed_mps : config_.obstacle_speed_mps;
+      out.speed_cap_mps = (has_no_entry || any_no_entry_in_lookahead) ?
+        config_.no_entry_speed_mps : config_.obstacle_speed_mps;
       out.active_mode_tag = has_no_entry ? "avoid_no_entry" : "avoid_cone";
     }
   } else {

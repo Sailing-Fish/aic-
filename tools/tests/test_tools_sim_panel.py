@@ -380,9 +380,43 @@ class TestPanelAndTelemetry(unittest.TestCase):
             self.assertTrue(ok_del)
             self.assertEqual(len(rec.list_files()), 0)
 
+            # Test synchronized debug blackbox bundle (.zip with mp4 + follow_slice + events_slice + timestamps)
+            dbg_dir = Path(tmp) / "debug_runs"
+            fake_log_dir = Path(tmp) / "run_log"
+            fake_log_dir.mkdir(parents=True, exist_ok=True)
+            (fake_log_dir / "follow.log").write_text("old line\n", encoding="utf-8")
+            (fake_log_dir / "events.csv").write_text("ts,t,src,area,event,kv\n", encoding="utf-8")
+            (fake_log_dir / "params_snapshot.yaml").write_text("line_follower_node: {}\n", encoding="utf-8")
+
+            rec2 = panel_server.RawVideoRecorder(capture_dir=str(cap_dir), debug_dir=str(dbg_dir))
+            ok_d, dfn = rec2.start(scene="fork_test", fps=10.0, source="debug", log_dir=str(fake_log_dir))
+            self.assertTrue(ok_d, dfn)
+            with open(fake_log_dir / "follow.log", "a", encoding="utf-8") as fl:
+                fl.write("[DEC] ctrl mode=fork_right branch=1 v=0.35 yaw=-0.80\n")
+            with open(fake_log_dir / "events.csv", "a", encoding="utf-8") as ef:
+                ef.write("100,1.2,follow,ctrl,log,mode=fork_right\n")
+            for i in range(6):
+                img = np.full((240, 320, 3), 180, dtype=np.uint8)
+                rec2.push_frame(img, now=2000.0 + i * 0.12)
+            ok_ds, dinfo = rec2.stop()
+            self.assertTrue(ok_ds, dinfo)
+            self.assertTrue(dinfo["filename"].endswith(".zip"))
+            zip_fp = rec2.resolve_safe_path(dinfo["filename"])
+            self.assertIsNotNone(zip_fp)
+            import zipfile as _zf
+            with _zf.ZipFile(zip_fp, "r") as zf:
+                names = set(zf.namelist())
+                self.assertIn("frame_timestamps.csv", names)
+                self.assertIn("follow_slice.log", names)
+                self.assertIn("events_slice.csv", names)
+                self.assertIn("params_snapshot.yaml", names)
+                self.assertIn("meta.json", names)
+                self.assertIn("fork_right", zf.read("follow_slice.log").decode("utf-8"))
+
         # Panel HTML includes recorder drawer hooks
         html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
         self.assertIn("btnRecToggle", html)
+        self.assertIn("recMode", html)
         self.assertIn("/api/record/start", html)
         self.assertIn("/api/record/stop", html)
         self.assertIn("/api/record/download/", html)

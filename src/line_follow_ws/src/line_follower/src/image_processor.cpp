@@ -634,6 +634,32 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
     if (yellow_is_geometric && yellow_bbox_full.width > 0) {
       paint_full_rect(yellow_bbox_full);
     }
+
+    // Also fill small closed interior holes completely surrounded by white lane
+    // (e.g., dark-blue circular handwritten digit stickers not yet detected by YOLO).
+    // Exterior blue mat and fork blue islands touch ROI borders, so RETR_CCOMP child
+    // contours strictly inside the ROI never fill real track boundaries.
+    std::vector<std::vector<cv::Point>> hole_contours;
+    std::vector<cv::Vec4i> hole_hierarchy;
+    cv::findContours(binary, hole_contours, hole_hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_SIMPLE);
+    const double max_hole_area = 0.06 * static_cast<double>(binary.cols * binary.rows);
+    for (size_t i = 0; i < hole_contours.size(); ++i) {
+      if (hole_hierarchy[i][3] < 0) {
+        continue;  // outer contour, not a hole
+      }
+      const double a = cv::contourArea(hole_contours[i]);
+      if (a <= 4.0 || a > max_hole_area) {
+        continue;
+      }
+      const cv::Rect hb = cv::boundingRect(hole_contours[i]);
+      if (hb.x <= 1 || hb.y <= 1 ||
+        (hb.x + hb.width) >= (binary.cols - 1) ||
+        (hb.y + hb.height) >= (binary.rows - 1))
+      {
+        continue;
+      }
+      cv::drawContours(binary, hole_contours, static_cast<int>(i), cv::Scalar(255), cv::FILLED);
+    }
   }
 
   cv::morphologyEx(

@@ -324,6 +324,11 @@ private:
   int red_src_both_frames_{0};
   int red_src_cv_only_frames_{0};
 
+  // Throttled [DEC] ctrl decision trace state for synchronized blackbox replay
+  std::string last_ctrl_mode_tag_{};
+  int last_ctrl_branch_{0};
+  double last_ctrl_log_sec_{-1e9};
+
   bool start_enabled_{false};
   bool waiting_log_initialized_{false};
   rclcpp::Time last_waiting_log_time_;

@@ -1374,6 +1374,9 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
     red_src_yolo_only_frames_ = 0;
     red_src_both_frames_ = 0;
     red_src_cv_only_frames_ = 0;
+    last_ctrl_mode_tag_.clear();
+    last_ctrl_branch_ = 0;
+    last_ctrl_log_sec_ = -1e9;
 
     RCLCPP_INFO(
       this->get_logger(),
@@ -2029,17 +2032,24 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       const bool right_proj_ok = obs.near_right_valid &&
         ground_projector_.pixel_to_ground(obs.near_right_edge_px, v_near, d_r, y_r);
 
-      if (left_proj_ok && right_proj_ok && (y_l - y_r) >= 0.25 && (y_l - y_r) <= 0.70) {
+      // At fork junctions (wide mouth or active branch commit), anchor lane bounds around the
+      // branch-guided centroid (which incorporates far_band's chosen branch) so the car commits
+      // smoothly into the turn instead of staying pinned to the unsplit near-band midpoint.
+      const bool fork_guided = obs.has_fork_split || (active_branch != 0);
+      if (!fork_guided && left_proj_ok && right_proj_ok &&
+        (y_l - y_r) >= 0.25 && (y_l - y_r) <= 0.70)
+      {
         y_lane_left_m = y_l;
         y_lane_right_m = y_r;
-      } else if (left_proj_ok && !right_proj_ok) {
+      } else if (!fork_guided && left_proj_ok && !right_proj_ok) {
         y_lane_left_m = y_l;
         y_lane_right_m = y_l - 2.0 * half_w_def;
-      } else if (right_proj_ok && !left_proj_ok) {
+      } else if (!fork_guided && right_proj_ok && !left_proj_ok) {
         y_lane_right_m = y_r;
         y_lane_left_m = y_r + 2.0 * half_w_def;
       }
 
+      const double eff_curve_lvl = std::max(obs.curvature_proxy, curve_assist_.curve_level);
       const CorridorPlan plan = corridor_planner_.plan(
         y_lane_left_m,
         y_lane_right_m,
@@ -2048,7 +2058,8 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         ground_detections,
         false,
         finish_guard_.total_arc_m(),
-        now_sec);
+        now_sec,
+        eff_curve_lvl);
 
       double eff_speed_cap = plan.speed_cap_mps;
       if (finish_guard_.is_yellow_rearmed() &&
@@ -2071,6 +2082,32 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       linear_speed = cmd.linear_speed;
       yaw_rate = cmd.yaw_rate;
       publish_stop_cmd = cmd.publish_stop;
+
+      // Dedicated 5 Hz (or immediate on mode/branch change) control decision trace for replay
+      const bool ctrl_changed =
+        (plan.active_mode_tag != last_ctrl_mode_tag_) ||
+        (plan.preferred_branch != last_ctrl_branch_);
+      if (ctrl_changed || (now_sec - last_ctrl_log_sec_) >= 0.20) {
+        RCLCPP_INFO(
+          this->get_logger(),
+          "[DEC] ctrl mode=%s branch=%d y_ref=%+.3f lane=[%+.2f,%+.2f] "
+          "hdg=%+.2f rev=%d v=%.2f yaw=%+.2f obs=%d/%d s=%.2f",
+          plan.active_mode_tag.c_str(),
+          plan.preferred_branch,
+          plan.target_y_m,
+          y_lane_right_m,
+          y_lane_left_m,
+          obs.heading_proxy,
+          curve_assist_.reverse_curve_active ? 1 : 0,
+          linear_speed,
+          yaw_rate,
+          plan.near_obstacle_count,
+          plan.far_obstacle_count,
+          finish_guard_.total_arc_m());
+        last_ctrl_mode_tag_ = plan.active_mode_tag;
+        last_ctrl_branch_ = plan.preferred_branch;
+        last_ctrl_log_sec_ = now_sec;
+      }
 
       // Populate FinalsDebugOverlay for live inspection
       finals_overlay.active_mode_tag = plan.active_mode_tag;

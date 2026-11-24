@@ -138,10 +138,14 @@ MotionCommand MotionController::compute_corridor_command(
   const CurveAssistState & curve_state,
   const MotionState & motion_state) const
 {
-  // +y is LEFT, +yaw_rate is LEFT; heading_proxy > 0 means far lane bends RIGHT
+  // +y is LEFT, +yaw_rate is LEFT; heading_proxy > 0 means far lane bends RIGHT.
+  // Keep 45% heading guidance even during reverse_curve_active so the car never stops
+  // turning mid-fork or mid-hairpin!
   const double lateral_err_m = target_y_m - current_y_m;
   const double eff_heading_gain =
-    curve_state.reverse_curve_active ? 0.0 : config_.corridor_heading_gain;
+    curve_state.reverse_curve_active ?
+    (0.45 * config_.corridor_heading_gain) :
+    config_.corridor_heading_gain;
 
   double yaw_cmd = clamp_value(
     config_.corridor_kp_y * lateral_err_m - eff_heading_gain * heading_proxy,

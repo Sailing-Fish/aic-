@@ -270,17 +270,25 @@
         </div>
       </div>
       <details class="recbox" id="recBox">
-        <summary>🎬 原始画面采集录制（YOLO 数据集）<span class="rec-cnt" id="recCountTag">0 段</span></summary>
+        <summary>🎬 录制（故障复盘包 / YOLO 原图）<span class="rec-cnt" id="recCountTag">0 项</span></summary>
         <div class="rec-body">
           <div class="rec-row">
-            <select id="recScene" title="采集场景标签（写入文件名）">
+            <select id="recMode" title="故障复盘：录带时间戳调试图 + 同步日志打包 .zip（发车跑圈中可用）；YOLO原图：录纯净 /image_raw">
+              <option value="debug">🔍 故障复盘（调试图 + 同步日志包 .zip）</option>
+              <option value="raw">🎬 原始画面 /image_raw（YOLO 训练集）</option>
+            </select>
+          </div>
+          <div class="rec-row">
+            <select id="recScene" title="采集场景/测试标签（写入文件名）">
+              <option value="fork_test">岔道测试 (fork_test)</option>
+              <option value="roundabout_test">环岛测试 (roundabout_test)</option>
               <option value="cones_noentry">红锥+禁行区 (cones_noentry)</option>
               <option value="yellow_line">黄线停车线 (yellow_line)</option>
               <option value="digits">数字 1-8 (digits)</option>
               <option value="mixed_full">综合全要素 (mixed_full)</option>
               <option value="hard_neg">负样本/空道干扰 (hard_neg)</option>
             </select>
-            <select id="recLight" title="光照条件标签（方便按光照整段划分训练/验证集）">
+            <select id="recLight" title="光照条件标签（YOLO 原图用）">
               <option value="normal">正常光 (normal)</option>
               <option value="dim_shadow">偏暗/阴影 (dim_shadow)</option>
               <option value="glare">反光眩光 (glare)</option>
@@ -288,11 +296,11 @@
             </select>
           </div>
           <div class="rec-row">
-            <button class="rec-go" id="btnRecToggle">● 开始录制 /image_raw</button>
+            <button class="rec-go" id="btnRecToggle">● 开始录制复盘包</button>
           </div>
           <div class="rec-meta">
-            <span id="recStatText">保存至 dataset_capture/raw_videos/</span>
-            <span id="recTipText">15fps · 建议每段 30–45s</span>
+            <span id="recStatText">保存至 dataset_capture/debug_runs/</span>
+            <span id="recTipText">带帧级时间戳 + 同步日志</span>
           </div>
           <div class="rec-files" id="recFiles"></div>
         </div>
@@ -500,6 +508,8 @@ const EV_CN = {
   'red|avoid_on':        ['避让红色目标','路锥或红线，开始绕行'],
   'red_src|detect':      ['红障来源',   'YOLO 与白道 CV 归因'],
   'red_src|clear':       ['红障离开',   '视野红障已清空'],
+  'fork_decision|':      ['岔道决策',   '按投票选定支路'],
+  'ctrl|':               ['控制轨迹',   '实时走廊与转向决策'],
   'mux|change':          ['速度仲裁',   '切换到新的控制源'],
   'digit|turn':          ['识别数字',   '按数值决定转向'],
   'safety|deadman_on':   ['兜底刹车',   '上游静默，自动发零速'],
@@ -689,6 +699,19 @@ function fmtMMSS(s){
   return String(m).padStart(2,'0') + ':' + String(sec%60).padStart(2,'0');
 }
 
+function syncRecModeUI(){
+  if(recActive) return;
+  const isDebug = ($('recMode').value === 'debug');
+  $('recLight').style.display = isDebug ? 'none' : '';
+  $('btnRecToggle').textContent = isDebug ? '● 开始录制复盘包（可边跑边录）' : '● 开始录制 /image_raw';
+  $('btnRecToggle').disabled = (!isDebug && lastLocked === true);
+  $('recScene').disabled = (!isDebug && lastLocked === true);
+  $('recLight').disabled = (lastLocked === true);
+  $('recMode').disabled = false;
+  $('recStatText').textContent = isDebug ? '目录: dataset_capture/debug_runs/' : '目录: dataset_capture/raw_videos/';
+  $('recTipText').textContent = isDebug ? '12fps 调试图 + 同步日志 .zip' : '15fps · 建议每段 30–45s (<10MB)';
+}
+
 function renderRecording(rec){
   recActive = !!rec.active;
   const pill = $('recLivePill');
@@ -696,27 +719,24 @@ function renderRecording(rec){
   const stat = $('recStatText');
   const tip = $('recTipText');
   const files = rec.files || [];
-  $('recCountTag').textContent = files.length + ' 段';
+  $('recCountTag').textContent = files.length + ' 项';
 
   if(recActive){
-    pill.textContent = '● REC ' + fmtMMSS(rec.elapsed_sec);
+    const tag = (rec.source === 'debug') ? 'DBG' : 'RAW';
+    pill.textContent = `● ${tag} ` + fmtMMSS(rec.elapsed_sec);
     pill.classList.add('on');
     btn.textContent = `⏹ 停止录制（${fmtMMSS(rec.elapsed_sec)} · ${rec.frames||0}帧）`;
     btn.classList.add('recording');
     btn.disabled = false;
+    $('recMode').disabled = true;
     $('recScene').disabled = true;
     $('recLight').disabled = true;
     stat.textContent = rec.filename || '录制中…';
     tip.textContent = `${(rec.size_mb||0).toFixed(2)} MB` + (rec.dropped ? ` · 丢${rec.dropped}帧` : '');
   } else {
     pill.classList.remove('on');
-    btn.textContent = '● 开始录制 /image_raw';
     btn.classList.remove('recording');
-    btn.disabled = (lastLocked === true);
-    $('recScene').disabled = (lastLocked === true);
-    $('recLight').disabled = (lastLocked === true);
-    stat.textContent = `目录: ${rec.dir_rel || 'dataset_capture/raw_videos'}/`;
-    tip.textContent = '15fps · 建议每段 30–45s (<10MB)';
+    syncRecModeUI();
   }
 
   const sig = files.map(f=>f.name+':'+f.size_mb).join('|');
@@ -724,15 +744,16 @@ function renderRecording(rec){
     lastRecFilesSig = sig;
     const box = $('recFiles');
     if(!files.length){
-      box.innerHTML = '<div style="color:var(--mute);font-size:11px;text-align:center;padding:4px">还没有录制视频；手推小车沿赛道录 30-45s 即可</div>';
+      box.innerHTML = '<div style="color:var(--mute);font-size:11px;text-align:center;padding:4px">还没有录制文件；点上方按钮开始录制复盘包或原图</div>';
     } else {
       box.innerHTML = files.map(f=>{
         const enc = encodeURIComponent(f.name);
+        const badge = (f.kind === 'debug') ? '[复盘]' : '[原图]';
         return `<div class="rec-file">
-          <span class="fn" title="${f.name} (${f.mtime_str||''})">${f.name}</span>
+          <span class="fn" title="${f.name} (${f.mtime_str||''})">${badge} ${f.name}</span>
           <span class="sz">${Number(f.size_mb).toFixed(1)}M</span>
           <a href="/api/record/download/${enc}" download="${f.name}">下载</a>
-          <button class="del" data-del="${f.name}" title="删除该片段">✕</button>
+          <button class="del" data-del="${f.name}" title="删除该文件">✕</button>
         </div>`;
       }).join('');
     }
@@ -1165,6 +1186,7 @@ $('estop').addEventListener('click',async()=>{
   toast(d.ok?'已停车，参数已解锁':('失败：'+d.error), !d.ok);
   if(d.ok){ setLocked(false, true); }
 });
+$('recMode').addEventListener('change', syncRecModeUI);
 $('btnRecToggle').addEventListener('click',async()=>{
   const btn = $('btnRecToggle');
   btn.disabled = true;
@@ -1174,10 +1196,12 @@ $('btnRecToggle').addEventListener('click',async()=>{
       toast(d.ok ? d.msg : ('停止失败：'+(d.error||d.msg)), !d.ok);
       if(d.recording) renderRecording(d.recording);
     } else {
+      const src = $('recMode').value;
       const payload = {
+        source: src,
         scene: $('recScene').value,
         lighting: $('recLight').value,
-        fps: 15,
+        fps: (src === 'debug') ? 12 : 15,
       };
       const d = await (await fetch('/api/record/start',{
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -1189,7 +1213,7 @@ $('btnRecToggle').addEventListener('click',async()=>{
   }catch(e){
     toast('录制请求异常：'+e, true);
   }finally{
-    if(!recActive) btn.disabled = (lastLocked === true);
+    if(!recActive) syncRecModeUI();
     else btn.disabled = false;
   }
 });
@@ -1208,6 +1232,7 @@ $('recFiles').addEventListener('click',async(e)=>{
 $('imgDebug').src='/api/stream/debug';
 $('imgYolo').src='/api/stream/yolo';
 
+syncRecModeUI();
 loadParams('finals_fork');
 pollStatus(); pollLogs();
 setInterval(pollStatus,500);
