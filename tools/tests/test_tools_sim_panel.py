@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools" / "panel"))
 sys.path.insert(0, str(REPO_ROOT / "tools" / "sim"))
 
 import calibrate_homography as calib_mod  # noqa: E402
+import extract_keyframes as kf_mod  # noqa: E402
 import params_schema  # noqa: E402
 import record_and_compare_cv as cv_cmp  # noqa: E402
 import render as sim_render  # noqa: E402
@@ -325,6 +326,63 @@ class TestPanelAndTelemetry(unittest.TestCase):
             self.assertIn(k, by_tier["legacy"], f"Legacy key '{k}' missing from legacy tier")
             self.assertNotIn(k, by_tier["finals_core"], f"Legacy key '{k}' leaked into finals_core!")
             self.assertNotIn(k, by_tier["calibration"], f"Legacy key '{k}' leaked into calibration!")
+
+    def test_raw_video_recorder_and_keyframe_extractor_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cap_dir = Path(tmp) / "raw_videos"
+            rec = panel_server.RawVideoRecorder(capture_dir=str(cap_dir))
+            ok, fname = rec.start(scene="hard_neg!@#", lighting="dim_shadow", fps=10.0)
+            self.assertTrue(ok, fname)
+            self.assertIn("hard_neg", fname)
+            self.assertIn("dim_shadow", fname)
+
+            # Push 20 frames across 2.0 seconds (moving square -> distinct frames, plus static duplicates)
+            t0 = 1000.0
+            for i in range(20):
+                img = np.full((240, 320, 3), 210, dtype=np.uint8)
+                # First 10 frames move a textured box; last 10 stay static to test dedup
+                x_off = (i * 22) if i < 10 else (9 * 22)
+                cv2.rectangle(img, (10 + x_off, 40), (70 + x_off, 180), (20, 20, 220), -1)
+                cv2.putText(img, str(i), (15 + x_off, 120), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
+                rec.push_frame(img, now=t0 + i * 0.11)
+
+            ok_stop, info = rec.stop()
+            self.assertTrue(ok_stop, info)
+            self.assertGreaterEqual(info["frames"], 10)
+            files = rec.list_files()
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0]["name"], info["filename"])
+
+            # Path traversal must be rejected
+            self.assertIsNone(rec.resolve_safe_path("../secret.mp4"))
+            self.assertIsNotNone(rec.resolve_safe_path(info["filename"]))
+
+            # Extract keyframes: should deduplicate static tail and auto-create empty labels for hard_neg
+            out_dir = Path(tmp) / "keyframes"
+            summary = kf_mod.extract_directory(
+                cap_dir, out_dir, interval_sec=0.1, min_diff=4.0, min_sharpness=10.0
+            )
+            self.assertEqual(summary["video_count"], 1)
+            self.assertGreaterEqual(summary["total_saved"], 3)
+            self.assertGreater(summary["videos"][0]["skipped_dup"], 0)
+            self.assertTrue(summary["videos"][0]["is_hard_neg"])
+            imgs = list((out_dir / "images").glob("*.jpg"))
+            lbls = list((out_dir / "labels").glob("*.txt"))
+            self.assertEqual(len(imgs), summary["total_saved"])
+            self.assertEqual(len(lbls), summary["total_saved"])
+            self.assertTrue((out_dir / "manifest.json").is_file())
+
+            # Delete file via recorder API
+            ok_del, _ = rec.delete_file(info["filename"])
+            self.assertTrue(ok_del)
+            self.assertEqual(len(rec.list_files()), 0)
+
+        # Panel HTML includes recorder drawer hooks
+        html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("btnRecToggle", html)
+        self.assertIn("/api/record/start", html)
+        self.assertIn("/api/record/stop", html)
+        self.assertIn("/api/record/download/", html)
 
 
 class TestSimulatorFixesAndPerturbations(unittest.TestCase):

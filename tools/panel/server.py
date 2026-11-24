@@ -13,11 +13,15 @@ Web 面板后端（零第三方依赖，只用标准库 + rclpy/cv2/yaml）。
 """
 
 import argparse
+import datetime
 import json
 import os
+import queue
+import re
 import sys
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
@@ -51,11 +55,286 @@ STATE_DIR = '/tmp/rdkx5'
 LOGROOT = os.path.join(TOOLS, 'logs')
 CONFIG_DIR = os.path.join(TOOLS, 'config')
 PANEL_DIR = os.path.dirname(os.path.abspath(__file__))
+CAPTURE_DIR = os.path.join(WS, 'dataset_capture', 'raw_videos')
 
 STREAM_FPS = 6.0
 STREAM_PERIOD = 1.0 / STREAM_FPS
 JPEG_QUALITY = 70
 VOLTAGE_LOW_THRESHOLD = 11.6
+RECORD_DEFAULT_FPS = 15.0
+RECORD_MAX_DURATION_SEC = 120.0
+_TAG_SAFE_RE = re.compile(r'[^a-zA-Z0-9_-]+')
+
+
+def _sanitize_tag(raw, fallback):
+    cleaned = _TAG_SAFE_RE.sub('_', str(raw or '').strip()).strip('_-').lower()
+    return (cleaned[:24] or fallback)
+
+
+class RawVideoRecorder:
+    """无 ROS 依赖的异步原始画面录制器（录 /image_raw，不带叠加框，供 YOLO 训练）。
+
+    设计原则：
+      - 空闲时 is_active=False，ROS 回调首行直接 return，零 CPU/零内存开销
+      - 录制时按目标帧率（默认 15fps）节流并入有界队列，后台写盘线程编码，不阻塞巡线
+      - 自动限制最长时长（默认 120s），单段 30-45s 仅 ~2-4MB，便于直接 git push 上 GitHub
+    """
+
+    def __init__(self, capture_dir=None):
+        self.capture_dir = capture_dir or CAPTURE_DIR
+        self._lock = threading.Lock()
+        self.is_active = False
+        self._queue = None
+        self._thread = None
+        self._filename = ''
+        self._filepath = ''
+        self._fps = RECORD_DEFAULT_FPS
+        self._max_duration = RECORD_MAX_DURATION_SEC
+        self._t0 = 0.0
+        self._last_enq_ts = 0.0
+        self._frames_written = 0
+        self._frames_dropped = 0
+        self._last_error = ''
+
+    def start(self, scene='mixed_full', lighting='normal',
+              fps=RECORD_DEFAULT_FPS, max_duration_sec=RECORD_MAX_DURATION_SEC):
+        with self._lock:
+            if self.is_active:
+                return False, f'正在录制 {self._filename}，请先停止'
+            os.makedirs(self.capture_dir, exist_ok=True)
+            s_tag = _sanitize_tag(scene, 'clip')
+            l_tag = _sanitize_tag(lighting, 'normal')
+            fps_val = max(2.0, min(30.0, float(fps or RECORD_DEFAULT_FPS)))
+            max_dur = max(5.0, min(300.0, float(max_duration_sec or RECORD_MAX_DURATION_SEC)))
+            ts_str = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            fname = f'{ts_str}_{s_tag}_{l_tag}.mp4'
+            fpath = os.path.join(self.capture_dir, fname)
+
+            self._filename = fname
+            self._filepath = fpath
+            self._fps = fps_val
+            self._max_duration = max_dur
+            self._t0 = time.time()
+            self._last_enq_ts = 0.0
+            self._frames_written = 0
+            self._frames_dropped = 0
+            self._last_error = ''
+            self._queue = queue.Queue(maxsize=64)
+            self.is_active = True
+            self._thread = threading.Thread(
+                target=self._writer_loop, args=(self._queue, fpath, fps_val), daemon=True
+            )
+            self._thread.start()
+
+        print(f'[DEC] panel record_start file={fname} fps={fps_val:.1f}', flush=True)
+        return True, fname
+
+    def push_frame(self, frame, now=None):
+        if not self.is_active or frame is None:
+            return False
+        ts = time.time() if now is None else float(now)
+        auto_stop = False
+        q = None
+        with self._lock:
+            if not self.is_active:
+                return False
+            if (ts - self._t0) >= self._max_duration:
+                auto_stop = True
+            else:
+                min_dt = 1.0 / self._fps
+                if self._last_enq_ts > 0.0 and (ts - self._last_enq_ts) < (min_dt * 0.92):
+                    return False
+                self._last_enq_ts = ts
+                q = self._queue
+
+        if auto_stop:
+            threading.Thread(target=self.stop, daemon=True).start()
+            return False
+
+        try:
+            q.put_nowait(frame.copy())
+            return True
+        except queue.Full:
+            with self._lock:
+                self._frames_dropped += 1
+            return False
+
+    def _writer_loop(self, q, init_path, fps_val):
+        writer = None
+        actual_path = init_path
+        try:
+            while True:
+                item = q.get()
+                if item is None:
+                    break
+                if writer is None:
+                    h, w = item.shape[:2]
+                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                    w_try = cv2.VideoWriter(actual_path, fourcc, fps_val, (w, h))
+                    if not w_try.isOpened():
+                        # 极少数精简 OpenCV 缺 mp4v 编码器时自动退回 MJPG .avi
+                        actual_path = os.path.splitext(init_path)[0] + '.avi'
+                        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                        w_try = cv2.VideoWriter(actual_path, fourcc, fps_val, (w, h))
+                        with self._lock:
+                            self._filepath = actual_path
+                            self._filename = os.path.basename(actual_path)
+                    if not w_try.isOpened():
+                        with self._lock:
+                            self._last_error = 'VideoWriter 打开失败（缺少编码器）'
+                        continue
+                    writer = w_try
+                writer.write(item)
+                with self._lock:
+                    self._frames_written += 1
+        except Exception as exc:  # noqa: BLE001
+            with self._lock:
+                self._last_error = f'{type(exc).__name__}: {exc}'
+        finally:
+            if writer is not None:
+                writer.release()
+
+    def stop(self):
+        with self._lock:
+            if not self.is_active:
+                return False, {'error': '当前未在录制'}
+            self.is_active = False
+            q = self._queue
+            th = self._thread
+            t0 = self._t0
+            self._queue = None
+            self._thread = None
+
+        if q is not None:
+            try:
+                q.put(None, timeout=1.0)
+            except queue.Full:
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    pass
+                q.put(None)
+        if th is not None:
+            th.join(timeout=5.0)
+
+        with self._lock:
+            fname = self._filename
+            fpath = self._filepath
+            frames = self._frames_written
+            dropped = self._frames_dropped
+            err = self._last_error
+            elapsed = max(0.0, time.time() - t0) if t0 > 0 else 0.0
+
+        if frames == 0:
+            try:
+                if fpath and os.path.isfile(fpath):
+                    os.remove(fpath)
+            except OSError:
+                pass
+            msg = err or '未收到 /image_raw 画面（请确认②相机已运行），未生成空文件'
+            return False, {'error': msg, 'frames': 0}
+
+        size_mb = 0.0
+        try:
+            size_mb = round(os.path.getsize(fpath) / (1024.0 * 1024.0), 2)
+        except OSError:
+            pass
+        try:
+            rel_path = os.path.relpath(fpath, WS).replace('\\', '/')
+        except ValueError:
+            rel_path = fpath.replace('\\', '/')
+        print(
+            f'[DEC] panel record_stop file={fname} frames={frames} '
+            f'dur={elapsed:.1f}s size_mb={size_mb:.2f} dropped={dropped}',
+            flush=True,
+        )
+        return True, {
+            'filename': fname,
+            'rel_path': rel_path,
+            'frames': frames,
+            'dropped': dropped,
+            'duration_sec': round(elapsed, 1),
+            'size_mb': size_mb,
+        }
+
+    def list_files(self, limit=30):
+        if not os.path.isdir(self.capture_dir):
+            return []
+        out = []
+        active_name = self._filename if self.is_active else ''
+        try:
+            for name in os.listdir(self.capture_dir):
+                if not name.lower().endswith(('.mp4', '.avi')):
+                    continue
+                if name == active_name:
+                    continue
+                fp = os.path.join(self.capture_dir, name)
+                if not os.path.isfile(fp):
+                    continue
+                st = os.stat(fp)
+                out.append({
+                    'name': name,
+                    'size_mb': round(st.st_size / (1024.0 * 1024.0), 2),
+                    'mtime': st.st_mtime,
+                    'mtime_str': datetime.datetime.fromtimestamp(st.st_mtime).strftime('%m-%d %H:%M:%S'),
+                })
+        except OSError:
+            return []
+        out.sort(key=lambda x: x['mtime'], reverse=True)
+        return out[:limit]
+
+    def resolve_safe_path(self, filename):
+        base = os.path.basename(str(filename or ''))
+        if not base or base != filename or not base.lower().endswith(('.mp4', '.avi')):
+            return None
+        fp = os.path.join(self.capture_dir, base)
+        return fp if os.path.isfile(fp) else None
+
+    def delete_file(self, filename):
+        with self._lock:
+            if self.is_active and filename == self._filename:
+                return False, '该文件正在录制中，无法删除'
+        fp = self.resolve_safe_path(filename)
+        if not fp:
+            return False, '文件不存在'
+        try:
+            os.remove(fp)
+        except OSError as exc:
+            return False, str(exc)
+        print(f'[DEC] panel record_delete file={filename}', flush=True)
+        return True, f'已删除 {filename}'
+
+    def status(self):
+        with self._lock:
+            active = self.is_active
+            fname = self._filename
+            frames = self._frames_written
+            dropped = self._frames_dropped
+            fps = self._fps
+            max_dur = self._max_duration
+            elapsed = round(max(0.0, time.time() - self._t0), 1) if (active and self._t0 > 0) else 0.0
+            fpath = self._filepath
+        cur_mb = 0.0
+        if active and fpath:
+            try:
+                cur_mb = round(os.path.getsize(fpath) / (1024.0 * 1024.0), 2)
+            except OSError:
+                cur_mb = 0.0
+        return {
+            'active': active,
+            'filename': fname if active else '',
+            'frames': frames if active else 0,
+            'dropped': dropped if active else 0,
+            'elapsed_sec': elapsed,
+            'size_mb': cur_mb,
+            'fps': fps,
+            'max_duration_sec': max_dur,
+            'dir_rel': 'dataset_capture/raw_videos',
+            'files': self.list_files(),
+        }
+
+
+RECORDER = RawVideoRecorder()
 
 
 # ---------------------------------------------------------------- 共享状态
@@ -103,6 +382,7 @@ class PanelNode(Node):
 
         self.create_subscription(Image, 'line_follower/debug_image', self._on_debug, 5)
         self.create_subscription(Image, '/yolo_detection_image', self._on_yolo, 5)
+        self.create_subscription(Image, '/image_raw', self._on_raw_image, 5)
         self.create_subscription(Bool, 'line_follower/start_cmd', self._on_start, 10)
         self.create_subscription(String, 'line_follower/track_state', self._on_state, 10)
         # 当前段号：面板用它显示"现在跑的是哪一段"，并给段选择器打 ●
@@ -129,6 +409,13 @@ class PanelNode(Node):
         if data:
             with SH.lock:
                 SH.frames['yolo'] = data
+
+    def _on_raw_image(self, msg):
+        # 空闲时直接返回，不做任何图像拷贝或解码，保证正常比赛零开销
+        if not RECORDER.is_active:
+            return
+        frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+        RECORDER.push_frame(frame)
 
     def _on_start(self, msg):
         new_val = bool(msg.data)
@@ -544,6 +831,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._logs(query)
             if path == '/api/params':
                 return self._json(load_params(query.get('map', 'fork')))
+            if path == '/api/record/status':
+                return self._json({'ok': True, 'recording': RECORDER.status()})
+            if path.startswith('/api/record/download/'):
+                fname = urllib.parse.unquote(path[len('/api/record/download/'):])
+                return self._download_recording(fname)
             return self._err(404, 'not found')
         except FileNotFoundError as e:
             return self._err(404, f'file not found: {e}')
@@ -612,6 +904,38 @@ class Handler(BaseHTTPRequestHandler):
                 _write_state_file('started', '0')
                 print('[DEC] panel estop', flush=True)
                 return self._json({'ok': True, 'msg': '已发送 30 帧零速'})
+
+            if path == '/api/record/start':
+                if self._is_running():
+                    return self._err(423, '发车运行中禁止开启采集录制（请在停稳/手推采集时使用）')
+                body = self._body()
+                ok, info = RECORDER.start(
+                    scene=body.get('scene', 'mixed_full'),
+                    lighting=body.get('lighting', 'normal'),
+                    fps=body.get('fps', RECORD_DEFAULT_FPS),
+                    max_duration_sec=body.get('max_duration_sec', RECORD_MAX_DURATION_SEC),
+                )
+                if not ok:
+                    return self._err(409, info)
+                return self._json({'ok': True, 'filename': info, 'msg': f'开始录制原始画面：{info}',
+                                   'recording': RECORDER.status()})
+
+            if path == '/api/record/stop':
+                ok, info = RECORDER.stop()
+                if not ok:
+                    return self._json({'ok': False, 'error': info.get('error', '停止失败'),
+                                       'recording': RECORDER.status()}, 400)
+                return self._json({'ok': True, 'result': info,
+                                   'msg': f"录制完成：{info['filename']}（{info['frames']} 帧，{info['size_mb']:.2f} MB）",
+                                   'recording': RECORDER.status()})
+
+            if path == '/api/record/delete':
+                if self._is_running():
+                    return self._err(423, '已发车，禁止删除文件')
+                body = self._body()
+                ok, msg = RECORDER.delete_file(body.get('filename', ''))
+                return self._json({'ok': ok, 'msg': msg, 'recording': RECORDER.status()},
+                                  200 if ok else 400)
 
             return self._err(404, 'not found')
         except Exception as e:  # noqa: BLE001
@@ -691,8 +1015,27 @@ class Handler(BaseHTTPRequestHandler):
                 'stale': bool(volt_ts == 0.0 or (time.time() - volt_ts) > 5.0),
                 'threshold': VOLTAGE_LOW_THRESHOLD,
             },
+            'recording': RECORDER.status(),
             'panel_port': PORT,
         })
+
+    def _download_recording(self, filename):
+        fp = RECORDER.resolve_safe_path(filename)
+        if not fp:
+            return self._err(404, f'视频不存在：{filename}')
+        ctype = 'video/mp4' if fp.lower().endswith('.mp4') else 'video/x-msvideo'
+        size = os.path.getsize(fp)
+        self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(size))
+        self.send_header('Content-Disposition', f'attachment; filename="{os.path.basename(fp)}"')
+        self.end_headers()
+        with open(fp, 'rb') as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
 
     def _stream(self, name):
         self.send_response(200)
@@ -800,6 +1143,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if RECORDER.is_active:
+            RECORDER.stop()
         srv.server_close()
         NODE.destroy_node()
         if rclpy.ok():

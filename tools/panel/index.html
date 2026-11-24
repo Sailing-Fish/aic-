@@ -77,13 +77,43 @@
   .card>h2 .tag{margin-left:auto;font-size:10.5px;color:var(--mute);font-weight:400}
 
   /* images */
-  .imgs{padding:8px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  .imgs{padding:8px;display:flex;flex-direction:column;gap:8px;overflow:hidden;flex:1;min-height:0}
   .imgwrap{position:relative;border:1px solid var(--line);border-radius:7px;
            background:#05080c;overflow:hidden;flex:1;min-height:0;display:flex}
   .imgwrap img{width:100%;height:100%;object-fit:contain;display:block}
   .imgwrap .lbl{position:absolute;left:8px;top:6px;font-size:11px;color:#cfe3ff;
                 background:rgba(8,12,18,.75);padding:2px 7px;border-radius:5px;
                 border:1px solid rgba(74,158,255,.3)}
+  .recpill{display:none;font:600 11px/1 Consolas,monospace;padding:2px 7px;border-radius:10px;
+           background:#3c1313;border:1px solid #c93838;color:#ffd0d0;animation:recpulse 1.1s infinite}
+  .recpill.on{display:inline-flex;align-items:center;gap:4px}
+  @keyframes recpulse{0%,100%{opacity:1}50%{opacity:.55}}
+  details.recbox{border-top:1px solid var(--line);background:var(--card2);flex-shrink:0}
+  details.recbox>summary{cursor:pointer;padding:6px 10px;font-size:11.5px;font-weight:600;
+                         color:#c6d6ea;list-style:none;display:flex;align-items:center;gap:6px}
+  details.recbox>summary::-webkit-details-marker{display:none}
+  details.recbox>summary::before{content:"▸";color:var(--mute);transition:.15s;display:inline-block}
+  details.recbox[open]>summary::before{transform:rotate(90deg)}
+  details.recbox .rec-cnt{margin-left:auto;font-size:10.5px;color:var(--mute);font-weight:400}
+  .rec-body{padding:6px 10px 8px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:6px}
+  .rec-row{display:flex;gap:6px;align-items:center}
+  .rec-row select{flex:1;min-width:0;background:#080c12;color:var(--fg);border:1px solid var(--line);
+                  border-radius:5px;padding:4px 6px;font-size:11.5px}
+  button.rec-go{flex:1;background:linear-gradient(180deg,#1f6b45,#165234);border-color:#2ea066;
+                color:#e8fff2;font-weight:600;padding:5px 10px;font-size:12px}
+  button.rec-go.recording{background:linear-gradient(180deg,#a82b2b,#7e1e1e);border-color:#e04f4f;
+                          color:#ffe8e8}
+  .rec-meta{font-size:10.5px;color:var(--dim);display:flex;justify-content:space-between;gap:6px}
+  .rec-files{max-height:112px;overflow:auto;display:flex;flex-direction:column;gap:3px}
+  .rec-file{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:5px;
+            background:#0d131c;border:1px solid #1f2a38;font-size:11px}
+  .rec-file .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                font-family:Consolas,monospace;color:#cfe0f5}
+  .rec-file .sz{color:var(--mute);font-family:Consolas,monospace;white-space:nowrap}
+  .rec-file a{color:var(--acc);text-decoration:none;font-size:11px;white-space:nowrap}
+  .rec-file a:hover{text-decoration:underline}
+  .rec-file button.del{padding:1px 5px;font-size:10.5px;background:transparent;color:var(--mute);border-color:transparent}
+  .rec-file button.del:hover{color:var(--bad);border-color:#5a2626;background:#241111}
 
   /* params */
   .ptabs{display:flex;gap:4px;padding:6px 10px;background:#101620;border-bottom:1px solid var(--line);align-items:center}
@@ -227,7 +257,7 @@
   <section class="cols">
     <!-- 图像 -->
     <div class="card">
-      <h2>图像<span class="tag" id="fpsTag">6 fps</span></h2>
+      <h2>图像 <span class="recpill" id="recLivePill">● REC 00:00</span><span class="tag" id="fpsTag">6 fps</span></h2>
       <div class="imgs">
         <div class="imgwrap">
           <span class="lbl">巡线调试图</span>
@@ -238,6 +268,34 @@
           <img id="imgYolo" alt="YOLO 检测图">
         </div>
       </div>
+      <details class="recbox" id="recBox">
+        <summary>🎬 原始画面采集录制（YOLO 数据集）<span class="rec-cnt" id="recCountTag">0 段</span></summary>
+        <div class="rec-body">
+          <div class="rec-row">
+            <select id="recScene" title="采集场景标签（写入文件名）">
+              <option value="cones_noentry">红锥+禁行区 (cones_noentry)</option>
+              <option value="yellow_line">黄线停车线 (yellow_line)</option>
+              <option value="digits">数字 1-8 (digits)</option>
+              <option value="mixed_full">综合全要素 (mixed_full)</option>
+              <option value="hard_neg">负样本/空道干扰 (hard_neg)</option>
+            </select>
+            <select id="recLight" title="光照条件标签（方便按光照整段划分训练/验证集）">
+              <option value="normal">正常光 (normal)</option>
+              <option value="dim_shadow">偏暗/阴影 (dim_shadow)</option>
+              <option value="glare">反光眩光 (glare)</option>
+              <option value="warm_cool">暖/冷偏色 (warm_cool)</option>
+            </select>
+          </div>
+          <div class="rec-row">
+            <button class="rec-go" id="btnRecToggle">● 开始录制 /image_raw</button>
+          </div>
+          <div class="rec-meta">
+            <span id="recStatText">保存至 dataset_capture/raw_videos/</span>
+            <span id="recTipText">15fps · 建议每段 30–45s</span>
+          </div>
+          <div class="rec-files" id="recFiles"></div>
+        </div>
+      </details>
     </div>
 
     <!-- 参数 -->
@@ -461,7 +519,7 @@ let logOffset = 0, logFile = 'follow', lastStarted = null, lastLocked = null;
 let paramsState = null, dirty = false, lastEff = {}, effMismatch = false;
 let runningMap = null, yamlStale = false, restarting = false, pendingChanged = '';
 let lastFollowEpoch = null, mapMismatchPrev = null, mapAutoSynced = false, lastRunId = null;
-let lowVoltWarned = false;
+let lowVoltWarned = false, recActive = false, lastRecFilesSig = '';
 
 function toast(msg, bad){
   const t = $('toast');
@@ -618,7 +676,64 @@ async function pollStatus(){
     $('logTag').textContent = d.run_id || '-';
 
     handleRestart(d.restart);
+    if(d.recording) renderRecording(d.recording);
   }catch(e){}
+}
+
+function fmtMMSS(s){
+  const sec = Math.max(0, Math.floor(s||0));
+  const m = Math.floor(sec/60);
+  return String(m).padStart(2,'0') + ':' + String(sec%60).padStart(2,'0');
+}
+
+function renderRecording(rec){
+  recActive = !!rec.active;
+  const pill = $('recLivePill');
+  const btn = $('btnRecToggle');
+  const stat = $('recStatText');
+  const tip = $('recTipText');
+  const files = rec.files || [];
+  $('recCountTag').textContent = files.length + ' 段';
+
+  if(recActive){
+    pill.textContent = '● REC ' + fmtMMSS(rec.elapsed_sec);
+    pill.classList.add('on');
+    btn.textContent = `⏹ 停止录制（${fmtMMSS(rec.elapsed_sec)} · ${rec.frames||0}帧）`;
+    btn.classList.add('recording');
+    btn.disabled = false;
+    $('recScene').disabled = true;
+    $('recLight').disabled = true;
+    stat.textContent = rec.filename || '录制中…';
+    tip.textContent = `${(rec.size_mb||0).toFixed(2)} MB` + (rec.dropped ? ` · 丢${rec.dropped}帧` : '');
+  } else {
+    pill.classList.remove('on');
+    btn.textContent = '● 开始录制 /image_raw';
+    btn.classList.remove('recording');
+    btn.disabled = (lastLocked === true);
+    $('recScene').disabled = (lastLocked === true);
+    $('recLight').disabled = (lastLocked === true);
+    stat.textContent = `目录: ${rec.dir_rel || 'dataset_capture/raw_videos'}/`;
+    tip.textContent = '15fps · 建议每段 30–45s (<10MB)';
+  }
+
+  const sig = files.map(f=>f.name+':'+f.size_mb).join('|');
+  if(sig !== lastRecFilesSig){
+    lastRecFilesSig = sig;
+    const box = $('recFiles');
+    if(!files.length){
+      box.innerHTML = '<div style="color:var(--mute);font-size:11px;text-align:center;padding:4px">还没有录制视频；手推小车沿赛道录 30-45s 即可</div>';
+    } else {
+      box.innerHTML = files.map(f=>{
+        const enc = encodeURIComponent(f.name);
+        return `<div class="rec-file">
+          <span class="fn" title="${f.name} (${f.mtime_str||''})">${f.name}</span>
+          <span class="sz">${Number(f.size_mb).toFixed(1)}M</span>
+          <a href="/api/record/download/${enc}" download="${f.name}">下载</a>
+          <button class="del" data-del="${f.name}" title="删除该片段">✕</button>
+        </div>`;
+      }).join('');
+    }
+  }
 }
 
 function renderFeed(evs){
@@ -1034,6 +1149,46 @@ $('estop').addEventListener('click',async()=>{
   const d = await (await fetch('/api/estop',{method:'POST'})).json();
   toast(d.ok?'已停车，参数已解锁':('失败：'+d.error), !d.ok);
   if(d.ok){ setLocked(false, true); }
+});
+$('btnRecToggle').addEventListener('click',async()=>{
+  const btn = $('btnRecToggle');
+  btn.disabled = true;
+  try{
+    if(recActive){
+      const d = await (await fetch('/api/record/stop',{method:'POST'})).json();
+      toast(d.ok ? d.msg : ('停止失败：'+(d.error||d.msg)), !d.ok);
+      if(d.recording) renderRecording(d.recording);
+    } else {
+      const payload = {
+        scene: $('recScene').value,
+        lighting: $('recLight').value,
+        fps: 15,
+      };
+      const d = await (await fetch('/api/record/start',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload),
+      })).json();
+      toast(d.ok ? d.msg : ('无法录制：'+(d.error||d.msg)), !d.ok);
+      if(d.recording) renderRecording(d.recording);
+    }
+  }catch(e){
+    toast('录制请求异常：'+e, true);
+  }finally{
+    if(!recActive) btn.disabled = (lastLocked === true);
+    else btn.disabled = false;
+  }
+});
+$('recFiles').addEventListener('click',async(e)=>{
+  const delBtn = e.target.closest('button[data-del]');
+  if(!delBtn) return;
+  const fname = delBtn.dataset.del;
+  if(!fname || !confirm(`确定删除已录制视频 ${fname} 吗？`)) return;
+  const d = await (await fetch('/api/record/delete',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({filename: fname}),
+  })).json();
+  toast(d.ok ? d.msg : ('删除失败：'+(d.error||d.msg)), !d.ok);
+  if(d.recording) renderRecording(d.recording);
 });
 $('imgDebug').src='/api/stream/debug';
 $('imgYolo').src='/api/stream/yolo';
