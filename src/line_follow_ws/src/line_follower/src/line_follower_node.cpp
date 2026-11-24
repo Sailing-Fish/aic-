@@ -968,6 +968,32 @@ void LineFollowerNode::load_segment_parameters()
     yellow_brake_speed_, yellow_brake_period_s_, yellow_brake_pulse_s_,
     yellow_brake_release_speed_, yellow_brake_max_time_s_);
 
+  const auto & mcfg = motion_controller_.config();
+  const auto & ccfg = corridor_planner_.config();
+  const auto & fcfg = finish_guard_.config();
+  RCLCPP_INFO(
+    this->get_logger(),
+    "[DEC] param effective #finals corridor_kp_y=%.3f corridor_heading_gain=%.3f "
+    "speed_gain_damping=%.3f max_yaw_rate=%.3f "
+    "yellow_bumper_margin_m=%.3f yellow_pre_brake_dist_m=%.3f yellow_creep_speed_mps=%.3f "
+    "yellow_stop_min_time=%.3f yellow_brake_decel_mps2=%.3f yellow_control_latency_s=%.3f "
+    "obstacle_speed_mps=%.3f no_entry_speed_mps=%.3f digit_approach_speed_mps=%.3f "
+    "border_margin_m=%.3f cone_margin_m=%.3f no_entry_margin_m=%.3f "
+    "digit_min_conf=%.3f max_digit_lateral_shift_m=%.3f "
+    "finish_min_dist_m=%.3f finish_force_dist_m=%.3f odom_scale_factor=%.3f "
+    "use_homography=%d yellow_require_odom_still=%d lost_line_safe_mode=%d",
+    mcfg.corridor_kp_y, mcfg.corridor_heading_gain,
+    mcfg.speed_gain_damping, mcfg.max_yaw_rate,
+    fcfg.bumper_margin_m, fcfg.pre_brake_dist_m, fcfg.creep_speed_mps,
+    yellow_stop_min_time_, fcfg.brake_decel_mps2, fcfg.control_latency_s,
+    ccfg.obstacle_speed_mps, ccfg.no_entry_speed_mps, ccfg.digit_approach_speed_mps,
+    ccfg.border_margin_m, ccfg.cone_margin_m, ccfg.no_entry_margin_m,
+    ccfg.digit_min_conf, ccfg.max_digit_lateral_shift_m,
+    fcfg.finish_min_dist_m, fcfg.finish_force_dist_m, fcfg.odom_scale_factor,
+    this->get_parameter("use_homography").as_bool() ? 1 : 0,
+    this->get_parameter("yellow_require_odom_still").as_bool() ? 1 : 0,
+    mcfg.lost_line_safe_mode ? 1 : 0);
+
   for (int i = 1; i <= planner_.count(); ++i) {
     const SegmentParams & p = seg_params_[i - 1];
     std::string line = "[DEC] param effective #" + std::to_string(i);

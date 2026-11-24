@@ -431,11 +431,22 @@ void test_motion_controller_corridor_and_safe_lost()
   CurveAssistState curve{};
   MotionState motion{};
 
-  // +y target (left) -> +yaw_rate (CCW / left), speed capped by speed_cap_mps
+  // +y target (left) -> +yaw_rate (CCW / left), speed capped cleanly by speed_cap_mps
+  // without double-damping or hidden sharp_curve_speed interference
+  cfg.speed_gain_damping = 0.40;
+  cfg.enable_continuous_curve_assist = true;
+  cfg.sharp_curve_threshold = 0.20;
+  cfg.sharp_curve_speed = 0.15;
+  ctrl.set_config(cfg);
   const MotionCommand cmd_l = ctrl.compute_corridor_command(
-    +0.08, 0.0, 0.0, 0.0, 1.0, 0.25, curve, motion);
+    +0.08, 0.0, 0.0, 0.30, 1.0, 0.25, curve, motion);
   CHECK(cmd_l.yaw_rate > 0.25);
-  CHECK(cmd_l.linear_speed <= 0.25 + 1e-6 && cmd_l.linear_speed > 0.0);
+  CHECK(std::abs(cmd_l.linear_speed - 0.25) < 1e-6);
+
+  // Without event cap, curve speed scales purely with target_speed * (1 - damping * slow_factor)
+  const MotionCommand cmd_curve = ctrl.compute_corridor_command(
+    0.0, 0.0, 0.0, 0.50, 1.0, 1.0, curve, motion);
+  CHECK(cmd_curve.linear_speed > 0.25 && cmd_curve.linear_speed < cfg.target_speed);
 
   // Safe lost-line mode clamps blind speed to <= 0.12 and stops at > 0.35s
   MotionController::record_motion(false, cmd_l.linear_speed, cmd_l.yaw_rate, motion);

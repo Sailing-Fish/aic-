@@ -173,7 +173,7 @@ class PanelNode(Node):
                 SH.last_yellow_ts = time.time()
 
     def _on_segment(self, msg):
-        """节点上报："seg=2 n=4 count=1 dist=1.23"。纯文本，不需要 json 解析。"""
+        """节点上报：legacy "seg=2 n=4 count=1 dist=1.23" 或 finals "mode=finals s=3.20 count=1 branch=-1"。"""
         info = {}
         for tok in msg.data.split():
             if '=' not in tok:
@@ -183,7 +183,7 @@ class PanelNode(Node):
                 info[k] = float(v)
             except ValueError:
                 info[k] = v
-        if 'seg' in info:
+        if 'seg' in info or 'mode' in info:
             with SH.lock:
                 SH.segment = info
 
@@ -393,9 +393,12 @@ def load_params(map_name):
     with open(path, 'r', encoding='utf-8') as f:
         data = yaml.safe_load(f) or {}
 
+    lf_params = (data.get('line_follower_node') or {}).get('ros__parameters') or {}
+    planner_mode = str(lf_params.get('planner_mode', 'legacy_segment'))
+
     groups = []
     for g in params_schema.SCHEMA:
-        # 分段分组只对对应地图显示（岔路 2 段、环岛 4 段）
+        # 分段分组只对对应地图显示（岔路 3 段、环岛 4 段）
         if g.get('maps') and map_name not in g['maps']:
             continue
         sec = g['section']
@@ -417,11 +420,25 @@ def load_params(map_name):
                 item_obj['step'] = step
             items.append(item_obj)
         if items:
-            grp = {'section': sec, 'group': g['group'], 'items': items}
+            grp = {
+                'tier': g.get('tier', 'calibration'),
+                'section': sec,
+                'group': g['group'],
+                'items': items,
+            }
+            if g.get('desc'):
+                grp['desc'] = g['desc']
+            if 'default_open' in g:
+                grp['default_open'] = bool(g['default_open'])
             if g.get('segment'):
                 grp['segment'] = g['segment']
             groups.append(grp)
-    return {'map': map_name, 'groups': groups}
+    return {
+        'map': map_name,
+        'planner_mode': planner_mode,
+        'tiers': params_schema.TIERS,
+        'groups': groups,
+    }
 
 
 def save_params(map_name, values):

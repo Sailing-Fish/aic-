@@ -86,7 +86,25 @@
                 border:1px solid rgba(74,158,255,.3)}
 
   /* params */
+  .ptabs{display:flex;gap:4px;padding:6px 10px;background:#101620;border-bottom:1px solid var(--line);align-items:center}
+  .ptab{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:5px 8px;
+        border-radius:6px;background:transparent;border:1px solid transparent;color:var(--dim);
+        font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+  .ptab:hover{background:#18212e;color:var(--fg)}
+  .ptab.active{background:#18283c;border-color:#2f65a3;color:#eaf4ff}
+  .ptab.legacy.active{background:#231f16;border-color:#7a622a;color:#ffe5a8}
+  .ptab .badge{font-size:9.5px;padding:0 4px;border-radius:4px;font-weight:600;
+               background:#222c38;color:var(--mute)}
+  .ptab .dot-dirty{width:6px;height:6px;border-radius:50%;background:var(--warn);display:none}
+  .ptab.has-dirty .dot-dirty{display:inline-block}
+  .ptier-banner{padding:6px 10px;font-size:11.5px;color:#a9bdd6;background:#0e1622;
+                border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ptier-banner.warn{background:#211b0e;color:#f3d286;border-bottom-color:#4d3d18}
+  .ptier-banner select{background:#080c12;color:var(--fg);border:1px solid var(--line);
+                       border-radius:5px;padding:2px 7px;font-size:11.5px;margin-left:auto}
   .params{overflow:auto;padding:6px 10px 10px;flex:1;min-height:0}
+  .tier-pane{display:none}
+  .tier-pane.active{display:block}
   details.grp{border-bottom:1px dashed var(--line);padding:5px 0}
   details.grp:last-child{border-bottom:0}
   details.grp>summary{cursor:pointer;color:var(--acc);font-weight:600;font-size:12px;
@@ -94,6 +112,8 @@
   details.grp>summary::-webkit-details-marker{display:none}
   details.grp>summary::before{content:"▸";color:var(--mute);transition:.15s;display:inline-block}
   details.grp[open]>summary::before{transform:rotate(90deg)}
+  .grp-desc{margin:0 0 6px 14px;padding:4px 8px;border-left:2px solid #2b4a6e;
+            background:#0e151f;border-radius:0 4px 4px 0;font-size:11px;color:#93aac4}
   .row{display:grid;grid-template-columns:1fr 122px;gap:8px;align-items:center;padding:2px 0 2px 14px}
   .row .lbl{font-size:12px}
   .row .hint{display:block;color:var(--mute);font-size:10.5px;line-height:1.35}
@@ -223,15 +243,27 @@
     <!-- 参数 -->
     <div class="card">
       <h2>参数<span class="tag" id="paramTag">-</span></h2>
+      <div class="ptabs" id="paramTabs">
+        <button class="ptab active" data-tier="finals_core">★ 决赛核心<span class="badge" id="badge-finals_core" style="display:none">不生效</span><span class="dot-dirty"></span></button>
+        <button class="ptab" data-tier="calibration">⚙ 开关与标定<span class="dot-dirty"></span></button>
+        <button class="ptab legacy" data-tier="legacy">📦 复赛归档<span class="badge" id="badge-legacy" style="display:none">不生效</span><span class="dot-dirty"></span></button>
+      </div>
+      <div class="ptier-banner" id="tierBanner">
+        <span id="tierBannerText">日常只调这 4 组正交物理量</span>
+        <select id="segSel" style="display:none" title="复赛分段：切换只改显隐，跨段改动会一起保存"></select>
+      </div>
       <div class="params" id="params"></div>
       <div class="footbar">
         <select id="mapSel">
-          <option value="fork">岔路 fork</option>
-          <option value="roundabout">环岛 roundabout</option>
-          <option value="finals_fork">决赛岔路 finals_fork</option>
-          <option value="finals_roundabout">决赛环岛 finals_roundabout</option>
+          <optgroup label="决赛预设（推荐）">
+            <option value="finals_fork">决赛岔路 finals_fork</option>
+            <option value="finals_roundabout">决赛环岛 finals_roundabout</option>
+          </optgroup>
+          <optgroup label="复赛基线（一键回退）">
+            <option value="fork">复赛岔路 fork</option>
+            <option value="roundabout">复赛环岛 roundabout</option>
+          </optgroup>
         </select>
-        <select id="segSel" title="选择要编辑的段；切换只改显隐，跨段的改动会一起保存"></select>
         <button class="primary" id="btnSaveRestart">保存并重启巡线</button>
         <button id="btnSave">仅保存</button>
         <span class="memo" id="memo">未修改</span>
@@ -310,7 +342,17 @@
     <p><b>综合得分 = 时间 + 罚时 − 5 × Bonus</b>，分数越低排名越高。
        所以：<b>一次违规 ≈ 3~6 个 Bonus 的收益</b>，稳比快重要。</p>
 
-    <h4>四、面板上的数字</h4>
+    <h4>四、决赛正交调参（为什么改了不会互相打架）</h4>
+    <p>参数区拆分为三个独立标签页，避免决赛高频项与复赛分段项混杂：</p>
+    <table>
+      <tr><th>标签页</th><th>定位</th><th>说明</th></tr>
+      <tr><td><b>★ 决赛核心</b></td><td>日常只调这 4 组</td><td>速度（基准×弯道比例）、黄线停点（只看车头留白）、避障余量/限速、终点里程，全部为物理正交量</td></tr>
+      <tr><td><b>⚙ 开关与标定</b></td><td>标定一次即冻结</td><td>模式总开关、里程比例/刹车减速度标定、换场地抗光照/HSV 应急覆盖、看门狗</td></tr>
+      <tr><td><b>📦 复赛归档</b></td><td>完全隔离</td><td>复赛分段 <code>seg1..seg4</code>、面积法黄线、旧版 HSV 白线、柔性红障、独立数字转向；决赛模式下不生效</td></tr>
+    </table>
+    <p><b>防纠缠约定：</b>决赛走廊模式下，调快「巡航速度」不会让黄线停过头（系统会先降到「接近黄线爬行速」再按物理公式刹停）；调停车前后位置只需动「车头留白距离」，不再和 ROI 纠缠。</p>
+
+    <h4>五、面板上的数字</h4>
     <table>
       <tr><td>黄线进度 2/4</td><td>已通过几根停车线，第 4 根之后就是终点</td></tr>
       <tr><td>计时器</td><td>发车自动开始，永久停车自动停；也可手动「重置本轮」</td></tr>
@@ -477,10 +519,22 @@ async function pollStatus(){
       vb.title = '未收到 /PowerVoltage 数据';
     }
 
-    // 卡1 黄线
+    // 卡1 黄线 / 里程
+    lastEff = d.effective || {};
+    yamlStale = !!(d.yaml && d.yaml.stale);
     const yc = d.yellow.count, yp = d.yellow.permanent;
-    $('stYellow').textContent = `${yc} / ${yp}`;
-    $('stYellowSub').textContent = yc>=yp ? '已到终点线' : `还差 ${yp-yc} 根到终点`;
+    const si = d.segment || {};
+    const isFinalsLive = (lastEff.planner_mode === 'finals_corridor') || (si.mode === 'finals') ||
+                         (d.params_file && d.params_file.indexOf('finals_') === 0);
+    if(isFinalsLive){
+      $('stYellow').textContent = `已停 ${yc} 次`;
+      const sTxt = (typeof si.s === 'number') ? `里程 ${si.s.toFixed(2)} m` : '里程 --';
+      const br = (typeof si.branch === 'number') ? (si.branch < 0 ? ' · 支路:左' : (si.branch > 0 ? ' · 支路:右' : '')) : '';
+      $('stYellowSub').textContent = sTxt + br;
+    } else {
+      $('stYellow').textContent = `${yc} / ${yp}`;
+      $('stYellowSub').textContent = yc>=yp ? '已到终点线' : `还差 ${yp-yc} 根到终点`;
+    }
 
     // 卡2 状态
     $('stState').textContent = d.started ? (STATE_CN[d.track_state]||d.track_state) : '未发车';
@@ -494,23 +548,24 @@ async function pollStatus(){
       $('stDigitSub').textContent = 't=' + Number(dg.t).toFixed(1) + 's';
     } else { $('stDigit').textContent='-'; $('stDigitSub').textContent='最近一次转向'; }
 
-    // 卡4 生效参数：先看“YAML 比进程新”（覆盖所有参数，比逐项对比更可靠）
-    lastEff = d.effective || {};
-    yamlStale = !!(d.yaml && d.yaml.stale);
-
-    // 实时段号：只在变化时重排选项，避免每 500 ms 打断正在进行的编辑
-    const si = d.segment || {};
+    // 卡4 生效参数：实时段号只在变化时重排选项，避免每 500 ms 打断正在进行的编辑
     const ls = (typeof si.seg === 'number') ? Math.round(si.seg) : null;
     if(ls && ls !== liveSeg){ liveSeg = ls; syncSegOptions(); }
 
     markPending();
     const curSeg = ls || liveSeg || 1;
-    const kpEff = lastEff['seg' + curSeg + '_kp'];
-    $('stParam').textContent = (kpEff!==undefined) ? ('段' + curSeg + ' kp ' + kpEff) : 'kp -';
+    const liveFinals = (lastEff.planner_mode === 'finals_corridor') || (si.mode === 'finals');
+    const kpEff = liveFinals ? lastEff['corridor_kp_y'] : lastEff['seg' + curSeg + '_kp'];
+    const spdEff = liveFinals ? lastEff['target_speed'] : lastEff['seg' + curSeg + '_target_speed'];
+    if(liveFinals && (spdEff !== undefined || kpEff !== undefined)){
+      $('stParam').textContent = `v=${spdEff !== undefined ? Number(spdEff).toFixed(2) : '-'} kp=${kpEff !== undefined ? Number(kpEff).toFixed(1) : '-'}`;
+    } else {
+      $('stParam').textContent = (kpEff!==undefined) ? ('段' + curSeg + ' kp ' + kpEff) : 'kp -';
+    }
     if(yamlStale){
       $('stParamSub').textContent = 'YAML 已改，需重启巡线';
       $('stParam').style.color = 'var(--warn)';
-    } else if(kpEff!==undefined){
+    } else if(kpEff!==undefined || spdEff!==undefined){
       $('stParamSub').textContent = effMismatch ? '与生效值不一致，需重启' : '与 YAML 一致';
       $('stParam').style.color = effMismatch ? 'var(--warn)' : '';
     } else {
@@ -552,8 +607,11 @@ async function pollStatus(){
     const lk = !!d.locked;
     if(lk !== lastLocked){ setLocked(lk); }
 
+    const segTag = liveFinals
+      ? (' · 决赛走廊' + (typeof si.s === 'number' ? (' s=' + si.s.toFixed(2) + 'm') : ''))
+      : (' · 段' + curSeg + (typeof si.dist === 'number' ? (' d=' + si.dist.toFixed(2) + 'm') : ''));
     $('paramTag').textContent = (runningMap ? ('当前 ' + runningMap + '.yaml') : '-')
-      + ' · 段' + curSeg + (typeof si.dist === 'number' ? (' d=' + si.dist.toFixed(2) + 'm') : '')
+      + segTag
       + (fe ? (' · 启动 ' + isoHms((d.follow||{}).started_iso)) : '')
       + (yamlStale ? ' · YAML 未生效' : '');
     $('paramTag').style.color = yamlStale ? 'var(--warn)' : '';
@@ -620,6 +678,77 @@ function isoHms(s){ const m=/(\d\d:\d\d:\d\d)/.exec(s||''); return m ? m[1] : '-
 // 段选择器只影响"显示哪一段"，不改变正在运行的行为，也不会自动跟着实时段号跳
 // —— 边跑边跳会打断正在编辑的输入框。
 let liveSeg = 1;
+let activeTier = 'finals_core';
+const TIER_IDS = ['finals_core', 'calibration', 'legacy'];
+
+function currentPlannerMode(){
+  const sel = document.querySelector('#params .row[data-key="planner_mode"] select');
+  if(sel) return sel.value;
+  return (paramsState && paramsState.planner_mode) || 'finals_corridor';
+}
+
+function tierMeta(id){
+  const list = (paramsState && paramsState.tiers) || [];
+  return list.find(t=>t.id===id) || {id, label:id, subtitle:''};
+}
+
+function syncTierBadges(){
+  const mode = currentPlannerMode();
+  const isFinals = (mode === 'finals_corridor');
+  const bFin = $('badge-finals_core');
+  const bLeg = $('badge-legacy');
+  if(bFin) bFin.style.display = isFinals ? 'none' : '';
+  if(bLeg) bLeg.style.display = isFinals ? '' : 'none';
+
+  const banner = $('tierBanner');
+  const txt = $('tierBannerText');
+  const seg = $('segSel');
+  if(activeTier === 'legacy'){
+    seg.style.display = '';
+    if(isFinals){
+      banner.className = 'ptier-banner warn';
+      txt.textContent = '⚠ 当前配置为决赛走廊模式 (finals_corridor)，下方复赛分段/旧版参数不生效；仅作归档或一键回退';
+    } else {
+      banner.className = 'ptier-banner';
+      txt.textContent = tierMeta('legacy').subtitle || '复赛分段基线参数（当前模式生效）';
+    }
+  } else if(activeTier === 'finals_core'){
+    seg.style.display = 'none';
+    if(!isFinals){
+      banner.className = 'ptier-banner warn';
+      txt.textContent = '⚠ 当前配置为复赛分段模式 (legacy_segment)，决赛核心走廊参数暂不生效；请切「📦 复赛归档」或换决赛地图';
+    } else {
+      banner.className = 'ptier-banner';
+      txt.textContent = tierMeta('finals_core').subtitle || '日常只调这 4 组正交物理量';
+    }
+  } else {
+    seg.style.display = 'none';
+    banner.className = 'ptier-banner';
+    txt.textContent = tierMeta('calibration').subtitle || '模式切换、一次标定即冻结的硬件参数与应急覆盖';
+  }
+}
+
+function setTier(tierId){
+  if(TIER_IDS.indexOf(tierId) < 0) tierId = 'finals_core';
+  activeTier = tierId;
+  document.querySelectorAll('#paramTabs .ptab').forEach(btn=>{
+    btn.classList.toggle('active', btn.dataset.tier === activeTier);
+  });
+  document.querySelectorAll('#params .tier-pane').forEach(pane=>{
+    pane.classList.toggle('active', pane.dataset.tier === activeTier);
+  });
+  syncTierBadges();
+}
+
+function updateTabDirtyDots(){
+  TIER_IDS.forEach(tid=>{
+    const pane = document.querySelector(`#params .tier-pane[data-tier="${tid}"]`);
+    const btn = document.querySelector(`#paramTabs .ptab[data-tier="${tid}"]`);
+    if(!pane || !btn) return;
+    const has = !!pane.querySelector('.row.dirty, .row.pending');
+    btn.classList.toggle('has-dirty', has);
+  });
+}
 
 function segList(){
   if(!paramsState) return [1];
@@ -650,14 +779,28 @@ async function loadParams(map){
   paramsState = d;
   const box = $('params');
   box.innerHTML = '';
-  let plainIdx = 0;
-  d.groups.forEach((g,gi)=>{
+  const panes = {};
+  TIER_IDS.forEach(tid=>{
+    const pane = document.createElement('div');
+    pane.className = 'tier-pane';
+    pane.dataset.tier = tid;
+    box.appendChild(pane);
+    panes[tid] = pane;
+  });
+
+  d.groups.forEach(g=>{
+    const tid = TIER_IDS.indexOf(g.tier) >= 0 ? g.tier : 'calibration';
     const det = document.createElement('details');
     det.className='grp';
     if(g.segment) det.dataset.seg = String(g.segment);
-    // 段分组默认折叠（只展开选中的那段），非段分组前面两个默认展开
-    det.open = g.segment ? false : (plainIdx++ < 2);
+    det.open = g.segment ? false : !!g.default_open;
     const sum = document.createElement('summary'); sum.textContent = g.group; det.appendChild(sum);
+    if(g.desc){
+      const desc = document.createElement('div');
+      desc.className = 'grp-desc';
+      desc.textContent = g.desc;
+      det.appendChild(desc);
+    }
     g.items.forEach(it=>{
       const row = document.createElement('div');
       row.className='row'; row.dataset.section=g.section; row.dataset.key=it.key;
@@ -684,11 +827,13 @@ async function loadParams(map){
         row.classList.toggle('dirty', cur !== base);
         dirty = !!document.querySelector('#params .row.dirty');
         $('memo').textContent = dirty ? '有未保存修改' : '未修改';
+        if(it.key === 'planner_mode') syncTierBadges();
+        updateTabDirtyDots();
       };
       inp.addEventListener(it.type==='enum' ? 'change' : 'input', onChange);
       row.appendChild(lab); row.appendChild(inp); det.appendChild(row);
     });
-    box.appendChild(det);
+    panes[tid].appendChild(det);
   });
   syncSegOptions();
   applySegFilter();
@@ -696,7 +841,10 @@ async function loadParams(map){
   document.querySelectorAll('#params details.grp').forEach(det=>{
     if(det.dataset.seg) det.open = (det.dataset.seg === $('segSel').value);
   });
+  // 根据加载地图的 planner_mode 自动切到最相关的标签页（决赛地图→★决赛核心；复赛地图→📦复赛归档）
+  setTier((d.planner_mode === 'finals_corridor') ? 'finals_core' : 'legacy');
   markPending();
+  updateTabDirtyDots();
   $('memo').textContent = '已加载';
   setLocked(lastLocked===true);
 }
@@ -720,12 +868,22 @@ function markPending(){
       }
       return;
     }
+    if(row.dataset.type === 'bool'){
+      const origB = (row.dataset.orig === 'true' || row.dataset.orig === '1');
+      const effB = (Number(lastEff[effKey]) !== 0 && String(lastEff[effKey]) !== 'false');
+      if(origB !== effB){
+        row.classList.add('pending');
+        effMismatch = true;
+      }
+      return;
+    }
     const cur = parseFloat(row.dataset.orig);
     if(Math.abs(cur - lastEff[effKey]) > 1e-6){
       row.classList.add('pending');
       effMismatch = true;
     }
   });
+  updateTabDirtyDots();
 }
 
 async function saveParams(thenRestart){
@@ -751,6 +909,7 @@ async function saveParams(thenRestart){
   // 立刻把表单基准值换成刚保存的值，这样“待重启”标记马上按新值算，不用等重载
   document.querySelectorAll('#params .row').forEach(row=>{
     const inp=row.querySelector('input, select'); if(!inp) return;
+    row.classList.remove('dirty');
     row.dataset.orig = row.dataset.type==='bool' ? String(inp.checked)
                      : (row.dataset.type==='enum' ? String(inp.value) : String(parseFloat(inp.value)));
   });
@@ -850,6 +1009,9 @@ $('mapSel').addEventListener('change',()=>{
   refreshMapWarn(); updateButtons();
 });
 $('segSel').addEventListener('change',()=>{ applySegFilter(); });
+document.querySelectorAll('#paramTabs .ptab').forEach(btn=>{
+  btn.addEventListener('click',()=>setTier(btn.dataset.tier));
+});
 $('logFile').addEventListener('change',()=>{ logFile=$('logFile').value; logOffset=0; $('log').innerHTML=''; });
 $('onlyCurrent').addEventListener('change',()=>{ logOffset=0; $('log').innerHTML=''; });
 $('btnReloadAll').addEventListener('click',()=>{
@@ -876,7 +1038,7 @@ $('estop').addEventListener('click',async()=>{
 $('imgDebug').src='/api/stream/debug';
 $('imgYolo').src='/api/stream/yolo';
 
-loadParams('fork');
+loadParams('finals_fork');
 pollStatus(); pollLogs();
 setInterval(pollStatus,500);
 setInterval(pollLogs,700);

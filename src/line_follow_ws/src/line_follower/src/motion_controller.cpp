@@ -148,6 +148,11 @@ MotionCommand MotionController::compute_corridor_command(
     -config_.max_yaw_rate,
     config_.max_yaw_rate);
 
+  // Orthogonal speed law for finals_corridor:
+  //   1. Cruise + proportional curve damping: target_speed * (1 - speed_gain_damping * slow_factor)
+  //   2. Independent event ceilings (obstacle / no_entry / digit / yellow creep): min(..., speed_cap_mps)
+  // No hidden sharp_curve_speed/reverse_curve_speed absolute caps here so target_speed and
+  // speed_gain_damping never fight each other or double-scale event speed caps.
   const double norm_lat = clamp_value(std::abs(lateral_err_m) / 0.215, 0.0, 1.0);
   const double curve_proxy = std::max(
     std::abs(curve_state.far_error - curve_state.near_error),
@@ -157,23 +162,9 @@ MotionCommand MotionController::compute_corridor_command(
     config_.deviation_weight * norm_lat + config_.curve_weight * curve_proxy);
   const double speed_scale = 1.0 - config_.speed_gain_damping * slow_factor;
 
-  const double base_target = std::min(config_.target_speed, std::max(0.0, speed_cap_mps));
   double speed_cmd =
-    clamp_value(base_target * speed_scale, config_.min_speed, config_.max_speed);
+    clamp_value(config_.target_speed * speed_scale, config_.min_speed, config_.max_speed);
   speed_cmd = std::min(speed_cmd, std::max(0.0, speed_cap_mps));
-
-  if (config_.enable_continuous_curve_assist) {
-    const double reverse_curve_speed = std::max(0.0, config_.reverse_curve_speed);
-    const double sharp_curve_threshold = std::max(0.0, config_.sharp_curve_threshold);
-    const double sharp_curve_speed = std::max(0.0, config_.sharp_curve_speed);
-    const double effective_curve_level = std::max(curve_state.curve_level, curvature_proxy);
-
-    if (curve_state.reverse_curve_active) {
-      speed_cmd = std::min(speed_cmd, reverse_curve_speed);
-    } else if (effective_curve_level >= sharp_curve_threshold) {
-      speed_cmd = std::min(speed_cmd, sharp_curve_speed);
-    }
-  }
 
   const double low_conf_thresh = clamp_value(config_.low_confidence_threshold, 0.0, 1.0);
   if (low_conf_thresh > 0.0 && confidence < low_conf_thresh) {

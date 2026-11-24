@@ -292,6 +292,39 @@ class TestPanelAndTelemetry(unittest.TestCase):
         self.assertIn("finals_fork", html)
         self.assertIn("finals_roundabout", html)
         self.assertIn("it.type==='enum'", html)
+        self.assertIn('data-tier="finals_core"', html)
+        self.assertIn('data-tier="calibration"', html)
+        self.assertIn('data-tier="legacy"', html)
+
+    def test_panel_tiers_strictly_isolate_legacy_from_finals_core(self):
+        payload = panel_server.load_params("finals_fork")
+        self.assertEqual(payload["planner_mode"], "finals_corridor")
+        self.assertEqual([t["id"] for t in payload["tiers"]], ["finals_core", "calibration", "legacy"])
+
+        by_tier = {"finals_core": set(), "calibration": set(), "legacy": set()}
+        for g in payload["groups"]:
+            self.assertIn(g["tier"], by_tier)
+            for it in g["items"]:
+                by_tier[g["tier"]].add(it["key"])
+
+        # Finals core should stay lean and orthogonal (no segN_*, no legacy yellow/red/white hacks)
+        self.assertLessEqual(len(by_tier["finals_core"]), 22)
+        for core_key in ("target_speed", "speed_gain_damping", "corridor_kp_y",
+                         "yellow_bumper_margin_m", "yellow_creep_speed_mps",
+                         "obstacle_speed_mps", "no_entry_speed_mps",
+                         "cone_margin_m", "no_entry_margin_m"):
+            self.assertIn(core_key, by_tier["finals_core"])
+
+        legacy_only = {
+            "seg1_target_speed", "seg1_kp", "seg2_start_count",
+            "yellow_area_ratio_threshold", "yellow_permanent_count",
+            "white_s_max", "enable_soft_red_avoidance", "red_soft_yaw",
+            "turn_duration",
+        }
+        for k in legacy_only:
+            self.assertIn(k, by_tier["legacy"], f"Legacy key '{k}' missing from legacy tier")
+            self.assertNotIn(k, by_tier["finals_core"], f"Legacy key '{k}' leaked into finals_core!")
+            self.assertNotIn(k, by_tier["calibration"], f"Legacy key '{k}' leaked into calibration!")
 
 
 class TestSimulatorFixesAndPerturbations(unittest.TestCase):
