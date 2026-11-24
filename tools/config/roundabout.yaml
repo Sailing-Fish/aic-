@@ -177,6 +177,7 @@ line_follower_node:
     yellow_detect_mode: legacy_area
     enable_semantic_hole_fill: false
     enable_obstacle_memory: false
+    enable_cv_red_fallback: false
     allow_dual_digit_cover: false
     blue_margin: 22
     lab_blue_b_max: 116

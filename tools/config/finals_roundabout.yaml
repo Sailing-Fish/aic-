@@ -23,6 +23,7 @@ line_follower_node:
     yellow_detect_mode: geometric_cv
     enable_semantic_hole_fill: true
     enable_obstacle_memory: true
+    enable_cv_red_fallback: true
     allow_dual_digit_cover: false
 
     # 基础控制与环岛宽度自适应融合

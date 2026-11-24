@@ -258,6 +258,8 @@ SCHEMA = [
              "把检测到的彩色/涂鸦数字区域回填白色，防止赛道二值图断裂"),
             ("enable_obstacle_memory", "启用障碍物世界坐标记忆", "bool", 0, 1, 1,
              "在 /odom_combined 保留车侧后轮区间障碍，防后轮切内蹭 +30s 禁行区"),
+            ("enable_cv_red_fallback", "启用白道 CV 红障兜底 (YOLO||CV)", "bool", 0, 1, 1,
+             "开：YOLO 或白道内 CV 任一检到红障即避让（YOLO优先、CV补漏，并输出 [DEC] red_src 来源日志）"),
             ("allow_dual_digit_cover", "允许直道双数字同压", "bool", 0, 1, 1,
              "关=直道 10cm 双数字时偏向大数字避开小数字；开=允许同时覆盖"),
             ("use_homography", "启用 4 点 IPM 单应矩阵", "bool", 0, 1, 1,

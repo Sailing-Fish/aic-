@@ -169,6 +169,7 @@
   .ev .body i{display:block;font-style:normal;font-size:11px;color:var(--dim);margin-top:1px}
   .ev.yellow{border-left-color:var(--warn)} .ev.yellow b{color:#ffe0a3}
   .ev.red{border-left-color:var(--bad)} .ev.red b{color:#ffb4b4}
+  .ev.red_src{border-left-color:#ff7b7b} .ev.red_src b{color:#ffc2c2}
   .ev.digit{border-left-color:var(--purple)} .ev.digit b{color:#d7c4ff}
   .ev.state{border-left-color:var(--acc)} .ev.state b{color:#b8dbff}
   .ev.safety{border-left-color:#ff8a3d} .ev.safety b{color:#ffc39f}
@@ -497,6 +498,8 @@ const EV_CN = {
   'yellow|final_stop':   ['终点停车',   '第 N 根黄线，完赛'],
   'state|change':        ['状态切换',   ''],
   'red|avoid_on':        ['避让红色目标','路锥或红线，开始绕行'],
+  'red_src|detect':      ['红障来源',   'YOLO 与白道 CV 归因'],
+  'red_src|clear':       ['红障离开',   '视野红障已清空'],
   'mux|change':          ['速度仲裁',   '切换到新的控制源'],
   'digit|turn':          ['识别数字',   '按数值决定转向'],
   'safety|deadman_on':   ['兜底刹车',   '上游静默，自动发零速'],
@@ -748,6 +751,18 @@ function renderFeed(evs){
     if(e.area==='state' && kv){ const m=/from=(\S+) to=(\S+)/.exec(kv); if(m) desc = (STATE_CN[m[1]]||m[1])+' → '+(STATE_CN[m[2]]||m[2]); }
     if(e.area==='yellow' && kv){ desc = kv.replace(/count=/,'第').replace('/4',' 根').replace(/dur=/,'停 '); }
     if(e.area==='red' && kv){ desc = kv.replace(/side=L/,'障碍在左→向右避').replace(/side=R/,'障碍在右→向左避'); }
+    if(e.area==='red_src' && kv){
+      const srcMap = {yolo_only:'仅 YOLO 识别', both:'YOLO+CV 双检', cv_only:'仅 CV 兜底'};
+      const ms = /src=(\S+)/.exec(kv);
+      const md = /d=([0-9.]+)/.exec(kv);
+      const mt = /totals=(\S+)/.exec(kv);
+      if(e.event==='detect' && ms){
+        title = '红障 · ' + (srcMap[ms[1]] || ms[1]);
+        desc = (md ? `最近 ${md[1]}m` : '') + (mt ? ` · 累计 ${mt[1]}` : '');
+      } else if(mt){
+        desc = '本轮累计 ' + mt[1];
+      }
+    }
     if(e.area==='digit' && kv){ desc = kv.replace(/best=/,'数字 ').replace(/yaw=/,' 角速度 '); }
     if(e.area==='safety'){ desc = kv || '上游静默，自动发零速'; }
     if(e.area==='proc' && kv){ desc = kv; }

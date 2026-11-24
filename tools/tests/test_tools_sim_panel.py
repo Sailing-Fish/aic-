@@ -60,6 +60,7 @@ class TestYamlAndSchemaParity(unittest.TestCase):
             self.assertEqual(lf["lane_seg_mode"], "legacy_hsv")
             self.assertEqual(lf["yellow_detect_mode"], "legacy_area")
             self.assertFalse(lf["enable_semantic_hole_fill"])
+            self.assertFalse(lf["enable_cv_red_fallback"])
             self.assertTrue(mux["enable_detection_override"])
 
         for name in ("finals_fork.yaml", "finals_roundabout.yaml"):
@@ -71,6 +72,7 @@ class TestYamlAndSchemaParity(unittest.TestCase):
             self.assertEqual(lf["yellow_detect_mode"], "geometric_cv")
             self.assertTrue(lf["enable_semantic_hole_fill"])
             self.assertTrue(lf["enable_obstacle_memory"])
+            self.assertTrue(lf["enable_cv_red_fallback"])
             self.assertTrue(lf["yellow_require_odom_still"])
             self.assertTrue(lf["lost_line_safe_mode"])
             self.assertFalse(mux["enable_detection_override"])
@@ -253,6 +255,7 @@ class TestPanelAndTelemetry(unittest.TestCase):
         required_keys = {
             "planner_mode", "lane_seg_mode", "yellow_detect_mode",
             "enable_semantic_hole_fill", "enable_obstacle_memory",
+            "enable_cv_red_fallback",
             "allow_dual_digit_cover", "yellow_h_low", "yellow_h_high",
             "yellow_s_min", "yellow_v_min", "red_h_low_1", "red_s_min",
             "enable_detection_override",

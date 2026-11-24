@@ -142,6 +142,7 @@ line_follower_node:
     yellow_detect_mode: "legacy_area"
     enable_semantic_hole_fill: false
     enable_obstacle_memory: false
+    enable_cv_red_fallback: false
     allow_dual_digit_cover: false
     use_homography: false
     homography_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]

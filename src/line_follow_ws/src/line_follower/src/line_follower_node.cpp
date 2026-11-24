@@ -4,6 +4,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <vector>
@@ -145,6 +146,7 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("yellow_detect_mode", "legacy_area");
   this->declare_parameter("enable_semantic_hole_fill", false);
   this->declare_parameter("enable_obstacle_memory", true);
+  this->declare_parameter("enable_cv_red_fallback", false);
   this->declare_parameter("allow_dual_digit_cover", false);
 
   this->declare_parameter("target_speed", 0.6);
@@ -413,6 +415,7 @@ void LineFollowerNode::declare_parameters()
   yellow_detect_mode_ = this->get_parameter("yellow_detect_mode").as_string();
   enable_semantic_hole_fill_ = this->get_parameter("enable_semantic_hole_fill").as_bool();
   enable_obstacle_memory_ = this->get_parameter("enable_obstacle_memory").as_bool();
+  enable_cv_red_fallback_ = this->get_parameter("enable_cv_red_fallback").as_bool();
   allow_dual_digit_cover_ = this->get_parameter("allow_dual_digit_cover").as_bool();
   detection_timeout_sec_ = std::max(0.05, this->get_parameter("detection_timeout_sec").as_double());
 
@@ -559,6 +562,7 @@ void LineFollowerNode::sync_runtime_parameters()
   yellow_detect_mode_ = this->get_parameter("yellow_detect_mode").as_string();
   enable_semantic_hole_fill_ = this->get_parameter("enable_semantic_hole_fill").as_bool();
   enable_obstacle_memory_ = this->get_parameter("enable_obstacle_memory").as_bool();
+  enable_cv_red_fallback_ = this->get_parameter("enable_cv_red_fallback").as_bool();
   allow_dual_digit_cover_ = this->get_parameter("allow_dual_digit_cover").as_bool();
   detection_timeout_sec_ = std::max(0.05, this->get_parameter("detection_timeout_sec").as_double());
 
@@ -981,7 +985,8 @@ void LineFollowerNode::load_segment_parameters()
     "border_margin_m=%.3f cone_margin_m=%.3f no_entry_margin_m=%.3f "
     "digit_min_conf=%.3f max_digit_lateral_shift_m=%.3f "
     "finish_min_dist_m=%.3f finish_force_dist_m=%.3f odom_scale_factor=%.3f "
-    "use_homography=%d yellow_require_odom_still=%d lost_line_safe_mode=%d",
+    "use_homography=%d yellow_require_odom_still=%d lost_line_safe_mode=%d "
+    "enable_cv_red_fallback=%d",
     mcfg.corridor_kp_y, mcfg.corridor_heading_gain,
     mcfg.speed_gain_damping, mcfg.max_yaw_rate,
     fcfg.bumper_margin_m, fcfg.pre_brake_dist_m, fcfg.creep_speed_mps,
@@ -992,7 +997,8 @@ void LineFollowerNode::load_segment_parameters()
     fcfg.finish_min_dist_m, fcfg.finish_force_dist_m, fcfg.odom_scale_factor,
     this->get_parameter("use_homography").as_bool() ? 1 : 0,
     this->get_parameter("yellow_require_odom_still").as_bool() ? 1 : 0,
-    mcfg.lost_line_safe_mode ? 1 : 0);
+    mcfg.lost_line_safe_mode ? 1 : 0,
+    enable_cv_red_fallback_ ? 1 : 0);
 
   for (int i = 1; i <= planner_.count(); ++i) {
     const SegmentParams & p = seg_params_[i - 1];
@@ -1363,6 +1369,11 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
     obstacle_memory_.reset();
     corridor_planner_.reset();
     finish_guard_.reset();
+    last_red_src_state_ = RedDetectionSource::NONE;
+    last_red_src_log_sec_ = -1e9;
+    red_src_yolo_only_frames_ = 0;
+    red_src_both_frames_ = 0;
+    red_src_cv_only_frames_ = 0;
 
     RCLCPP_INFO(
       this->get_logger(),
@@ -1409,18 +1420,23 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
   // Collect fresh YOLO boxes for semantic hole-filling, yellow hybrid, and ground projection
   std::vector<cv::Rect> fill_white_rects;
+  std::vector<cv::Rect> cv_red_exclude_rects;
   std::vector<cv::Rect> yolo_yellow_rects;
   std::vector<GroundDetection> ground_detections;
+  std::vector<GroundDetection> yolo_red_dets;
   std::vector<DebugDetectionBox> debug_boxes;
+  std::vector<DebugDetectionBox> yolo_red_dboxes;
 
   const bool dets_fresh = (now_sec - latest_det_stamp_sec_) <= detection_timeout_sec_;
   if (dets_fresh) {
     for (const auto & box : latest_raw_boxes_) {
-      if (enable_semantic_hole_fill_ &&
-        (box.type == SemanticObjectType::BONUS_DIGIT ||
-        box.type == SemanticObjectType::YELLOW_STOP_LINE))
+      if (box.type == SemanticObjectType::BONUS_DIGIT ||
+        box.type == SemanticObjectType::YELLOW_STOP_LINE)
       {
-        fill_white_rects.push_back(box.bbox_img);
+        cv_red_exclude_rects.push_back(box.bbox_img);
+        if (enable_semantic_hole_fill_) {
+          fill_white_rects.push_back(box.bbox_img);
+        }
       }
       if (box.type == SemanticObjectType::YELLOW_STOP_LINE) {
         yolo_yellow_rects.push_back(box.bbox_img);
@@ -1462,7 +1478,6 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
           gd.half_len_m = 0.05;
           gd.half_wid_m = 0.05;
         }
-        ground_detections.push_back(gd);
 
         DebugDetectionBox dbox{};
         dbox.bbox_img = box.bbox_img;
@@ -1473,7 +1488,16 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         dbox.is_no_entry = (box.type == SemanticObjectType::RED_NO_ENTRY);
         dbox.is_digit = (box.type == SemanticObjectType::BONUS_DIGIT);
         dbox.is_yellow = (box.type == SemanticObjectType::YELLOW_STOP_LINE);
-        debug_boxes.push_back(dbox);
+
+        if (box.type == SemanticObjectType::RED_CONE ||
+          box.type == SemanticObjectType::RED_NO_ENTRY)
+        {
+          yolo_red_dets.push_back(gd);
+          yolo_red_dboxes.push_back(dbox);
+        } else {
+          ground_detections.push_back(gd);
+          debug_boxes.push_back(dbox);
+        }
       }
     }
   }
@@ -1482,6 +1506,94 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     corridor_planner_.committed_branch(finish_guard_.total_arc_m()) : 0;
 
   auto result_opt = process_image(frame_bgr, fill_white_rects, yolo_yellow_rects, active_branch);
+
+  // ============================================================
+  // Finals Red Obstacle OR-Fusion (YOLO || White-Lane CV) + Dedicated Attribution Log
+  // Policy: if EITHER YOLO or white-lane CV detects red, feed ObstacleMemory/CorridorPlanner.
+  // Matched obstacles keep YOLO precision & log src=both; CV-only catches YOLO misses (src=cv_only);
+  // YOLO-only proves YOLO superiority when CV fails (src=yolo_only).
+  // ============================================================
+  if (finals_mode) {
+    std::vector<GroundDetection> cv_red_dets;
+    std::vector<cv::Rect> cv_red_bboxes;
+    if (enable_cv_red_fallback_ && result_opt && result_opt->line_detected) {
+      detect_cv_red_in_lane(
+        frame_bgr, *result_opt, cv_red_exclude_rects, now_sec, cv_red_dets, cv_red_bboxes);
+    }
+
+    const RedFusionSummary red_fusion = fuse_red_obstacles_or(yolo_red_dets, cv_red_dets, 0.24);
+    for (const auto & gd : red_fusion.fused_red_detections) {
+      ground_detections.push_back(gd);
+    }
+
+    // Tag YOLO red boxes with [Y] or [Y+C]
+    for (size_t i = 0; i < yolo_red_dboxes.size(); ++i) {
+      DebugDetectionBox dbox = yolo_red_dboxes[i];
+      const bool matched = (i < red_fusion.fused_sources.size() &&
+        red_fusion.fused_sources[i] == RedDetectionSource::BOTH);
+      dbox.label = std::string(matched ? "[Y+C]" : "[Y]") + dbox.label;
+      debug_boxes.push_back(dbox);
+    }
+    // Append unmatched CV-only fallback boxes with [CV]
+    for (size_t j = 0; j < cv_red_dets.size(); ++j) {
+      if (j < red_fusion.cv_matched_flags.size() && red_fusion.cv_matched_flags[j]) {
+        continue;
+      }
+      DebugDetectionBox dbox{};
+      dbox.bbox_img = (j < cv_red_bboxes.size()) ? cv_red_bboxes[j] : cv::Rect{};
+      dbox.label = (cv_red_dets[j].type == SemanticObjectType::RED_NO_ENTRY) ?
+        "[CV]no_entry" : "[CV]cone";
+      dbox.confidence = cv_red_dets[j].confidence;
+      dbox.d_bumper_m = cv_red_dets[j].d_bumper_m;
+      dbox.y_lat_m = cv_red_dets[j].y_lat_m;
+      dbox.is_no_entry = (cv_red_dets[j].type == SemanticObjectType::RED_NO_ENTRY);
+      debug_boxes.push_back(dbox);
+    }
+
+    // Update cumulative lap counters when running
+    if (start_enabled_) {
+      if (red_fusion.overall_source == RedDetectionSource::YOLO_ONLY) {
+        red_src_yolo_only_frames_++;
+      } else if (red_fusion.overall_source == RedDetectionSource::BOTH) {
+        red_src_both_frames_++;
+      } else if (red_fusion.overall_source == RedDetectionSource::CV_ONLY) {
+        red_src_cv_only_frames_++;
+      }
+    }
+
+    // Dedicated throttled [DEC] red_src log (immediate on source change or every 0.5s)
+    const bool src_changed = (red_fusion.overall_source != last_red_src_state_);
+    if (red_fusion.overall_source != RedDetectionSource::NONE) {
+      if (src_changed || (now_sec - last_red_src_log_sec_) >= 0.50) {
+        RCLCPP_INFO(
+          this->get_logger(),
+          "[DEC] red_src detect src=%s yolo=%d cv=%d both=%d yolo_only=%d cv_only=%d "
+          "d=%.2f y=%+.2f type=%s totals=Y:%d/B:%d/C:%d",
+          red_detection_source_to_string(red_fusion.overall_source),
+          red_fusion.yolo_red_count, red_fusion.cv_red_count,
+          red_fusion.matched_both_count, red_fusion.yolo_only_count, red_fusion.cv_only_count,
+          red_fusion.nearest_d_bumper_m, red_fusion.nearest_y_lat_m,
+          semantic_object_type_to_string(red_fusion.nearest_type),
+          red_src_yolo_only_frames_, red_src_both_frames_, red_src_cv_only_frames_);
+        last_red_src_log_sec_ = now_sec;
+      }
+    } else if (src_changed && last_red_src_state_ != RedDetectionSource::NONE) {
+      RCLCPP_INFO(
+        this->get_logger(),
+        "[DEC] red_src clear prev=%s totals=Y:%d/B:%d/C:%d",
+        red_detection_source_to_string(last_red_src_state_),
+        red_src_yolo_only_frames_, red_src_both_frames_, red_src_cv_only_frames_);
+      last_red_src_log_sec_ = now_sec;
+    }
+    last_red_src_state_ = red_fusion.overall_source;
+  } else {
+    for (const auto & gd : yolo_red_dets) {
+      ground_detections.push_back(gd);
+    }
+    for (const auto & dbox : yolo_red_dboxes) {
+      debug_boxes.push_back(dbox);
+    }
+  }
 
   if (result_opt && result_opt->line_detected) {
     double norm_x = 0.5;
@@ -2138,6 +2250,159 @@ std::optional<ProcessingResult> LineFollowerNode::process_image(
   }
 
   return lane_geometry_.evaluate(*segmented_opt, curve_assist_, preferred_branch);
+}
+
+void LineFollowerNode::detect_cv_red_in_lane(
+  const cv::Mat & frame_bgr,
+  const ProcessingResult & result,
+  const std::vector<cv::Rect> & exclude_rects,
+  double now_sec,
+  std::vector<GroundDetection> & out_detections,
+  std::vector<cv::Rect> & out_bboxes_img) const
+{
+  out_detections.clear();
+  out_bboxes_img.clear();
+
+  if (frame_bgr.empty() || result.binary_mask.empty()) {
+    return;
+  }
+
+  const int roi_top = std::clamp(result.roi_top, 0, frame_bgr.rows - 1);
+  const int roi_bottom = std::clamp(result.roi_bottom, roi_top + 1, frame_bgr.rows);
+  const int roi_h = roi_bottom - roi_top;
+  const int roi_w = frame_bgr.cols;
+  if (roi_h <= 4 || roi_w <= 4 ||
+    result.binary_mask.rows != roi_h || result.binary_mask.cols != roi_w)
+  {
+    return;
+  }
+
+  // 1) Row-span fill of white lane interior (+8px border pad):
+  //    keeps holes punched by solid cones & hollow red frames INSIDE the lane,
+  //    while strictly rejecting blue mat exterior & off-track spectators.
+  cv::Mat lane_span_mask = cv::Mat::zeros(roi_h, roi_w, CV_8UC1);
+  for (int r = 0; r < roi_h; ++r) {
+    const uint8_t * row_ptr = result.binary_mask.ptr<uint8_t>(r);
+    int x_left = -1;
+    int x_right = -1;
+    for (int c = 0; c < roi_w; ++c) {
+      if (row_ptr[c] > 0) {
+        x_left = c;
+        break;
+      }
+    }
+    if (x_left < 0) {
+      continue;
+    }
+    for (int c = roi_w - 1; c >= x_left; --c) {
+      if (row_ptr[c] > 0) {
+        x_right = c;
+        break;
+      }
+    }
+    if (x_right - x_left >= 16) {
+      const int p0 = std::max(0, x_left - 8);
+      const int p1 = std::min(roi_w - 1, x_right + 8);
+      uint8_t * dst_ptr = lane_span_mask.ptr<uint8_t>(r);
+      std::fill(dst_ptr + p0, dst_ptr + p1 + 1, static_cast<uint8_t>(255));
+    }
+  }
+
+  // 2) HSV red threshold inside ROI gated by lane_span_mask
+  const cv::Mat roi_bgr = frame_bgr(cv::Rect(0, roi_top, roi_w, roi_h));
+  cv::Mat hsv;
+  cv::cvtColor(roi_bgr, hsv, cv::COLOR_BGR2HSV);
+  cv::Mat mask1, mask2, red_mask;
+  cv::inRange(hsv, cv::Scalar(red_h_low_1_, red_s_min_, red_v_min_),
+    cv::Scalar(red_h_high_1_, 255, 255), mask1);
+  cv::inRange(hsv, cv::Scalar(red_h_low_2_, red_s_min_, red_v_min_),
+    cv::Scalar(red_h_high_2_, 255, 255), mask2);
+  cv::bitwise_or(mask1, mask2, red_mask);
+  cv::bitwise_and(red_mask, lane_span_mask, red_mask);
+
+  // 3) Mask out YOLO digit/yellow boxes so red-tinted digit cards never false-trigger avoidance
+  for (const auto & ex : exclude_rects) {
+    const int x1 = std::clamp(ex.x - 4, 0, roi_w);
+    const int x2 = std::clamp(ex.x + ex.width + 4, 0, roi_w);
+    const int y1 = std::clamp(ex.y - roi_top - 4, 0, roi_h);
+    const int y2 = std::clamp(ex.y + ex.height - roi_top + 4, 0, roi_h);
+    if (x2 > x1 && y2 > y1) {
+      red_mask(cv::Rect(x1, y1, x2 - x1, y2 - y1)).setTo(0);
+    }
+  }
+
+  // 4) Open (kill speckles) then Close (bridge 1 cm hollow red border fragments into one contour)
+  const cv::Mat k_open = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+  const cv::Mat k_close = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(11, 9));
+  cv::Mat raw_red_clean;
+  cv::morphologyEx(red_mask, raw_red_clean, cv::MORPH_OPEN, k_open);
+  cv::Mat grouped_red;
+  cv::morphologyEx(raw_red_clean, grouped_red, cv::MORPH_CLOSE, k_close);
+
+  std::vector<std::vector<cv::Point>> contours;
+  cv::findContours(grouped_red, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+  const double roi_area = static_cast<double>(roi_w) * static_cast<double>(roi_h);
+  const double cone_area_ratio_min =
+    std::max(0.0, this->get_parameter("red_cone_area_ratio_threshold").as_double());
+  const double min_area_px = std::max(70.0, cone_area_ratio_min * roi_area);
+
+  for (const auto & cnt : contours) {
+    const double area = cv::contourArea(cnt);
+    if (area < min_area_px) {
+      continue;
+    }
+    const cv::Rect r_roi = cv::boundingRect(cnt);
+    if (r_roi.width < 6 || r_roi.height < 6) {
+      continue;
+    }
+
+    const cv::Rect r_img(r_roi.x, r_roi.y + roi_top, r_roi.width, r_roi.height);
+    const double u_bot = static_cast<double>(r_img.x) + 0.5 * static_cast<double>(r_img.width);
+    const double v_bot = static_cast<double>(r_img.y + r_img.height);
+    double d_m = 0.0;
+    double y_m = 0.0;
+    if (!ground_projector_.pixel_to_ground(u_bot, v_bot, d_m, y_m)) {
+      continue;
+    }
+    // Reject out-of-range or implausibly wide off-lane projections
+    if (d_m < 0.02 || d_m > 1.45 || std::abs(y_m) > 0.35) {
+      continue;
+    }
+
+    // Estimate projected ground width from bottom-left to bottom-right
+    double dl = 0.0, yl = 0.0, dr = 0.0, yr = 0.0;
+    double est_width_m = 0.135;
+    if (ground_projector_.pixel_to_ground(static_cast<double>(r_img.x), v_bot, dl, yl) &&
+      ground_projector_.pixel_to_ground(
+        static_cast<double>(r_img.x + r_img.width), v_bot, dr, yr))
+    {
+      est_width_m = std::clamp(std::abs(yl - yr), 0.10, 0.26);
+    }
+
+    // Distinguish hollow red_no_entry (low raw red fill inside bbox or wide footprint) vs solid red_cone
+    const int raw_red_px = cv::countNonZero(raw_red_clean(r_roi));
+    const double fill_ratio =
+      static_cast<double>(raw_red_px) / std::max(1.0, static_cast<double>(r_roi.area()));
+    const bool looks_no_entry = (fill_ratio < 0.42 && r_roi.width >= 18) || (est_width_m > 0.155);
+
+    GroundDetection gd{};
+    gd.type = looks_no_entry ? SemanticObjectType::RED_NO_ENTRY : SemanticObjectType::RED_CONE;
+    gd.confidence = 0.60;
+    gd.d_bumper_m = d_m;
+    gd.y_lat_m = y_m;
+    gd.stamp_sec = now_sec;
+    if (looks_no_entry) {
+      gd.half_wid_m = std::clamp(0.5 * est_width_m, 0.065, 0.13);
+      gd.half_len_m = (gd.half_wid_m > 0.095) ? 0.065 : 0.12;
+    } else {
+      gd.half_wid_m = std::clamp(0.5 * est_width_m, 0.0675, 0.10);
+      gd.half_len_m = 0.0675;
+    }
+
+    out_detections.push_back(gd);
+    out_bboxes_img.push_back(r_img);
+  }
 }
 
 bool LineFollowerNode::detect_red(

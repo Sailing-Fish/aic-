@@ -97,6 +97,15 @@ private:
     cv::Point2d & div_base_img,
     cv::Point2d & div_target_img);
 
+  // White-lane-gated CV red obstacle fallback for finals_corridor OR-fusion
+  void detect_cv_red_in_lane(
+    const cv::Mat & frame_bgr,
+    const ProcessingResult & result,
+    const std::vector<cv::Rect> & exclude_rects,
+    double now_sec,
+    std::vector<GroundDetection> & out_detections,
+    std::vector<cv::Rect> & out_bboxes_img) const;
+
   std::string state_to_string(TrackState state) const;
 
   void publish_cmd_vel(
@@ -137,6 +146,7 @@ private:
   std::string yellow_detect_mode_{"legacy_area"};   // "legacy_area" | "geometric_cv" | "yolo_cv_hybrid"
   bool enable_semantic_hole_fill_{false};
   bool enable_obstacle_memory_{true};
+  bool enable_cv_red_fallback_{false};
   bool allow_dual_digit_cover_{false};
   double detection_timeout_sec_{0.35};
 
@@ -306,6 +316,13 @@ private:
 
   std::vector<RawYoloBox> latest_raw_boxes_{};
   double latest_det_stamp_sec_{-1e9};
+
+  // Dedicated red obstacle source attribution log state (YOLO vs CV vs BOTH)
+  RedDetectionSource last_red_src_state_{RedDetectionSource::NONE};
+  double last_red_src_log_sec_{-1e9};
+  int red_src_yolo_only_frames_{0};
+  int red_src_both_frames_{0};
+  int red_src_cv_only_frames_{0};
 
   bool start_enabled_{false};
   bool waiting_log_initialized_{false};

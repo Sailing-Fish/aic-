@@ -40,9 +40,11 @@ using line_follower::MotionControllerConfig;
 using line_follower::MotionState;
 using line_follower::ObstacleMemory;
 using line_follower::ObstacleMemoryConfig;
+using line_follower::RedDetectionSource;
 using line_follower::SemanticObjectType;
 using line_follower::TrackState;
 using line_follower::TrackStateConfig;
+using line_follower::fuse_red_obstacles_or;
 using line_follower::TrackStateMachine;
 using line_follower::VehiclePose2D;
 using line_follower::YellowStopAdvice;
@@ -456,6 +458,68 @@ void test_motion_controller_corridor_and_safe_lost()
   CHECK(std::abs(lost_stop.linear_speed) < 1e-9);
 }
 
+void test_red_obstacle_or_fusion_and_attribution()
+{
+  GroundDetection y_cone{};
+  y_cone.type = SemanticObjectType::RED_CONE;
+  y_cone.confidence = 0.88;
+  y_cone.d_bumper_m = 0.70;
+  y_cone.y_lat_m = 0.08;
+
+  GroundDetection c_near{};
+  c_near.type = SemanticObjectType::RED_NO_ENTRY;  // CV misclassified cone as no_entry
+  c_near.confidence = 0.60;
+  c_near.d_bumper_m = 0.74;
+  c_near.y_lat_m = 0.06;
+
+  GroundDetection c_extra{};
+  c_extra.type = SemanticObjectType::RED_NO_ENTRY;
+  c_extra.confidence = 0.60;
+  c_extra.d_bumper_m = 0.55;
+  c_extra.y_lat_m = -0.10;
+
+  // Case 1: YOLO only (ideal when CV fails under glare)
+  {
+    const auto r = fuse_red_obstacles_or({y_cone}, {});
+    CHECK(r.overall_source == RedDetectionSource::YOLO_ONLY);
+    CHECK(r.fused_red_detections.size() == 1);
+    CHECK(r.yolo_only_count == 1 && r.matched_both_count == 0 && r.cv_only_count == 0);
+    CHECK(r.fused_sources[0] == RedDetectionSource::YOLO_ONLY);
+  }
+
+  // Case 2: CV only (pre-YOLO fallback or YOLO miss)
+  {
+    const auto r = fuse_red_obstacles_or({}, {c_extra});
+    CHECK(r.overall_source == RedDetectionSource::CV_ONLY);
+    CHECK(r.fused_red_detections.size() == 1);
+    CHECK(r.cv_only_count == 1 && r.yolo_only_count == 0 && r.matched_both_count == 0);
+    CHECK(r.fused_sources[0] == RedDetectionSource::CV_ONLY);
+    CHECK(std::abs(r.nearest_d_bumper_m - 0.55) < 1e-6);
+  }
+
+  // Case 3: Both see same obstacle + CV sees an extra missed obstacle -> OR union, YOLO wins matched class
+  {
+    const auto r = fuse_red_obstacles_or({y_cone}, {c_near, c_extra}, 0.24);
+    CHECK(r.overall_source == RedDetectionSource::BOTH);
+    CHECK(r.fused_red_detections.size() == 2);
+    CHECK(r.matched_both_count == 1 && r.cv_only_count == 1 && r.yolo_only_count == 0);
+    // Matched obstacle preserves YOLO's RED_CONE type & confidence
+    CHECK(r.fused_red_detections[0].type == SemanticObjectType::RED_CONE);
+    CHECK(r.fused_sources[0] == RedDetectionSource::BOTH);
+    // Unmatched CV obstacle is injected as CV_ONLY and is the nearest one (0.55m)
+    CHECK(r.fused_red_detections[1].type == SemanticObjectType::RED_NO_ENTRY);
+    CHECK(r.fused_sources[1] == RedDetectionSource::CV_ONLY);
+    CHECK(std::abs(r.nearest_d_bumper_m - 0.55) < 1e-6);
+  }
+
+  // Case 4: Neither sees red
+  {
+    const auto r = fuse_red_obstacles_or({}, {});
+    CHECK(r.overall_source == RedDetectionSource::NONE);
+    CHECK(r.fused_red_detections.empty());
+  }
+}
+
 }  // namespace
 
 int main()
@@ -467,6 +531,7 @@ int main()
   test_finish_guard_random_yellow_rejection_and_two_stage_stop();
   test_track_state_machine_odom_freshness_and_finals_mode();
   test_motion_controller_corridor_and_safe_lost();
+  test_red_obstacle_or_fusion_and_attribution();
   std::cout << "ALL_FINALS_CPP_TESTS_PASSED" << std::endl;
   return 0;
 }

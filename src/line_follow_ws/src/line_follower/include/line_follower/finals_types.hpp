@@ -137,4 +137,129 @@ struct YellowStopAdvice
   double d_bumper_m{0.0};
 };
 
+// ============================================================
+// Red Obstacle OR-Fusion & Source Attribution (YOLO || CV)
+//
+// Policy:
+//   - Logical OR: if either YOLO or white-lane CV sees a red obstacle,
+//     it enters ObstacleMemory / CorridorPlanner.
+//   - Deduplication: when both see the same obstacle (within match_radius_m),
+//     keep the higher-precision YOLO box/class and attribute source = BOTH.
+//   - Attribution: cleanly separates YOLO_ONLY, BOTH, CV_ONLY so logs prove
+//     whether YOLO or CV is doing the work during track runs.
+// ============================================================
+
+enum class RedDetectionSource
+{
+  NONE = 0,
+  YOLO_ONLY,
+  CV_ONLY,
+  BOTH
+};
+
+inline const char * red_detection_source_to_string(RedDetectionSource src)
+{
+  switch (src) {
+    case RedDetectionSource::YOLO_ONLY:
+      return "yolo_only";
+    case RedDetectionSource::CV_ONLY:
+      return "cv_only";
+    case RedDetectionSource::BOTH:
+      return "both";
+    case RedDetectionSource::NONE:
+    default:
+      return "none";
+  }
+}
+
+struct RedFusionSummary
+{
+  RedDetectionSource overall_source{RedDetectionSource::NONE};
+  int yolo_red_count{0};
+  int cv_red_count{0};
+  int matched_both_count{0};
+  int yolo_only_count{0};
+  int cv_only_count{0};
+  double nearest_d_bumper_m{0.0};
+  double nearest_y_lat_m{0.0};
+  SemanticObjectType nearest_type{SemanticObjectType::UNKNOWN};
+  std::vector<GroundDetection> fused_red_detections{};
+  std::vector<RedDetectionSource> fused_sources{};
+  std::vector<bool> cv_matched_flags{};
+};
+
+inline RedFusionSummary fuse_red_obstacles_or(
+  const std::vector<GroundDetection> & yolo_red,
+  const std::vector<GroundDetection> & cv_red,
+  double match_radius_m = 0.24)
+{
+  RedFusionSummary out{};
+  out.yolo_red_count = static_cast<int>(yolo_red.size());
+  out.cv_red_count = static_cast<int>(cv_red.size());
+  out.cv_matched_flags.assign(cv_red.size(), false);
+
+  const double r2 = std::max(0.02, match_radius_m) * std::max(0.02, match_radius_m);
+
+  // 1) Keep all YOLO red detections; greedily match closest unmatched CV detection
+  for (const auto & yd : yolo_red) {
+    int best_cv = -1;
+    double best_d2 = r2;
+    for (size_t j = 0; j < cv_red.size(); ++j) {
+      if (out.cv_matched_flags[j]) {
+        continue;
+      }
+      const double dd = yd.d_bumper_m - cv_red[j].d_bumper_m;
+      const double dy = yd.y_lat_m - cv_red[j].y_lat_m;
+      const double d2 = dd * dd + dy * dy;
+      if (d2 <= best_d2) {
+        best_d2 = d2;
+        best_cv = static_cast<int>(j);
+      }
+    }
+    out.fused_red_detections.push_back(yd);
+    if (best_cv >= 0) {
+      out.cv_matched_flags[static_cast<size_t>(best_cv)] = true;
+      out.fused_sources.push_back(RedDetectionSource::BOTH);
+      out.matched_both_count++;
+    } else {
+      out.fused_sources.push_back(RedDetectionSource::YOLO_ONLY);
+      out.yolo_only_count++;
+    }
+  }
+
+  // 2) OR-fusion: inject any unmatched CV red detections as CV_ONLY fallback
+  for (size_t j = 0; j < cv_red.size(); ++j) {
+    if (!out.cv_matched_flags[j]) {
+      out.fused_red_detections.push_back(cv_red[j]);
+      out.fused_sources.push_back(RedDetectionSource::CV_ONLY);
+      out.cv_only_count++;
+    }
+  }
+
+  if (out.yolo_red_count > 0 && out.cv_red_count > 0) {
+    out.overall_source = RedDetectionSource::BOTH;
+  } else if (out.yolo_red_count > 0) {
+    out.overall_source = RedDetectionSource::YOLO_ONLY;
+  } else if (out.cv_red_count > 0) {
+    out.overall_source = RedDetectionSource::CV_ONLY;
+  } else {
+    out.overall_source = RedDetectionSource::NONE;
+  }
+
+  // 3) Nearest obstacle summary for concise logging
+  bool has_nearest = false;
+  double min_d = 1e9;
+  for (const auto & gd : out.fused_red_detections) {
+    if (!has_nearest || gd.d_bumper_m < min_d) {
+      has_nearest = true;
+      min_d = gd.d_bumper_m;
+      out.nearest_d_bumper_m = gd.d_bumper_m;
+      out.nearest_y_lat_m = gd.y_lat_m;
+      out.nearest_type = gd.type;
+    }
+  }
+
+  return out;
+}
+
 }  // namespace line_follower
