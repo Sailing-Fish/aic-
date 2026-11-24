@@ -30,6 +30,7 @@ import record_and_compare_cv as cv_cmp  # noqa: E402
 import render as sim_render  # noqa: E402
 import server as panel_server  # noqa: E402
 import synth_finals_dataset as synth_mod  # noqa: E402
+import train_digits8_yolo as train8_mod  # noqa: E402
 import tune as sim_tune  # noqa: E402
 import world_node as sim_world  # noqa: E402
 
@@ -224,6 +225,101 @@ class TestSyntheticDatasetGenerator(unittest.TestCase):
                         self.assertTrue(0 <= cid < 11)
                         self.assertTrue(0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0)
                         self.assertTrue(0.0 < bw <= 1.0 and 0.0 < bh <= 1.0)
+
+    def test_generate_8class_dataset_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                synth_mod.generate_dataset(tmp, num_train=1, num_val=1, num_classes=9)
+
+            info = synth_mod.generate_dataset(
+                out_dir=tmp,
+                num_train=10,
+                num_val=4,
+                seed=456,
+                max_rot_deg=15.0,
+                calib_count=5,
+                num_classes=8,
+                mnist_dir=None,
+            )
+            self.assertEqual(info["num_classes"], 8)
+            self.assertGreater(info["total_boxes"], 0)
+            ds_yaml = yaml.safe_load(Path(info["dataset_yaml"]).read_text(encoding="utf-8"))
+            self.assertEqual(ds_yaml["nc"], 8)
+            self.assertEqual([ds_yaml["names"][i] for i in range(8)], ["1", "2", "3", "4", "5", "6", "7", "8"])
+
+            for split in ("train", "val"):
+                lbl_files = list((Path(tmp) / "labels" / split).glob("*.txt"))
+                self.assertEqual(len(lbl_files), 10 if split == "train" else 4)
+                for lf in lbl_files:
+                    for ln in lf.read_text(encoding="utf-8").splitlines():
+                        parts = ln.split()
+                        self.assertEqual(len(parts), 5)
+                        cid = int(parts[0])
+                        cx, cy, bw, bh = map(float, parts[1:])
+                        self.assertTrue(0 <= cid < 8, f"8-class mode leaked cid={cid}")
+                        self.assertTrue(0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0)
+                        self.assertTrue(0.0 < bw <= 1.0 and 0.0 < bh <= 1.0)
+
+    def test_3d_ground_homography_ellipse_aspect_and_guards(self):
+        cam = sim_render.CameraModel(h_mm=110.0, alpha_deg=12.5, f_px=325.0, width=640, height=480)
+        for w_mm, d_mm in ((0.0, 450.0), (-120.0, 800.0), (150.0, 320.0)):
+            u1, v1 = synth_mod.project_3d_to_uv(w_mm, d_mm, z_mm=0.0)
+            u2, v2 = cam.wd_to_uv(w_mm, d_mm)
+            self.assertAlmostEqual(u1, u2, places=5)
+            self.assertAlmostEqual(v1, v2, places=5)
+
+        rng = __import__("random").Random(77)
+        sticker = synth_mod.make_official_sticker_bgra("6", rng, handwritten=False, glossy_pvc=True, size=160)
+        canvas = np.full((480, 640, 3), 240, dtype=np.uint8)
+        box = synth_mod.project_ground_prop_bgra(
+            canvas, sticker, d_m=0.45, y_m=0.0, phys_w_m=0.13, phys_h_m=0.13, rot_deg=0.0
+        )
+        self.assertIsNotNone(box)
+        x1, y1, x2, y2 = box
+        bw, bh = x2 - x1, y2 - y1
+        self.assertGreater(bw, 40)
+        self.assertGreater(bh, 8)
+        aspect = bw / float(bh)
+        self.assertGreater(aspect, 2.8, f"Expected flattened 3.5:1~5:1 ellipse, got aspect={aspect:.2f}")
+
+        with self.assertRaises(ValueError):
+            synth_mod.project_ground_prop_bgra(canvas, sticker, d_m=0.45, y_m=0.0, phys_w_m=0.13, phys_h_m=0.13, allow_flip=True)
+        with self.assertRaises(ValueError):
+            synth_mod.project_ground_prop_bgra(canvas, sticker, d_m=0.45, y_m=0.0, phys_w_m=0.13, phys_h_m=0.13, rot_deg=20.0)
+
+    def test_mnist_cache_load_and_offline_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            empty_bank = synth_mod.load_mnist_digits(tmp, allow_download=False)
+            self.assertEqual(sum(len(v) for v in empty_bank.values()), 0)
+
+            # Create fake cached mnist_1_8.npz and verify fast load + dataset generation
+            fake_glyph = np.zeros((28, 28), dtype=np.uint8)
+            cv2.putText(fake_glyph, "3", (6, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.75, 255, 2)
+            np.savez_compressed(
+                Path(tmp) / "mnist_1_8.npz",
+                **{f"d{d}": np.repeat(fake_glyph[None, :, :], 3, axis=0) for d in synth_mod.DIGITS8_CLASSES},
+            )
+            loaded = synth_mod.load_mnist_digits(tmp, allow_download=False)
+            for d in synth_mod.DIGITS8_CLASSES:
+                self.assertEqual(loaded[d].shape, (3, 28, 28))
+
+            out_ds = Path(tmp) / "ds"
+            info = synth_mod.generate_dataset(
+                out_dir=out_ds,
+                num_train=4,
+                num_val=2,
+                seed=99,
+                num_classes=8,
+                mnist_dir=tmp,
+                allow_mnist_download=False,
+            )
+            self.assertEqual(info["mnist_samples"], 24)
+            self.assertEqual(info["num_classes"], 8)
+
+    def test_train_digits8_hardcoded_no_flip_params(self):
+        self.assertEqual(train8_mod.FORCED_TRAIN_AUG_KWARGS["fliplr"], 0.0)
+        self.assertEqual(train8_mod.FORCED_TRAIN_AUG_KWARGS["flipud"], 0.0)
+        self.assertLessEqual(train8_mod.FORCED_TRAIN_AUG_KWARGS["degrees"], 15.0)
 
 
 class TestCVComparisonTool(unittest.TestCase):

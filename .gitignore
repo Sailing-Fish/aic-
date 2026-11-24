@@ -32,3 +32,11 @@ src/car_ws/src/serial_ros2/.git.upstream-backup/
 # 运行产物（start.sh / 调试脚本每次运行生成：日志 + CSV + JSON 都不入库）
 tools/logs/
 tools/config/*.bak
+
+# 本地对话交接文档（不入库）
+handoff_决赛重构交接_20261124.md
+
+# 大体积合成数据集与本地训练产物（严禁入库）
+dataset_work/
+runs/
+weights/
