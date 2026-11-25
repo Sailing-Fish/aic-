@@ -1,521 +1,920 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RDK X5 · 双子星智能车面板</title>
+<title>RDK X5 · 双子星琉璃战术控制台</title>
 <style>
   :root{
-    --bg:#070a12;
-    --card:rgba(15, 21, 34, 0.84);
-    --card2:rgba(21, 29, 46, 0.92);
-    --line:rgba(110, 140, 190, 0.18);
-    --line-strong:rgba(130, 165, 220, 0.32);
-    --fg:#eaf1fb;
-    --dim:#97a7bf;
-    --mute:#62738c;
-    --ok:#2ee086;
-    --warn:#f8be44;
-    --bad:#ff5e6c;
-    --acc:#4da6ff;
-    /* 双子主题色：Gemini 星夜紫 & DeepSeek 深海蓝 */
-    --gem:#a87dff;
-    --gem-soft:rgba(168, 125, 255, 0.16);
-    --gem-border:rgba(168, 125, 255, 0.42);
-    --ds:#3b9eff;
-    --ds-soft:rgba(59, 158, 255, 0.16);
-    --ds-border:rgba(59, 158, 255, 0.42);
+    --radius-lg:16px;
+    --radius-md:11px;
+    --radius-sm:7px;
+    --radius-pill:999px;
+    --ease:cubic-bezier(0.22, 1, 0.36, 1);
+    --mono:"Cascadia Mono","JetBrains Mono",Consolas,"Courier New",monospace;
+    --sans:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
   }
-  *{box-sizing:border-box}
-  html,body{height:100%}
-  body{
-    margin:0;
-    background:
-      radial-gradient(680px 420px at 8% 8%, rgba(168,125,255,0.13), transparent 70%),
-      radial-gradient(680px 420px at 92% 10%, rgba(59,158,255,0.14), transparent 70%),
-      radial-gradient(500px 300px at 50% 100%, rgba(46,224,134,0.05), transparent 70%),
-      var(--bg);
-    color:var(--fg);
-    font:13px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;
-    overflow:hidden;
-  }
-  .mono{font-family:Consolas,"Courier New",monospace}
 
-  /* ---------- header ---------- */
+  /* 🌙 暗夜琉璃（默认：赛场强光防眩高对比） */
+  html[data-theme="dark"]{
+    --bg-base:#090d1a;
+    --scrim:linear-gradient(135deg, rgba(14,12,32,0.46), rgba(8,18,40,0.48));
+    --glass:rgba(13, 18, 34, 0.60);
+    --glass-2:rgba(20, 28, 50, 0.72);
+    --glass-sub:rgba(17, 24, 44, 0.56);
+    --glass-input:rgba(8, 13, 25, 0.74);
+    --glass-hover:rgba(32, 44, 76, 0.76);
+    --glass-video:rgba(6, 9, 18, 0.86);
+    --glass-log:rgba(6, 9, 18, 0.82);
+    --glass-border:rgba(255, 255, 255, 0.16);
+    --glass-border-strong:rgba(255, 255, 255, 0.28);
+    --glass-highlight:rgba(255, 255, 255, 0.22);
+    --shadow-card:0 12px 34px rgba(4, 8, 22, 0.42);
+    --fg:#eef4ff;
+    --dim:#a3b4ce;
+    --mute:#7386a4;
+    --gem:#b084ff;
+    --gem-2:#eb8fff;
+    --gem-soft:rgba(176, 132, 255, 0.18);
+    --gem-border:rgba(176, 132, 255, 0.48);
+    --ds:#4da6ff;
+    --ds-2:#38d9f5;
+    --ds-soft:rgba(77, 166, 255, 0.18);
+    --ds-border:rgba(77, 166, 255, 0.48);
+    --ok:#2ee086;
+    --ok-soft:rgba(46, 224, 134, 0.16);
+    --warn:#f7b733;
+    --warn-soft:rgba(247, 183, 51, 0.18);
+    --bad:#ff5c6c;
+    --bad-soft:rgba(255, 92, 108, 0.20);
+    --acc:#4da6ff;
+    --banner-fade:linear-gradient(90deg, rgba(13,18,34,0) 0%, rgba(13,18,34,0.45) 42%, rgba(13,18,34,0.92) 72%, rgba(13,18,34,0.96) 100%);
+    --bubble-bg:rgba(9, 14, 28, 0.62);
+    --reticle:rgba(255, 255, 255, 0.28);
+    --timeline-rail:linear-gradient(180deg, rgba(77,166,255,0.55), rgba(176,132,255,0.28) 65%, transparent);
+    --modal-bg:rgba(13, 19, 36, 0.94);
+    --scroll-thumb:rgba(160, 185, 225, 0.28);
+  }
+
+  /* ☀ 柔光透璃（最大化展示第 3 张暖色调双子游乐室插画） */
+  html[data-theme="light"]{
+    --bg-base:#f5ede8;
+    --scrim:linear-gradient(135deg, rgba(255,250,246,0.16), rgba(242,247,255,0.18));
+    --glass:rgba(255, 255, 255, 0.68);
+    --glass-2:rgba(244, 248, 255, 0.78);
+    --glass-sub:rgba(255, 255, 255, 0.62);
+    --glass-input:rgba(255, 255, 255, 0.84);
+    --glass-hover:rgba(232, 240, 255, 0.88);
+    --glass-video:rgba(10, 14, 26, 0.90);
+    --glass-log:rgba(246, 249, 255, 0.86);
+    --glass-border:rgba(255, 255, 255, 0.82);
+    --glass-border-strong:rgba(110, 138, 190, 0.42);
+    --glass-highlight:rgba(255, 255, 255, 0.96);
+    --shadow-card:0 12px 32px rgba(32, 42, 74, 0.14);
+    --fg:#18223a;
+    --dim:#495a78;
+    --mute:#73829c;
+    --gem:#7b4ce2;
+    --gem-2:#b84ce0;
+    --gem-soft:rgba(123, 76, 226, 0.14);
+    --gem-border:rgba(123, 76, 226, 0.42);
+    --ds:#1b73d8;
+    --ds-2:#0d8cb5;
+    --ds-soft:rgba(27, 115, 216, 0.14);
+    --ds-border:rgba(27, 115, 216, 0.42);
+    --ok:#139e5a;
+    --ok-soft:rgba(19, 158, 90, 0.14);
+    --warn:#c67c06;
+    --warn-soft:rgba(198, 124, 6, 0.15);
+    --bad:#d93043;
+    --bad-soft:rgba(217, 48, 67, 0.15);
+    --acc:#1b73d8;
+    --banner-fade:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.48) 42%, rgba(255,255,255,0.90) 72%, rgba(255,255,255,0.94) 100%);
+    --bubble-bg:rgba(255, 255, 255, 0.72);
+    --reticle:rgba(255, 255, 255, 0.45);
+    --timeline-rail:linear-gradient(180deg, rgba(27,115,216,0.48), rgba(123,76,226,0.24) 65%, transparent);
+    --modal-bg:rgba(252, 254, 255, 0.96);
+    --scroll-thumb:rgba(60, 82, 124, 0.25);
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg-base);
+    color:var(--fg);
+    font:13px/1.45 var(--sans);
+    overflow:hidden;
+    position:relative;
+  }
+  .mono,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---------- 全屏第 3 张壁纸与可控柔雾罩层 ---------- */
+  .bg-wall{
+    position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:url('/assets/bg_playroom.webp') center 42% / cover no-repeat;
+    transform:scale(1.01);
+  }
+  .bg-scrim{
+    position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:var(--scrim);
+    transition:opacity .32s var(--ease), background .32s var(--ease);
+  }
+  body.peek-mode .bg-scrim{opacity:0.06}
+  body.peek-mode main,
+  body.peek-mode .log-shell{
+    opacity:0.06;pointer-events:none;
+  }
+  body.peek-mode header{
+    opacity:0.42;
+  }
+  body.peek-mode header:hover{
+    opacity:1;
+  }
+
+  /* 顶层 6 个琉璃玻璃面（严格控制 backdrop-filter 数量保 GPU 帧率） */
+  .glass-surface{
+    background:var(--glass);
+    backdrop-filter:blur(18px) saturate(165%);
+    -webkit-backdrop-filter:blur(18px) saturate(165%);
+    border:1px solid var(--glass-border);
+    box-shadow:inset 0 1px 0 var(--glass-highlight), var(--shadow-card);
+  }
+
+  /* ---------- 悬浮玻璃顶栏 (48px) ---------- */
   header{
-    display:flex;align-items:center;gap:12px;padding:8px 16px;
-    background:rgba(11, 16, 27, 0.9);
-    backdrop-filter:blur(12px);
-    border-bottom:1px solid var(--line);
-    position:relative;z-index:10;
+    position:relative;z-index:20;
+    height:48px;margin:8px 12px 0;padding:0 12px;
+    border-radius:var(--radius-lg);
+    display:flex;align-items:center;gap:10px;
+    transition:opacity .28s var(--ease);
   }
   .brand{
-    font-weight:800;font-size:14.5px;letter-spacing:.5px;white-space:nowrap;
-    display:flex;align-items:center;gap:8px;
+    display:flex;align-items:center;gap:9px;white-space:nowrap;
   }
-  .brand-badge{
-    display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;
-    font-size:10.5px;font-weight:600;
-    background:linear-gradient(90deg, rgba(168,125,255,.22), rgba(59,158,255,.22));
-    border:1px solid rgba(140,150,255,.35);color:#dce8ff;
+  .duo-chibis{
+    display:flex;align-items:center;padding-right:2px;
   }
-  .brand small{color:var(--mute);font-weight:400;letter-spacing:0}
-  .lights{display:flex;gap:6px;flex-wrap:wrap}
+  .chibi-ava{
+    width:28px;height:28px;border-radius:50%;overflow:hidden;
+    border:1.5px solid var(--gem);box-shadow:0 0 10px rgba(176,132,255,.35);
+    background:#12172a;flex-shrink:0;
+  }
+  .chibi-ava.ds{
+    margin-left:-8px;border-color:var(--ds);box-shadow:0 0 10px rgba(77,166,255,.35);
+  }
+  .chibi-ava img{width:100%;height:100%;object-fit:cover;display:block}
+  .brand-title{
+    font-weight:800;font-size:14px;letter-spacing:.4px;display:flex;align-items:baseline;gap:6px;
+  }
+  .brand-title small{font-size:11px;font-weight:600;color:var(--dim)}
+  .conn-pill{
+    display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--radius-pill);
+    font-size:10.5px;font-weight:700;border:1px solid var(--glass-border-strong);
+    background:var(--glass-sub);color:var(--dim);
+  }
+  .conn-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--mute)}
+  .conn-pill.ok{color:var(--ok);border-color:rgba(46,224,134,.4);background:var(--ok-soft)}
+  .conn-pill.ok .dot{background:var(--ok);box-shadow:0 0 7px var(--ok)}
+  .conn-pill.bad{color:var(--bad);border-color:rgba(255,92,108,.5);background:var(--bad-soft)}
+  .conn-pill.bad .dot{background:var(--bad);animation:pulseDot 1s infinite}
+  @keyframes pulseDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
+
+  .lights{display:flex;gap:5px;flex-wrap:wrap}
   .light{
-    display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;
-    background:rgba(13,19,31,.85);border:1px solid var(--line);font-size:11.5px;color:var(--dim);
-    transition:.15s;
+    display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:var(--radius-sm);
+    background:var(--glass-sub);border:1px solid var(--glass-border);
+    font-size:11px;font-weight:600;color:var(--dim);transition:.15s;
   }
-  .light .dot{width:7px;height:7px;border-radius:50%;background:#3a4659;transition:.15s}
-  .light.on{color:#d8f8e6;border-color:rgba(46,224,134,.45);background:rgba(14,38,26,.85)}
-  .light.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  .light.bad{color:#ffd8dc;border-color:rgba(255,94,108,.55);background:rgba(46,16,20,.85)}
-  .light.bad .dot{background:var(--bad);box-shadow:0 0 8px var(--bad)}
-  .spacer{flex:1}
-  .round{
-    font-size:11.5px;color:#cde0ff;padding:3px 10px;border-radius:6px;
-    background:rgba(16,24,38,.85);border:1px solid var(--line);white-space:nowrap;font-weight:600;
-  }
+  .light .dot{width:6px;height:6px;border-radius:50%;background:var(--mute);transition:.15s}
+  .light.on{color:var(--ok);border-color:rgba(46,224,134,.42);background:var(--ok-soft)}
+  .light.on .dot{background:var(--ok);box-shadow:0 0 7px var(--ok)}
+  .light.bad{color:var(--bad);border-color:rgba(255,92,108,.52);background:var(--bad-soft)}
+  .light.bad .dot{background:var(--bad);box-shadow:0 0 7px var(--bad)}
+
   .volt{
-    font:600 12px/1 Consolas,monospace;padding:5px 10px;border-radius:6px;
-    background:rgba(16,24,38,.85);border:1px solid var(--line);color:var(--dim);white-space:nowrap;
+    font:700 12px/1 var(--mono);font-variant-numeric:tabular-nums;
+    padding:5px 10px;border-radius:var(--radius-sm);
+    background:var(--glass-sub);border:1px solid var(--glass-border);color:var(--dim);white-space:nowrap;
   }
-  .volt.ok{color:#9ff7c8;border-color:rgba(46,224,134,.4);background:rgba(14,36,25,.85)}
+  .volt.ok{color:var(--ok);border-color:rgba(46,224,134,.42);background:var(--ok-soft)}
   .volt.low{
-    color:#ffe2e5;border-color:#d93c4a;background:#3e1217;
-    box-shadow:0 0 14px rgba(255,94,108,.45);font-weight:700;
+    color:#fff;border-color:#ff4757;background:linear-gradient(135deg,#c92a3b,#961926);
+    box-shadow:0 0 14px rgba(255,92,108,.48);animation:pulseDot 1.2s infinite;
   }
+  .round{
+    font:700 11.5px/1 var(--sans);padding:5px 9px;border-radius:var(--radius-sm);
+    background:var(--glass-sub);border:1px solid var(--glass-border);color:var(--fg);white-space:nowrap;
+  }
+  .spacer{flex:1}
   .clock{
-    font:700 32px/1 Consolas,monospace;letter-spacing:1px;color:#fff;
-    text-shadow:0 0 18px rgba(59,158,255,.35);min-width:142px;text-align:right;
+    font:800 28px/1 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:.5px;
+    color:var(--fg);min-width:128px;text-align:right;
+    text-shadow:0 0 16px rgba(77,166,255,.25);
   }
-  .clock.run{color:#8be8ff;text-shadow:0 0 18px rgba(59,158,255,.55)}
-  .clock.final{color:var(--warn);text-shadow:0 0 18px rgba(248,190,68,.5)}
+  .clock.run{color:var(--ds-2);text-shadow:0 0 18px rgba(56,217,245,.45)}
+  .clock.final{color:var(--warn);text-shadow:0 0 18px rgba(247,183,51,.45)}
+
   button{
-    background:rgba(24,33,50,.92);color:var(--fg);border:1px solid var(--line);padding:6px 12px;
-    border-radius:7px;cursor:pointer;font-size:12.5px;font-family:inherit;transition:.15s;
+    background:var(--glass-sub);color:var(--fg);border:1px solid var(--glass-border);
+    padding:5px 11px;border-radius:var(--radius-sm);cursor:pointer;
+    font:600 12px/1.3 var(--sans);transition:border-color .15s, background .15s, transform .1s;
+    display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;
   }
-  button:hover:not(:disabled){border-color:var(--acc);background:rgba(33,47,72,.95)}
-  button:disabled{opacity:.35;cursor:not-allowed}
-  button.estop{
-    background:linear-gradient(180deg,#a32a36,#7a1d26);border-color:#d24654;
-    color:#ffe8ea;font-weight:700;box-shadow:0 2px 10px rgba(200,40,55,.25);
-  }
-  button.estop:hover{background:linear-gradient(180deg,#b8323f,#8a212b)}
-  button.primary{
-    background:linear-gradient(180deg,#2470c4,#185296);border-color:#4294ee;color:#eef6ff;font-weight:600;
-  }
+  button:hover:not(:disabled){border-color:var(--acc);background:var(--glass-hover)}
+  button:active:not(:disabled){transform:translateY(1px)}
+  button:disabled{opacity:.38;cursor:not-allowed}
+  button.icon{width:30px;height:30px;padding:0;font-weight:700}
   button.ghost{background:transparent}
-  button.icon{width:30px;padding:5px 0;text-align:center;font-weight:700}
+  button.primary{
+    background:linear-gradient(135deg, var(--ds), #2667c9);border-color:rgba(130,195,255,.55);
+    color:#fff;font-weight:700;box-shadow:0 4px 14px rgba(38,103,201,.32);
+  }
+  button.primary:hover:not(:disabled){filter:brightness(1.08)}
+  button.estop{
+    background:linear-gradient(135deg, #d83b4c, #991f2c);border-color:rgba(255,130,142,.55);
+    color:#fff;font-weight:700;box-shadow:0 4px 14px rgba(200,40,55,.35);
+  }
+  button.estop:hover:not(:disabled){filter:brightness(1.09)}
+  button.active-toggle{
+    background:var(--ds-soft);border-color:var(--ds-border);color:var(--ds);
+  }
 
-  /* ---------- main layout ---------- */
+  /* 断连提示条 */
+  .conn-banner{
+    position:fixed;top:62px;left:50%;transform:translateX(-50%);z-index:45;
+    display:none;align-items:center;gap:8px;padding:6px 14px;border-radius:var(--radius-pill);
+    background:linear-gradient(135deg,#b52635,#8a1824);color:#fff;font-size:12px;font-weight:600;
+    border:1px solid rgba(255,170,180,.55);box-shadow:0 8px 24px rgba(0,0,0,.35);
+  }
+  .conn-banner.show{display:flex}
+
+  /* ---------- 主布局 ---------- */
   main{
-    padding:10px 12px;display:grid;gap:10px;height:calc(100vh - 53px);
-    grid-template-rows:auto 1fr auto;min-height:0;
+    position:relative;z-index:10;
+    padding:8px 12px 50px;
+    height:calc(100vh - 56px);
+    display:grid;gap:9px;
+    grid-template-rows:64px minmax(0,1fr);
+    min-height:0;
+    transition:opacity .28s var(--ease);
   }
 
-  /* ---------- stats ---------- */
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-  .stat{
-    background:var(--card);backdrop-filter:blur(10px);
-    border:1px solid var(--line);border-radius:11px;
-    padding:9px 14px;position:relative;overflow:hidden;
-    box-shadow:0 4px 18px rgba(0,0,0,.22);
+  /* ---------- 融合玻璃遥测带 (64px) ---------- */
+  .telemetry{
+    border-radius:var(--radius-lg);
+    display:grid;grid-template-columns:repeat(4,1fr);
+    overflow:hidden;position:relative;
   }
-  .stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ds)}
-  .stat.s2::before{background:var(--ok)}
-  .stat.s3::before{background:var(--gem)}
-  .stat.s4::before{background:var(--warn)}
-  .stat .k{font-size:11px;color:var(--dim);letter-spacing:.4px;display:flex;align-items:center;justify-content:space-between}
-  .stat .v{font:700 20px/1.25 Consolas,monospace;margin-top:3px;color:#fff}
-  .stat .sub{font-size:11px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .yprog{display:flex;gap:4px;margin-top:5px}
-  .yprog i{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.1);transition:.2s}
-  .yprog i.done{background:var(--warn);box-shadow:0 0 8px rgba(248,190,68,.5)}
+  .tel-cell{
+    padding:8px 14px;position:relative;display:flex;flex-direction:column;justify-content:center;min-width:0;
+  }
+  .tel-cell + .tel-cell::before{
+    content:"";position:absolute;left:0;top:12px;bottom:12px;width:1px;background:var(--glass-border);
+  }
+  .tel-k{
+    font-size:11px;font-weight:600;color:var(--dim);letter-spacing:.3px;
+    display:flex;align-items:center;justify-content:space-between;gap:6px;
+  }
+  .tel-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+  .tel-cell.c1 .tel-dot{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+  .tel-cell.c2 .tel-dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .tel-cell.c3 .tel-dot{background:var(--gem);box-shadow:0 0 8px var(--gem)}
+  .tel-cell.c4 .tel-dot{background:var(--ds);box-shadow:0 0 8px var(--ds)}
+  .tel-v{
+    font:800 18px/1.2 var(--mono);font-variant-numeric:tabular-nums;
+    color:var(--fg);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .tel-cell.c3 .tel-v{color:var(--gem)}
+  .tel-sub{
+    font-size:11px;color:var(--dim);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
 
-  /* ---------- columns ---------- */
+  /* ---------- 三翼工作区 ---------- */
   .cols{
     display:grid;gap:10px;min-height:0;
-    grid-template-columns:minmax(310px,365px) minmax(360px,1fr) minmax(300px,350px);
+    grid-template-columns:minmax(310px,360px) minmax(380px,1fr) minmax(310px,365px);
   }
   .card{
-    background:var(--card);backdrop-filter:blur(12px);
-    border:1px solid var(--line);border-radius:12px;
+    border-radius:var(--radius-lg);
     display:flex;flex-direction:column;min-height:0;overflow:hidden;position:relative;
-    box-shadow:0 8px 24px rgba(0,0,0,.28);
   }
-  .card.theme-gem{border-color:rgba(168,125,255,.28);box-shadow:0 8px 28px rgba(100,60,180,.14)}
-  .card.theme-ds{border-color:rgba(59,158,255,.28);box-shadow:0 8px 28px rgba(30,100,200,.14)}
-  .card>h2{
-    margin:0;padding:8px 12px;font-size:12.5px;font-weight:700;color:#dce8fa;
-    background:var(--card2);border-bottom:1px solid var(--line);
-    display:flex;align-items:center;gap:8px;position:relative;z-index:2;
+  /* 顶部 2px 双子微光刃 */
+  .card::before{
+    content:"";position:absolute;left:16px;right:16px;top:0;height:2px;border-radius:2px;z-index:5;
+    pointer-events:none;
   }
-  .card.theme-gem>h2{background:linear-gradient(90deg, rgba(168,125,255,.18), rgba(21,29,46,.92))}
-  .card.theme-ds>h2{background:linear-gradient(90deg, rgba(59,158,255,.18), rgba(21,29,46,.92))}
-  .card>h2 .tag{margin-left:auto;font-size:10.5px;color:var(--dim);font-weight:400}
+  .card.theme-gem::before{
+    background:linear-gradient(90deg, transparent, var(--gem), var(--gem-2), transparent);
+  }
+  .card.theme-ds::before{
+    background:linear-gradient(90deg, transparent, var(--ds-2), var(--ds), transparent);
+  }
+  .card-head{
+    padding:7px 12px;display:flex;align-items:center;gap:7px;
+    border-bottom:1px solid var(--glass-border);background:var(--glass-sub);
+    font-size:12.5px;font-weight:700;flex-shrink:0;
+  }
+  .card-head .tag{margin-left:auto;font-size:11px;font-weight:500;color:var(--dim);font-family:var(--mono)}
+  .card.theme-gem .card-head .wing-mark{color:var(--gem)}
+  .card.theme-ds .card-head .wing-mark{color:var(--ds)}
 
-  /* ---------- 双子看板助手条 (Companion Banner) ---------- */
-  .companion{
-    display:flex;align-items:center;gap:10px;padding:7px 10px;
-    border-bottom:1px solid var(--line);position:relative;z-index:2;flex-shrink:0;
+  /* ---------- 双子战术角色横幅舞台 (112px) ---------- */
+  .hero-banner{
+    position:relative;height:112px;flex-shrink:0;overflow:hidden;
+    border-bottom:1px solid var(--glass-border);
+    display:flex;align-items:stretch;justify-content:flex-end;
+    background:#0d1324;
   }
-  .companion.gem{background:linear-gradient(90deg, rgba(168,125,255,.12), rgba(15,21,34,.5))}
-  .companion.ds{background:linear-gradient(90deg, rgba(59,158,255,.12), rgba(15,21,34,.5))}
-  .comp-av{
-    width:38px;height:38px;border-radius:10px;overflow:hidden;flex-shrink:0;
-    background:rgba(8,12,20,.85);border:1.5px solid var(--line-strong);
-    display:flex;align-items:center;justify-content:center;transition:.2s;
+  .hero-banner img.hero-art{
+    position:absolute;left:0;top:0;width:100%;height:100%;
+    object-fit:cover;object-position:left 22%;
+    pointer-events:none;user-select:none;
+    transition:transform .35s var(--ease);
   }
-  .companion.gem .comp-av{border-color:var(--gem-border);box-shadow:0 0 12px rgba(168,125,255,.28)}
-  .companion.ds .comp-av{border-color:var(--ds-border);box-shadow:0 0 12px rgba(59,158,255,.28)}
-  .companion.alert .comp-av{border-color:var(--bad);box-shadow:0 0 14px rgba(255,94,108,.5)}
-  .companion.warn .comp-av{border-color:var(--warn);box-shadow:0 0 14px rgba(248,190,68,.45)}
-  .companion.ok .comp-av{border-color:var(--ok);box-shadow:0 0 14px rgba(46,224,134,.45)}
-  .comp-av img{width:100%;height:100%;object-fit:cover;object-position:top center}
-  .comp-body{flex:1;min-width:0}
-  .comp-name{font-size:11px;font-weight:700;display:flex;align-items:center;gap:6px}
-  .companion.gem .comp-name{color:#d7bdff}
-  .companion.ds .comp-name{color:#9fd0ff}
-  .comp-role{font-size:9.5px;padding:0 5px;border-radius:4px;background:rgba(255,255,255,.07);color:var(--dim);font-weight:500}
-  .comp-msg{
-    font-size:11.5px;color:#eaf1fb;margin-top:1px;line-height:1.35;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  .hero-banner:hover img.hero-art{transform:scale(1.02)}
+  .hero-banner::after{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:var(--banner-fade);
   }
+  /* 极细 L 型准星角标 */
+  .reticle{position:relative}
+  .reticle .rk{position:absolute;width:9px;height:9px;pointer-events:none;z-index:4;border-color:var(--reticle);border-style:solid;border-width:0}
+  .reticle .rk.tl{top:5px;left:5px;border-top-width:1px;border-left-width:1px}
+  .reticle .rk.tr{top:5px;right:5px;border-top-width:1px;border-right-width:1px}
+  .reticle .rk.bl{bottom:5px;left:5px;border-bottom-width:1px;border-left-width:1px}
+  .reticle .rk.br{bottom:5px;right:5px;border-bottom-width:1px;border-right-width:1px}
 
-  /* 卡片内半透明立绘水印（不遮挡交互） */
-  .sprite-bg{
-    position:absolute;right:-6px;bottom:0;height:210px;width:auto;
-    opacity:.14;pointer-events:none;z-index:1;
-    filter:drop-shadow(0 0 12px rgba(0,0,0,.6));
-    -webkit-mask-image:linear-gradient(180deg, rgba(0,0,0,.9) 55%, transparent 100%);
-    mask-image:linear-gradient(180deg, rgba(0,0,0,.9) 55%, transparent 100%);
-    transition:opacity .25s;
+  .hero-info{
+    position:relative;z-index:3;width:58%;padding:9px 11px 9px 6px;
+    display:flex;flex-direction:column;justify-content:center;gap:6px;
   }
-  .card:hover .sprite-bg{opacity:.20}
+  .hero-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .hero-name{
+    font:800 11px/1 var(--mono);letter-spacing:.7px;
+  }
+  .hero-banner.gem .hero-name{color:var(--gem)}
+  .hero-banner.ds .hero-name{color:var(--ds)}
+  .mood-pill{
+    font-size:10px;font-weight:700;padding:2px 7px;border-radius:var(--radius-pill);
+    background:var(--glass-2);border:1px solid var(--glass-border-strong);color:var(--dim);
+    margin-left:auto;
+  }
+  .hero-banner.ok .mood-pill{color:var(--ok);border-color:rgba(46,224,134,.48);background:var(--ok-soft)}
+  .hero-banner.warn .mood-pill{color:var(--warn);border-color:rgba(247,183,51,.52);background:var(--warn-soft)}
+  .hero-banner.alert .mood-pill{color:var(--bad);border-color:rgba(255,92,108,.55);background:var(--bad-soft);animation:pulseDot 1.1s infinite}
+  .hero-bubble{
+    padding:6px 9px;border-radius:var(--radius-md);
+    background:var(--bubble-bg);border:1px solid var(--glass-border);
+    font-size:11.5px;line-height:1.38;color:var(--fg);
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .hero-banner.gem.alert{box-shadow:inset 0 0 0 1px rgba(255,92,108,.45)}
+  .hero-banner.ds.alert{box-shadow:inset 0 0 0 1px rgba(255,92,108,.45)}
 
-  /* ---------- images ---------- */
-  .imgs{padding:8px;display:flex;flex-direction:column;gap:8px;overflow:hidden;flex:1;min-height:0;position:relative;z-index:2}
+  /* ---------- 左翼：双路视频与录制 ---------- */
+  .imgs{padding:8px;display:flex;flex-direction:column;gap:8px;flex:1;min-height:0}
   .imgwrap{
-    position:relative;border:1px solid var(--line);border-radius:8px;
-    background:#05080f;overflow:hidden;flex:1;min-height:0;display:flex;
+    position:relative;flex:1;min-height:0;border-radius:var(--radius-md);
+    background:var(--glass-video);border:1px solid var(--glass-border);
+    overflow:hidden;display:flex;align-items:center;justify-content:center;
   }
-  .imgwrap img{width:100%;height:100%;object-fit:contain;display:block}
+  .imgwrap img.stream-img{
+    width:100%;height:100%;object-fit:contain;display:block;position:relative;z-index:2;
+    opacity:0;transition:opacity .22s ease;
+  }
+  .imgwrap.live img.stream-img{opacity:1}
+  .standby-cover{
+    position:absolute;inset:0;z-index:1;display:flex;align-items:flex-end;justify-content:center;
+    background:#0b1022;transition:opacity .22s ease;
+  }
+  .imgwrap.live .standby-cover{opacity:0;pointer-events:none}
+  .standby-cover img{
+    position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.86;
+  }
+  .standby-cover::after{
+    content:"";position:absolute;inset:0;
+    background:linear-gradient(180deg, rgba(8,12,24,.15) 35%, rgba(8,12,24,.82) 100%);
+  }
+  .standby-txt{
+    position:relative;z-index:2;margin-bottom:8px;padding:3px 10px;border-radius:var(--radius-pill);
+    background:rgba(12,18,34,.78);border:1px solid rgba(255,255,255,.2);
+    color:#e9f1ff;font-size:11px;font-weight:600;
+  }
   .imgwrap .lbl{
-    position:absolute;left:8px;top:6px;font-size:11px;color:#e8ddff;
-    background:rgba(12,14,26,.78);padding:2px 8px;border-radius:5px;
-    border:1px solid rgba(168,125,255,.35);backdrop-filter:blur(4px);
+    position:absolute;left:8px;top:7px;z-index:4;
+    font-size:10.5px;font-weight:700;color:#eef4ff;
+    background:rgba(10,14,26,.76);padding:2px 8px;border-radius:var(--radius-sm);
+    border:1px solid rgba(176,132,255,.42);
   }
+  .stream-pill{
+    position:absolute;right:8px;top:7px;z-index:4;
+    font:700 10px/1 var(--mono);padding:3px 7px;border-radius:var(--radius-pill);
+    background:rgba(10,14,26,.76);border:1px solid rgba(255,255,255,.22);color:#b7c6de;
+  }
+  .imgwrap.live .stream-pill{
+    background:rgba(16,46,32,.86);border-color:rgba(46,224,134,.55);color:#7cf7b5;
+  }
+
   .recpill{
-    display:none;font:600 11px/1 Consolas,monospace;padding:2px 7px;border-radius:10px;
-    background:#3c1318;border:1px solid #d9414f;color:#ffd4d8;animation:recpulse 1.1s infinite;
+    display:none;font:700 10.5px/1 var(--mono);padding:3px 8px;border-radius:var(--radius-pill);
+    background:#44131a;border:1px solid #ff5c6c;color:#ffd9de;animation:pulseDot 1.1s infinite;
   }
   .recpill.on{display:inline-flex;align-items:center;gap:4px}
-  @keyframes recpulse{0%,100%{opacity:1}50%{opacity:.55}}
-  details.recbox{border-top:1px solid var(--line);background:rgba(18,24,38,.92);flex-shrink:0;position:relative;z-index:2}
+
+  details.recbox{
+    border-top:1px solid var(--glass-border);background:var(--glass-sub);flex-shrink:0;
+  }
   details.recbox>summary{
-    cursor:pointer;padding:6px 10px;font-size:11.5px;font-weight:600;
-    color:#c6d6ea;list-style:none;display:flex;align-items:center;gap:6px;
+    cursor:pointer;padding:7px 11px;font-size:12px;font-weight:700;color:var(--fg);
+    list-style:none;display:flex;align-items:center;gap:6px;
   }
   details.recbox>summary::-webkit-details-marker{display:none}
   details.recbox>summary::before{content:"▸";color:var(--mute);transition:.15s;display:inline-block}
   details.recbox[open]>summary::before{transform:rotate(90deg)}
-  details.recbox .rec-cnt{margin-left:auto;font-size:10.5px;color:var(--mute);font-weight:400}
-  .rec-body{padding:6px 10px 8px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:6px}
+  details.recbox .rec-cnt{margin-left:auto;font:600 10.5px var(--mono);color:var(--dim)}
+  .rec-body{padding:7px 10px 9px;border-top:1px dashed var(--glass-border);display:flex;flex-direction:column;gap:6px}
   .rec-row{display:flex;gap:6px;align-items:center}
   .rec-row select{
-    flex:1;min-width:0;background:#080c14;color:var(--fg);border:1px solid var(--line);
-    border-radius:5px;padding:4px 6px;font-size:11.5px;
+    flex:1;min-width:0;background:var(--glass-input);color:var(--fg);
+    border:1px solid var(--glass-border-strong);border-radius:var(--radius-sm);padding:4px 7px;font-size:11.5px;
   }
   button.rec-go{
-    flex:1;background:linear-gradient(180deg,#1f6b45,#165234);border-color:#2ea066;
-    color:#e8fff2;font-weight:600;padding:5px 10px;font-size:12px;
+    flex:1;background:linear-gradient(135deg,#1e8251,#145f3a);border-color:rgba(46,224,134,.5);
+    color:#fff;font-weight:700;padding:6px 10px;font-size:12px;
   }
   button.rec-go.recording{
-    background:linear-gradient(180deg,#a82b2b,#7e1e1e);border-color:#e04f4f;color:#ffe8e8;
+    background:linear-gradient(135deg,#c9313d,#911d26);border-color:rgba(255,92,108,.6);
   }
   .rec-meta{font-size:10.5px;color:var(--dim);display:flex;justify-content:space-between;gap:6px}
-  .rec-files{max-height:112px;overflow:auto;display:flex;flex-direction:column;gap:3px}
+  .rec-files{max-height:105px;overflow:auto;display:flex;flex-direction:column;gap:3px}
   .rec-file{
-    display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:5px;
-    background:#0d131c;border:1px solid #1f2a38;font-size:11px;
+    display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:var(--radius-sm);
+    background:var(--glass-input);border:1px solid var(--glass-border);font-size:11px;
   }
-  .rec-file .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,monospace;color:#cfe0f5}
-  .rec-file .sz{color:var(--mute);font-family:Consolas,monospace;white-space:nowrap}
-  .rec-file a{color:var(--acc);text-decoration:none;font-size:11px;white-space:nowrap}
+  .rec-file .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);color:var(--fg)}
+  .rec-file .sz{color:var(--mute);font-family:var(--mono);white-space:nowrap}
+  .rec-file a{color:var(--acc);text-decoration:none;font-weight:600;white-space:nowrap}
   .rec-file a:hover{text-decoration:underline}
-  .rec-file button.del{padding:1px 5px;font-size:10.5px;background:transparent;color:var(--mute);border-color:transparent}
-  .rec-file button.del:hover{color:var(--bad);border-color:#5a2626;background:#241111}
+  .rec-file button.del{padding:1px 6px;font-size:10.5px;background:transparent;border-color:transparent;color:var(--mute)}
+  .rec-file button.del:hover{color:var(--bad);background:var(--bad-soft)}
 
-  /* ---------- params ---------- */
-  .ptabs{display:flex;gap:5px;padding:6px 10px;background:rgba(12,18,30,.9);border-bottom:1px solid var(--line);align-items:center;position:relative;z-index:2}
+  /* ---------- 中枢：战术参数整定台 ---------- */
+  .ptabs-wrap{
+    padding:7px 10px 6px;border-bottom:1px solid var(--glass-border);background:var(--glass-sub);
+    display:flex;flex-direction:column;gap:6px;flex-shrink:0;
+  }
+  .ptabs{
+    display:flex;gap:4px;padding:3px;border-radius:10px;
+    background:var(--glass-input);border:1px solid var(--glass-border);
+  }
   .ptab{
-    flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:5px 8px;
-    border-radius:6px;background:transparent;border:1px solid transparent;color:var(--dim);
-    font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap;
+    flex:1;padding:5px 8px;border-radius:var(--radius-sm);background:transparent;border:1px solid transparent;
+    color:var(--dim);font-size:12px;font-weight:700;justify-content:center;
   }
-  .ptab:hover{background:rgba(255,255,255,.05);color:var(--fg)}
-  .ptab.active{background:rgba(36,75,130,.36);border-color:var(--ds-border);color:#eef6ff}
-  .ptab.legacy.active{background:#231f16;border-color:#7a622a;color:#ffe5a8}
-  .ptab .badge{font-size:9.5px;padding:0 4px;border-radius:4px;font-weight:600;background:#222c38;color:var(--mute)}
-  .ptab .dot-dirty{width:6px;height:6px;border-radius:50%;background:var(--warn);display:none}
-  .ptab.has-dirty .dot-dirty{display:inline-block}
+  .ptab:hover:not(.active){background:var(--glass-hover);color:var(--fg);border-color:transparent}
+  .ptab.active{
+    background:linear-gradient(135deg, var(--ds-soft), rgba(56,217,245,.12));
+    border-color:var(--ds-border);color:var(--fg);box-shadow:0 2px 8px rgba(0,0,0,.15);
+  }
+  .ptab .dot-dirty{width:6px;height:6px;border-radius:50%;background:var(--warn);display:none;box-shadow:0 0 6px var(--warn)}
+  .ptab.has-dirty .dot-dirty{display:inline-block;animation:pulseDot 1.3s infinite}
+
   .ptier-banner{
-    padding:6px 10px;font-size:11.5px;color:#b2c6df;background:rgba(14,22,36,.85);
-    border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:relative;z-index:2;
+    display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim);
   }
-  .ptier-banner.warn{background:#211b0e;color:#f3d286;border-bottom-color:#4d3d18}
-  .ptier-banner select{background:#080c14;color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:2px 7px;font-size:11.5px;margin-left:auto}
-  .params{overflow:auto;padding:6px 12px 12px;flex:1;min-height:0;position:relative;z-index:2}
-  .tier-pane{display:none}
-  .tier-pane.active{display:block}
-  details.grp{border-bottom:1px dashed var(--line);padding:6px 0}
-  details.grp:last-child{border-bottom:0}
+  .ptier-banner span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .psearch-box{
+    position:relative;display:flex;align-items:center;width:146px;flex-shrink:0;
+  }
+  .psearch-box input{
+    width:100%;background:var(--glass-input);color:var(--fg);border:1px solid var(--glass-border);
+    border-radius:var(--radius-pill);padding:3px 22px 3px 9px;font-size:11px;outline:none;
+  }
+  .psearch-box input:focus{border-color:var(--ds)}
+  .psearch-box button{
+    position:absolute;right:4px;width:16px;height:16px;padding:0;border:0;background:transparent;
+    color:var(--mute);font-size:10px;border-radius:50%;display:none;
+  }
+  .psearch-box button.show{display:inline-flex}
+
+  .params{overflow:auto;padding:8px 10px 10px;flex:1;min-height:0}
+  .tier-pane{display:none;flex-direction:column;gap:8px}
+  .tier-pane.active{display:flex}
+
+  details.grp{
+    background:var(--glass-sub);border:1px solid var(--glass-border);
+    border-radius:var(--radius-md);padding:0;overflow:hidden;
+  }
   details.grp>summary{
-    cursor:pointer;color:#7cbfff;font-weight:600;font-size:12.5px;
-    padding:4px 0;outline:none;list-style:none;display:flex;gap:6px;align-items:center;
+    cursor:pointer;padding:8px 11px;font-size:12px;font-weight:700;color:var(--ds);
+    list-style:none;display:flex;align-items:center;gap:7px;user-select:none;
   }
   details.grp>summary::-webkit-details-marker{display:none}
   details.grp>summary::before{content:"▸";color:var(--mute);transition:.15s;display:inline-block}
+  details.grp[open]>summary{border-bottom:1px solid var(--glass-border)}
   details.grp[open]>summary::before{transform:rotate(90deg)}
   .grp-desc{
-    margin:2px 0 6px 14px;padding:5px 9px;border-left:2px solid var(--ds-border);
-    background:rgba(14,22,36,.75);border-radius:0 5px 5px 0;font-size:11px;color:#9bb2cc;
+    margin:7px 10px 4px;padding:5px 9px;border-left:2px solid var(--ds);
+    background:var(--ds-soft);border-radius:0 6px 6px 0;font-size:11px;color:var(--dim);
   }
-  .row{display:grid;grid-template-columns:1fr 122px;gap:8px;align-items:center;padding:3px 0 3px 14px}
-  .row .lbl{font-size:12px;color:#e5eefb}
-  .row .hint{display:block;color:var(--mute);font-size:10.5px;line-height:1.35}
-  .row input[type=number],.row select{
-    width:100%;background:#080c14;color:#fff;border:1px solid var(--line);
-    border-radius:5px;padding:3px 6px;font:12px Consolas,monospace;
-  }
-  .row input[type=number]:focus,.row select:focus{outline:none;border-color:var(--ds)}
-  .row input[type=checkbox]{width:15px;height:15px;accent-color:var(--ds)}
-  .row.dirty input[type=number],.row.dirty select{border-color:var(--warn);background:#1d1a10}
-  .row.pending .lbl::after{
-    content:"待重启";margin-left:6px;font-size:10px;color:#12181f;
-    background:var(--warn);border-radius:4px;padding:0 5px;font-weight:700;
-  }
-  .footbar{
-    display:flex;gap:8px;align-items:center;padding:8px 10px;
-    border-top:1px solid var(--line);background:var(--card2);flex-wrap:wrap;position:relative;z-index:2;
-  }
-  .footbar select{background:#080c14;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:12px}
-  .memo{font-size:11px;color:var(--dim);margin-left:auto}
 
-  /* ---------- 决策流重构 (分级时间线 + 高频折叠) ---------- */
-  .dec-summary{
-    padding:8px 10px;background:rgba(12,18,30,.92);border-bottom:1px solid var(--line);
-    display:flex;flex-direction:column;gap:5px;flex-shrink:0;position:relative;z-index:2;
+  .row{
+    display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;
+    padding:7px 10px 7px 12px;border-top:1px dashed var(--glass-border);position:relative;
+    transition:background .15s;
   }
-  .dec-sum-top{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:#dceaff}
+  details.grp>summary + .row,
+  .grp-desc + .row{border-top:0}
+  .row:hover{background:rgba(255,255,255,.03)}
+  .row.hidden-filter{display:none}
+  .row.dirty::before{
+    content:"";position:absolute;left:0;top:4px;bottom:4px;width:3px;border-radius:2px;
+    background:var(--warn);box-shadow:0 0 8px var(--warn);animation:pulseDot 1.3s infinite;
+  }
+  .row .lbl{font-size:12px;font-weight:600;color:var(--fg);min-width:0}
+  .row .hint{display:block;color:var(--mute);font-size:10.5px;font-weight:400;line-height:1.35;margin-top:1px}
+  .row.pending .lbl::after{
+    content:"待重启";margin-left:6px;font-size:10px;color:#141a24;
+    background:var(--warn);border-radius:var(--radius-pill);padding:1px 6px;font-weight:700;
+  }
+
+  /* 步进器 */
+  .stepper{
+    display:inline-flex;align-items:center;border-radius:var(--radius-sm);
+    background:var(--glass-input);border:1px solid var(--glass-border-strong);overflow:hidden;
+    width:146px;
+  }
+  .row.dirty .stepper{border-color:var(--warn);background:var(--warn-soft)}
+  .stepper button.step-btn{
+    width:28px;height:28px;padding:0;border:0;border-radius:0;background:transparent;
+    color:var(--dim);font:700 14px/1 var(--mono);flex-shrink:0;
+  }
+  .stepper button.step-btn:hover:not(:disabled){background:var(--ds-soft);color:var(--fg)}
+  .stepper input[type=number]{
+    flex:1;min-width:0;border:0;background:transparent;color:var(--fg);
+    text-align:center;font:700 12px/1 var(--mono);font-variant-numeric:tabular-nums;
+    padding:4px 2px;outline:none;
+    -moz-appearance:textfield;
+  }
+  .stepper input[type=number]::-webkit-inner-spin-button,
+  .stepper input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+
+  .row select{
+    width:146px;background:var(--glass-input);color:var(--fg);
+    border:1px solid var(--glass-border-strong);border-radius:var(--radius-sm);
+    padding:5px 7px;font:600 11.5px var(--mono);outline:none;
+  }
+  .row select:focus{border-color:var(--ds)}
+  .row.dirty select{border-color:var(--warn);background:var(--warn-soft)}
+
+  /* 现代胶囊 Toggle Switch */
+  .toggle{
+    position:relative;display:inline-flex;align-items:center;cursor:pointer;user-select:none;
+  }
+  .toggle input[type=checkbox]{
+    position:absolute;opacity:0;width:0;height:0;pointer-events:none;
+  }
+  .toggle .track{
+    width:42px;height:22px;border-radius:var(--radius-pill);
+    background:var(--glass-input);border:1px solid var(--glass-border-strong);
+    position:relative;transition:background .18s, border-color .18s;
+  }
+  .toggle .thumb{
+    position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+    background:var(--dim);transition:transform .18s var(--ease), background .18s;
+  }
+  .toggle input:checked + .track{
+    background:var(--ds-soft);border-color:var(--ds);
+  }
+  .toggle input:checked + .track .thumb{
+    transform:translateX(20px);background:var(--ds);box-shadow:0 0 8px rgba(77,166,255,.5);
+  }
+  .toggle input:disabled + .track{opacity:.42;cursor:not-allowed}
+
+  .footbar{
+    display:flex;gap:6px;align-items:center;padding:8px 10px;
+    border-top:1px solid var(--glass-border);background:var(--glass-sub);flex-wrap:wrap;flex-shrink:0;
+  }
+  .footbar select{
+    background:var(--glass-input);color:var(--fg);border:1px solid var(--glass-border-strong);
+    border-radius:var(--radius-sm);padding:5px 8px;font-size:12px;font-weight:600;
+  }
+  .memo{font-size:11px;color:var(--dim);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}
+
+  /* ---------- 右翼：DeepSeek 战术时间轴 ---------- */
+  .focus-card{
+    margin:8px 8px 0;padding:8px 10px;border-radius:var(--radius-md);
+    background:var(--glass-sub);border:1px solid var(--glass-border);
+    display:flex;align-items:center;gap:10px;flex-shrink:0;
+  }
+  .focus-icon{
+    width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    font-size:17px;background:var(--ds-soft);border:1px solid var(--ds-border);flex-shrink:0;
+  }
+  .focus-card.warn .focus-icon{background:var(--warn-soft);border-color:rgba(247,183,51,.5)}
+  .focus-card.bad .focus-icon{background:var(--bad-soft);border-color:rgba(255,92,108,.55)}
+  .focus-card.ok .focus-icon{background:var(--ok-soft);border-color:rgba(46,224,134,.5)}
+  .focus-body{flex:1;min-width:0}
+  .focus-top{display:flex;align-items:center;gap:6px}
   .dec-sum-pill{
-    font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700;
-    background:rgba(59,158,255,.2);color:#9fd0ff;border:1px solid var(--ds-border);
+    font:700 10px/1 var(--mono);padding:2px 7px;border-radius:var(--radius-pill);
+    background:var(--ds-soft);color:var(--ds);border:1px solid var(--ds-border);
   }
-  .dec-sum-pill.warn{background:rgba(248,190,68,.2);color:#ffe299;border-color:rgba(248,190,68,.5)}
-  .dec-sum-pill.bad{background:rgba(255,94,108,.2);color:#ffc2c7;border-color:rgba(255,94,108,.5)}
-  .dec-sum-pill.ok{background:rgba(46,224,134,.2);color:#a7f8cb;border-color:rgba(46,224,134,.5)}
-  .dec-sum-text{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dec-sum-pill.warn{background:var(--warn-soft);color:var(--warn);border-color:rgba(247,183,51,.5)}
+  .dec-sum-pill.bad{background:var(--bad-soft);color:var(--bad);border-color:rgba(255,92,108,.55)}
+  .dec-sum-pill.ok{background:var(--ok-soft);color:var(--ok);border-color:rgba(46,224,134,.5)}
+  #decSumTitle{font-size:12.5px;font-weight:700;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dec-sum-text{font-size:11px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
   .dec-filters{
-    display:flex;gap:5px;padding:6px 10px;border-bottom:1px solid var(--line);
-    background:rgba(13,19,31,.8);flex-shrink:0;position:relative;z-index:2;align-items:center;
+    display:flex;gap:5px;padding:7px 10px;border-bottom:1px solid var(--glass-border);
+    align-items:center;flex-shrink:0;
   }
   .pill-btn{
-    padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;
-    background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--dim);cursor:pointer;
+    padding:3px 9px;border-radius:var(--radius-pill);font-size:11px;font-weight:700;
+    background:var(--glass-sub);border:1px solid var(--glass-border);color:var(--dim);
   }
-  .pill-btn:hover{color:var(--fg);border-color:var(--line-strong)}
-  .pill-btn.active{background:rgba(59,158,255,.22);border-color:var(--ds-border);color:#eef6ff}
-  .pill-btn.warn.active{background:rgba(255,94,108,.22);border-color:rgba(255,94,108,.5);color:#ffd8dc}
-  .dec-count{margin-left:auto;font-size:10.5px;color:var(--mute);font-family:Consolas,monospace}
+  .pill-btn:hover{color:var(--fg);border-color:var(--glass-border-strong)}
+  .pill-btn.active{background:var(--ds-soft);border-color:var(--ds-border);color:var(--ds)}
+  .pill-btn.warn.active{background:var(--bad-soft);border-color:rgba(255,92,108,.55);color:var(--bad)}
+  .dec-count{margin-left:auto;font:600 10.5px var(--mono);color:var(--mute)}
 
-  .feed{overflow:auto;padding:8px;flex:1;min-height:0;position:relative;z-index:2}
+  .feed{overflow:auto;padding:8px 10px 10px;flex:1;min-height:0;position:relative}
+  .tl-empty{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+    padding:26px 12px;text-align:center;color:var(--mute);font-size:12px;
+  }
+  .tl-empty img{
+    width:58px;height:58px;border-radius:50%;object-fit:cover;
+    border:2px solid var(--ds-border);box-shadow:0 4px 16px rgba(77,166,255,.24);
+  }
+
+  .tl-item{
+    display:grid;grid-template-columns:44px 20px 1fr;gap:6px;align-items:stretch;
+    padding-bottom:7px;position:relative;
+  }
+  .tl-t{
+    font:600 10.5px/1.4 var(--mono);font-variant-numeric:tabular-nums;
+    color:var(--mute);text-align:right;padding-top:6px;
+  }
+  .tl-rail{
+    position:relative;display:flex;flex-direction:column;align-items:center;
+  }
+  .tl-rail::after{
+    content:"";position:absolute;top:24px;bottom:-4px;width:2px;background:var(--timeline-rail);
+  }
+  .tl-item:last-child .tl-rail::after{display:none}
+  .tl-node{
+    width:20px;height:20px;border-radius:50%;margin-top:4px;z-index:2;
+    display:flex;align-items:center;justify-content:center;font-size:10.5px;
+    background:var(--glass-2);border:1px solid var(--glass-border-strong);flex-shrink:0;
+  }
   .ev{
-    display:grid;grid-template-columns:46px 1fr;gap:8px;padding:6px 8px;border-radius:8px;
-    border:1px solid rgba(110,140,190,.12);border-left:3px solid var(--line);
-    margin-bottom:5px;background:rgba(15,22,36,.82);transition:.15s;
+    border-radius:var(--radius-sm);padding:6px 9px;
+    background:var(--glass-sub);border:1px solid var(--glass-border);
+    transition:border-color .15s, background .15s;min-width:0;
   }
-  .ev.key-ev{
-    padding:8px 10px;
-    background:rgba(20,29,48,.92);
-    border-color:rgba(130,165,220,.24);
-    box-shadow:0 3px 12px rgba(0,0,0,.22);
-  }
-  .ev.folded{cursor:pointer;opacity:.86;background:rgba(12,17,28,.7)}
-  .ev.folded:hover{opacity:1;border-color:var(--line-strong)}
-  .ev .t{font:600 11px Consolas,monospace;color:var(--mute);text-align:right;padding-top:2px}
-  .ev .body{min-width:0}
+  .ev.key-ev{background:var(--glass-2);border-color:var(--glass-border-strong)}
+  .ev.folded{cursor:pointer}
+  .ev.folded:hover{border-color:var(--ds-border)}
   .ev .head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   .ev .badge-ev{
-    font-size:10px;font-weight:700;padding:0 5px;border-radius:4px;
-    background:rgba(255,255,255,.08);color:var(--dim);
+    font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:var(--radius-pill);
+    background:rgba(130,150,185,.18);color:var(--dim);
   }
   .ev .fold-cnt{
-    margin-left:auto;font:700 10px Consolas,monospace;padding:1px 6px;border-radius:999px;
-    background:rgba(59,158,255,.18);color:#9fd0ff;border:1px solid rgba(59,158,255,.3);
+    margin-left:auto;font:700 10px var(--mono);padding:1px 7px;border-radius:var(--radius-pill);
+    background:var(--ds-soft);color:var(--ds);border:1px solid var(--ds-border);
   }
-  .ev .body b{font-size:12.5px;font-weight:700}
-  .ev .body i{display:block;font-style:normal;font-size:11.5px;color:#b7c7de;margin-top:2px;line-height:1.4;word-break:break-word}
-  .ev .sub-list{margin-top:5px;padding-top:5px;border-top:1px dashed var(--line);display:none;font-size:11px;color:var(--dim)}
+  .ev .body b{font-size:12px;font-weight:700;color:var(--fg)}
+  .ev .body i{display:block;font-style:normal;font-size:11px;color:var(--dim);margin-top:2px;line-height:1.4;word-break:break-word}
+  .ev .sub-list{margin-top:5px;padding-top:5px;border-top:1px dashed var(--glass-border);display:none}
   .ev.open .sub-list{display:block}
-  .ev .sub-item{display:flex;gap:6px;padding:1px 0;font-family:Consolas,monospace;font-size:10.5px}
+  .ev .sub-item{display:flex;gap:7px;padding:1.5px 0;font:10.5px var(--mono);color:var(--dim)}
 
-  .ev.yellow{border-left-color:var(--warn)} .ev.yellow b{color:#ffe29d} .ev.yellow .badge-ev{background:rgba(248,190,68,.2);color:#ffe29d}
-  .ev.red,.ev.red_src{border-left-color:var(--bad)} .ev.red b,.ev.red_src b{color:#ffc0c6} .ev.red .badge-ev,.ev.red_src .badge-ev{background:rgba(255,94,108,.2);color:#ffc0c6}
-  .ev.digit{border-left-color:var(--gem)} .ev.digit b{color:#e2ccff} .ev.digit .badge-ev{background:var(--gem-soft);color:#e2ccff}
-  .ev.state{border-left-color:var(--ds)} .ev.state b{color:#b8dbff}
-  .ev.safety{border-left-color:#ff8a3d;background:rgba(44,22,12,.85)} .ev.safety b{color:#ffc7a6} .ev.safety .badge-ev{background:rgba(255,138,61,.25);color:#ffc7a6}
-  .ev.mux{border-left-color:#4e6078} .ev.mux b{color:#c0cedf}
-  .ev.param{border-left-color:var(--ok)} .ev.param b{color:#aff7d0} .ev.param .badge-ev{background:rgba(46,224,134,.2);color:#aff7d0}
-  .ev.proc{border-left-color:#68b5ff} .ev.proc b{color:#c2e2ff}
-  .empty{color:var(--mute);font-size:12px;padding:18px;text-align:center}
+  .tl-item.yellow .tl-node{border-color:var(--warn);background:var(--warn-soft)}
+  .tl-item.yellow .ev .badge-ev{background:var(--warn-soft);color:var(--warn)}
+  .tl-item.red .tl-node,.tl-item.red_src .tl-node{border-color:var(--bad);background:var(--bad-soft)}
+  .tl-item.red .ev .badge-ev,.tl-item.red_src .ev .badge-ev{background:var(--bad-soft);color:var(--bad)}
+  .tl-item.digit .tl-node{border-color:var(--gem);background:var(--gem-soft)}
+  .tl-item.digit .ev .badge-ev{background:var(--gem-soft);color:var(--gem)}
+  .tl-item.safety .tl-node{border-color:var(--bad);background:var(--bad-soft)}
+  .tl-item.safety .ev{border-color:rgba(255,92,108,.45);background:var(--bad-soft)}
+  .tl-item.safety .ev .badge-ev{background:var(--bad-soft);color:var(--bad)}
+  .tl-item.param .tl-node{border-color:var(--ok);background:var(--ok-soft)}
+  .tl-item.param .ev .badge-ev{background:var(--ok-soft);color:var(--ok)}
 
-  /* ---------- 日志抽屉重构 (结构化胶囊 + 三档高度) ---------- */
-  .logcard{height:190px;transition:height .2s ease}
-  .logcard.h-collapsed{height:38px}
-  .logcard.h-collapsed .logbar, .logcard.h-collapsed #log{display:none}
-  .logcard.h-expanded{height:370px}
-  .log-size-btns{display:flex;gap:3px;margin-left:8px}
-  .log-size-btns button{padding:2px 7px;font-size:10.5px;border-radius:5px}
-  .log-size-btns button.active{background:rgba(59,158,255,.25);border-color:var(--ds-border);color:#eaf4ff}
+  /* ---------- 底部 36px 停靠条 + 46vh 滑出式琉璃终端抽屉 ---------- */
+  .log-shell{
+    position:fixed;left:12px;right:12px;bottom:8px;z-index:30;
+    height:36px;border-radius:var(--radius-lg);overflow:hidden;
+    display:flex;flex-direction:column;
+    transition:height .28s var(--ease), opacity .28s var(--ease);
+  }
+  .log-shell.open{
+    height:46vh;border-radius:18px;
+  }
+  .log-dock{
+    height:36px;flex-shrink:0;padding:0 12px;display:flex;align-items:center;gap:9px;
+    cursor:pointer;user-select:none;background:var(--glass-sub);
+  }
+  .log-shell.open .log-dock{border-bottom:1px solid var(--glass-border)}
+  .dock-title{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .dock-node{
+    font:600 10.5px var(--mono);padding:2px 7px;border-radius:var(--radius-pill);
+    background:var(--ds-soft);color:var(--ds);border:1px solid var(--ds-border);white-space:nowrap;
+  }
+  .dock-err{
+    font:700 10.5px var(--mono);padding:2px 8px;border-radius:var(--radius-pill);
+    background:var(--glass-input);color:var(--dim);border:1px solid var(--glass-border);white-space:nowrap;
+  }
+  .dock-err.has-err{
+    background:var(--bad-soft);color:var(--bad);border-color:rgba(255,92,108,.55);
+    animation:pulseDot 1.2s infinite;
+  }
+  .dock-preview{
+    flex:1;min-width:0;font:11px var(--mono);color:var(--dim);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .dock-hint{font-size:10.5px;color:var(--mute);white-space:nowrap}
+
+  .log-drawer-body{
+    flex:1;min-height:0;display:none;flex-direction:column;
+  }
+  .log-shell.open .log-drawer-body{display:flex}
 
   .logbar{
-    display:flex;gap:8px;align-items:center;padding:5px 10px;
-    border-bottom:1px solid var(--line);font-size:11.5px;color:var(--dim);flex-wrap:wrap;
-    background:rgba(12,18,30,.85);
+    display:flex;gap:8px;align-items:center;padding:6px 12px;
+    border-bottom:1px solid var(--glass-border);font-size:11.5px;color:var(--dim);flex-wrap:wrap;
+    background:var(--glass-sub);flex-shrink:0;
   }
   .logbar select,.logbar input[type=text]{
-    background:#080c14;color:var(--fg);border:1px solid var(--line);
-    border-radius:5px;padding:3px 7px;font-size:11.5px;
+    background:var(--glass-input);color:var(--fg);border:1px solid var(--glass-border-strong);
+    border-radius:var(--radius-sm);padding:3px 8px;font-size:11.5px;outline:none;
   }
-  .logbar input[type=text]{width:135px}
-  .logbar label{display:flex;align-items:center;gap:4px;cursor:pointer}
+  .logbar input[type=text]{width:140px}
+  .logbar label{display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap}
   .log-lvls{display:flex;gap:4px;align-items:center}
 
   #log{
-    flex:1;overflow:auto;padding:6px 10px;font:11.5px/1.5 Consolas,monospace;
-    background:rgba(6,9,15,.92);display:flex;flex-direction:column;gap:2px;
+    flex:1;overflow:auto;padding:7px 12px;font:11.5px/1.5 var(--mono);
+    background:var(--glass-log);display:flex;flex-direction:column;gap:2px;
   }
   .log-row{
     display:flex;align-items:flex-start;gap:7px;padding:2px 6px;border-radius:5px;
     border-left:2px solid transparent;word-break:break-all;
   }
-  .log-row:hover{background:rgba(255,255,255,.04)}
-  .log-row.is-err{background:rgba(255,94,108,.09);border-left-color:var(--bad);color:#ffb3ba}
-  .log-row.is-dec{border-left-color:var(--ok);color:#a9f3c7}
-  .log-row.is-pe{background:rgba(248,190,68,.09);border-left-color:var(--warn);color:#ffe08a;font-weight:600}
-  .log-row.is-hl{background:rgba(248,190,68,.22)!important;outline:1px solid rgba(248,190,68,.45)}
+  .log-row.is-err{background:var(--bad-soft);border-left-color:var(--bad);color:var(--bad)}
+  .log-row.is-dec{border-left-color:var(--ok);color:var(--ok)}
+  .log-row.is-pe{background:var(--warn-soft);border-left-color:var(--warn);color:var(--warn);font-weight:600}
+  .log-row.is-hl{background:var(--warn-soft)!important;outline:1px solid rgba(247,183,51,.55)}
   .log-row.hidden-lvl{display:none}
   .log-badge{
-    flex-shrink:0;font-size:10px;font-weight:700;padding:0 5px;border-radius:4px;margin-top:1px;
-    background:rgba(255,255,255,.08);color:var(--dim);
+    flex-shrink:0;font-size:9.5px;font-weight:700;padding:0 5px;border-radius:4px;margin-top:2px;
+    background:rgba(130,150,185,.18);color:var(--dim);
   }
-  .log-row.is-err .log-badge{background:rgba(255,94,108,.25);color:#ffd0d5}
-  .log-row.is-dec .log-badge{background:rgba(46,224,134,.2);color:#9ef7c4}
-  .log-row.is-pe .log-badge{background:rgba(248,190,68,.25);color:#ffe69e}
+  .log-row.is-err .log-badge{background:var(--bad-soft);color:var(--bad)}
+  .log-row.is-dec .log-badge{background:var(--ok-soft);color:var(--ok)}
+  .log-row.is-pe .log-badge{background:var(--warn-soft);color:var(--warn)}
   .log-ts{flex-shrink:0;color:var(--mute);font-size:10.5px;margin-top:1px}
   .log-msg{flex:1;min-width:0;white-space:pre-wrap}
   #log .sep{
-    color:#8fd0ff;background:rgba(16,32,52,.9);border-left:3px solid var(--ds);
+    color:var(--ds);background:var(--ds-soft);border-left:3px solid var(--ds);
     padding:3px 8px;margin:4px 0;border-radius:4px;font-weight:700;
   }
 
-  /* ---------- modal & toast ---------- */
+  /* ---------- Modal & Toast ---------- */
   .mask{
-    position:fixed;inset:0;background:rgba(3,6,12,.84);backdrop-filter:blur(6px);
+    position:fixed;inset:0;background:rgba(4,8,18,.68);backdrop-filter:blur(6px);
     display:none;align-items:center;justify-content:center;padding:24px;z-index:50;
   }
   .mask.show{display:flex}
   .modal{
-    background:rgba(15,21,34,.96);border:1px solid var(--line-strong);border-radius:14px;
+    background:var(--modal-bg);border:1px solid var(--glass-border-strong);border-radius:16px;
     max-width:820px;width:100%;max-height:86vh;overflow:auto;padding:20px 24px;
-    box-shadow:0 20px 60px rgba(0,0,0,.6);
+    box-shadow:0 24px 64px rgba(0,0,0,.45);color:var(--fg);
   }
   .modal h3{margin:0 0 10px;font-size:16px}
-  .modal h4{margin:16px 0 6px;font-size:13px;color:var(--acc)}
-  .modal p,.modal li{font-size:12.5px;color:#c4d0e0;line-height:1.65}
+  .modal h4{margin:16px 0 6px;font-size:13px;color:var(--ds)}
+  .modal p,.modal li{font-size:12.5px;color:var(--dim);line-height:1.65}
   .modal table{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}
-  .modal th,.modal td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}
-  .modal th{color:var(--dim);font-weight:600}
-  .modal code{background:#0a1018;padding:1px 5px;border-radius:4px;font-family:Consolas,monospace;color:#8fe3ff}
+  .modal th,.modal td{border-bottom:1px solid var(--glass-border);padding:5px 8px;text-align:left}
+  .modal th{color:var(--dim);font-weight:700}
+  .modal code{background:var(--glass-input);padding:1px 5px;border-radius:4px;font-family:var(--mono);color:var(--ds)}
+
   .toast{
-    position:fixed;right:16px;bottom:16px;background:rgba(20,28,44,.96);border:1px solid var(--line-strong);
-    border-left:3px solid var(--acc);padding:10px 15px;border-radius:8px;max-width:430px;
+    position:fixed;right:16px;bottom:52px;z-index:60;
+    background:var(--modal-bg);border:1px solid var(--glass-border-strong);
+    border-left:3px solid var(--acc);padding:9px 14px;border-radius:10px;max-width:420px;
     opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none;font-size:12.5px;
-    box-shadow:0 8px 26px rgba(0,0,0,.55);z-index:60;
+    box-shadow:0 10px 28px rgba(0,0,0,.35);
   }
   .toast.show{opacity:1;transform:none}
-  ::-webkit-scrollbar{width:7px;height:7px}
-  ::-webkit-scrollbar-thumb{background:#2d3b52;border-radius:4px}
+
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:4px}
   ::-webkit-scrollbar-track{background:transparent}
 </style>
 </head>
 <body>
 
-<header>
+<div class="bg-wall"></div>
+<div class="bg-scrim"></div>
+
+<header class="glass-surface">
   <div class="brand">
-    RDK X5<small>智能车面板</small>
-    <span class="brand-badge">✦ Gemini × DeepSeek</span>
+    <div class="duo-chibis" title="Gemini (视觉感知官) × DeepSeek (决策领航员)">
+      <div class="chibi-ava"><img src="/assets/gemini_chibi.jpg" alt="Gemini"></div>
+      <div class="chibi-ava ds"><img src="/assets/deepseek_chibi.jpg" alt="DeepSeek"></div>
+    </div>
+    <div class="brand-title">RDK X5<small>双子星战术控制台</small></div>
+    <span class="conn-pill" id="connBadge"><span class="dot"></span>连接中</span>
   </div>
   <div class="lights" id="lights"></div>
   <div class="volt" id="voltBadge" title="底盘电池电压 (/PowerVoltage)，低于 11.6V 告警">--.-V</div>
   <div class="round" id="round">第 1 轮</div>
   <div class="spacer"></div>
   <div class="clock" id="clock">00:00.0</div>
-  <button class="icon" id="btnHelp" title="指标说明">?</button>
+  <button class="icon" id="btnTheme" title="切换 🌙 暗夜琉璃 / ☀ 柔光透璃">☀</button>
+  <button class="icon" id="btnPeek" title="透视壁纸（虚化面板欣赏原画，再点恢复）">👁</button>
+  <button class="icon" id="btnHelp" title="指标与交互说明">?</button>
   <button class="ghost" id="btnReset" title="清零本轮计时与计数（不控制车）">重置本轮</button>
   <button class="estop" id="estop">立即停车</button>
 </header>
 
+<div class="conn-banner" id="connBanner">⚠ 与面板后端通信中断，正在自动重连…</div>
+
 <main>
-  <!-- 四张概览卡 -->
-  <section class="stats">
-    <div class="stat s1">
-      <div class="k"><span>黄线停稳 / 里程</span><span id="stYellowBadge"></span></div>
-      <div class="v" id="stYellow">已停 0 次</div>
-      <div class="sub" id="stYellowSub">里程 --</div>
+  <!-- 融合玻璃遥测带 -->
+  <section class="telemetry glass-surface">
+    <div class="tel-cell c1">
+      <div class="tel-k"><span>黄线停稳 / 里程</span><span class="tel-dot"></span></div>
+      <div class="tel-v" id="stYellow">已停 0 次</div>
+      <div class="tel-sub" id="stYellowSub">里程 --</div>
     </div>
-    <div class="stat s2">
-      <div class="k">车辆状态</div>
-      <div class="v" id="stState">未发车</div>
-      <div class="sub" id="stStateSub">等待空格</div>
+    <div class="tel-cell c2">
+      <div class="tel-k"><span>车辆状态</span><span class="tel-dot"></span></div>
+      <div class="tel-v" id="stState">未发车</div>
+      <div class="tel-sub" id="stStateSub">在 ⑤发车窗口按空格</div>
     </div>
-    <div class="stat s3">
-      <div class="k">识别数字</div>
-      <div class="v" id="stDigit">-</div>
-      <div class="sub" id="stDigitSub">最近一次转向</div>
+    <div class="tel-cell c3">
+      <div class="tel-k"><span>识别数字</span><span class="tel-dot"></span></div>
+      <div class="tel-v" id="stDigit">-</div>
+      <div class="tel-sub" id="stDigitSub">最近一次转向</div>
     </div>
-    <div class="stat s4">
-      <div class="k">生效参数</div>
-      <div class="v" id="stParam">v=- kp=-</div>
-      <div class="sub" id="stParamSub">与 YAML 是否一致</div>
+    <div class="tel-cell c4">
+      <div class="tel-k"><span>生效参数</span><span class="tel-dot"></span></div>
+      <div class="tel-v" id="stParam">v=- kp=-</div>
+      <div class="tel-sub" id="stParamSub">与 YAML 是否一致</div>
     </div>
   </section>
 
+  <!-- 三翼焦点工作区 -->
   <section class="cols">
-    <!-- 左栏：图像感知 (Gemini 星夜紫) -->
-    <div class="card theme-gem">
-      <h2>✦ 视觉感知 <span class="recpill" id="recLivePill">● REC 00:00</span><span class="tag" id="fpsTag">6 fps</span></h2>
-      <div class="companion gem" id="compGem">
-        <div class="comp-av"><img src="/assets/gemini_avatar.png" alt="Gemini"></div>
-        <div class="comp-body">
-          <div class="comp-name">Gemini <span class="comp-role">视觉感知官</span></div>
-          <div class="comp-msg" id="gemMsg">正在等待双路图像与 YOLO 信号…</div>
+    <!-- 左翼：Gemini 视觉感知矩阵 -->
+    <div class="card theme-gem glass-surface">
+      <div class="card-head">
+        <span class="wing-mark">✦</span>
+        <span>视觉感知矩阵</span>
+        <span class="recpill" id="recLivePill">● REC 00:00</span>
+        <span class="tag" id="fpsTag">6 fps</span>
+      </div>
+
+      <div class="hero-banner gem reticle" id="compGem">
+        <span class="rk tl"></span><span class="rk tr"></span><span class="rk bl"></span><span class="rk br"></span>
+        <img class="hero-art" src="/assets/gemini_banner.jpg" alt="Gemini 视觉感知官">
+        <div class="hero-info">
+          <div class="hero-meta">
+            <span class="hero-name">GEMINI // VISION</span>
+            <span class="mood-pill" id="gemMood">待命</span>
+          </div>
+          <div class="hero-bubble" id="gemMsg">正在等待双路图像与 YOLO 信号…</div>
         </div>
       </div>
-      <img class="sprite-bg" src="/assets/gemini_neko.png" alt="">
+
       <div class="imgs">
-        <div class="imgwrap">
+        <div class="imgwrap reticle" id="wrapDebug">
+          <span class="rk tl"></span><span class="rk tr"></span><span class="rk bl"></span><span class="rk br"></span>
           <span class="lbl">巡线调试图</span>
-          <img id="imgDebug" alt="巡线调试图">
+          <span class="stream-pill" id="dbgLivePill">STANDBY</span>
+          <div class="standby-cover">
+            <img src="/assets/duo_standby.jpg" alt="双子检修待命">
+            <span class="standby-txt">等待巡线调试流…</span>
+          </div>
+          <img class="stream-img" id="imgDebug" alt="巡线调试图">
         </div>
-        <div class="imgwrap">
+        <div class="imgwrap reticle" id="wrapYolo">
+          <span class="rk tl"></span><span class="rk tr"></span><span class="rk bl"></span><span class="rk br"></span>
           <span class="lbl">YOLO 数字检测</span>
-          <img id="imgYolo" alt="YOLO 检测图">
+          <span class="stream-pill" id="yoloLivePill">STANDBY</span>
+          <div class="standby-cover">
+            <img src="/assets/duo_standby.jpg" alt="双子检修待命">
+            <span class="standby-txt">等待 YOLO 检测流…</span>
+          </div>
+          <img class="stream-img" id="imgYolo" alt="YOLO 检测图">
         </div>
       </div>
+
       <details class="recbox" id="recBox">
         <summary>🎬 录制（故障复盘包 / YOLO 原图）<span class="rec-cnt" id="recCountTag">0 项</span></summary>
         <div class="rec-body">
@@ -546,75 +945,108 @@
             <button class="rec-go" id="btnRecToggle">● 开始录制复盘包</button>
           </div>
           <div class="rec-meta">
-            <span id="recStatText">保存至 dataset_capture/debug_runs/</span>
-            <span id="recTipText">带帧级时间戳 + 同步日志</span>
+            <span id="recStatText">目录: dataset_capture/debug_runs/</span>
+            <span id="recTipText">12fps 调试图 + 同步日志 .zip</span>
           </div>
           <div class="rec-files" id="recFiles"></div>
         </div>
       </details>
     </div>
 
-    <!-- 中栏：参数调优 (DeepSeek 深海蓝) -->
-    <div class="card theme-ds">
-      <h2>⚙ 参数调优<span class="tag" id="paramTag">-</span></h2>
-      <div class="ptabs" id="paramTabs">
-        <button class="ptab active" data-tier="finals_core">★ 决赛核心<span class="dot-dirty"></span></button>
-        <button class="ptab" data-tier="calibration">⚙ 开关与标定<span class="dot-dirty"></span></button>
+    <!-- 中枢：战术参数整定台 -->
+    <div class="card theme-ds glass-surface">
+      <div class="card-head">
+        <span class="wing-mark">⚙</span>
+        <span>战术参数整定台</span>
+        <span class="tag" id="paramTag">-</span>
       </div>
-      <div class="ptier-banner" id="tierBanner">
-        <span id="tierBannerText">日常只调这 4 组正交物理量</span>
+
+      <div class="ptabs-wrap">
+        <div class="ptabs" id="paramTabs">
+          <button class="ptab active" data-tier="finals_core">★ 决赛核心<span class="dot-dirty"></span></button>
+          <button class="ptab" data-tier="calibration">⚙ 开关与标定<span class="dot-dirty"></span></button>
+        </div>
+        <div class="ptier-banner" id="tierBanner">
+          <span id="tierBannerText">日常只调这 4 组正交物理量</span>
+          <div class="psearch-box">
+            <input type="text" id="paramSearch" placeholder="快筛参数…">
+            <button id="btnParamSearchClear" title="清空筛选">✕</button>
+          </div>
+        </div>
       </div>
+
       <div class="params" id="params"></div>
+
       <div class="footbar">
         <select id="mapSel">
           <option value="finals_fork">决赛岔路 finals_fork</option>
           <option value="finals_roundabout">决赛环岛 finals_roundabout</option>
         </select>
-        <button class="primary" id="btnSaveRestart">保存并重启巡线</button>
+        <button id="btnUndo" title="撤销当前未保存的所有修改" disabled>↺ 撤销</button>
         <button id="btnSave">仅保存</button>
+        <button class="primary" id="btnSaveRestart">保存并重启巡线</button>
         <span class="memo" id="memo">未修改</span>
       </div>
     </div>
 
-    <!-- 右栏：决策流 (DeepSeek 深海蓝领航) -->
-    <div class="card theme-ds">
-      <h2>🐋 决策流 <span class="tag">[DEC] 分级视图</span></h2>
-      <div class="companion ds" id="compDs">
-        <div class="comp-av"><img src="/assets/deepseek_avatar.png" alt="DeepSeek"></div>
-        <div class="comp-body">
-          <div class="comp-name">DeepSeek <span class="comp-role">决策领航员</span></div>
-          <div class="comp-msg" id="dsMsg">系统待命，等待发车指令…</div>
+    <!-- 右翼：DeepSeek 决策领航台 -->
+    <div class="card theme-ds glass-surface">
+      <div class="card-head">
+        <span class="wing-mark">🐋</span>
+        <span>决策领航台</span>
+        <span class="tag">[DEC] 战术时间轴</span>
+      </div>
+
+      <div class="hero-banner ds reticle" id="compDs">
+        <span class="rk tl"></span><span class="rk tr"></span><span class="rk bl"></span><span class="rk br"></span>
+        <img class="hero-art" src="/assets/deepseek_banner.jpg" alt="DeepSeek 决策领航员">
+        <div class="hero-info">
+          <div class="hero-meta">
+            <span class="hero-name">DEEPSEEK // PILOT</span>
+            <span class="mood-pill" id="dsMood">待命</span>
+          </div>
+          <div class="hero-bubble" id="dsMsg">系统待命，等待 ⑤ 窗口空格发车</div>
         </div>
       </div>
-      <img class="sprite-bg" src="/assets/deepseek_maid.png" alt="">
-      <div class="dec-summary">
-        <div class="dec-sum-top">
-          <span class="dec-sum-pill" id="decSumPill">待命</span>
-          <span id="decSumTitle">等待关键决策事件</span>
+
+      <div class="focus-card" id="decFocus">
+        <div class="focus-icon" id="decSumIcon">🧭</div>
+        <div class="focus-body">
+          <div class="focus-top">
+            <span class="dec-sum-pill" id="decSumPill">待命</span>
+            <span id="decSumTitle">等待关键决策事件</span>
+          </div>
+          <div class="dec-sum-text" id="decSumDesc">高频状态切换将自动折叠合并，重点里程碑直接高亮</div>
         </div>
-        <div class="dec-sum-text" id="decSumDesc">高频状态切换将自动折叠合并，重点里程碑直接高亮</div>
       </div>
+
       <div class="dec-filters" id="decFilters">
         <button class="pill-btn active" data-f="all">全部</button>
         <button class="pill-btn" data-f="key">★ 关键</button>
         <button class="pill-btn warn" data-f="alert">⚠ 告警</button>
         <span class="dec-count" id="decCount">0 条</span>
       </div>
-      <div class="feed" id="feed"><div class="empty">还没有决策事件</div></div>
+
+      <div class="feed" id="feed">
+        <div class="tl-empty">
+          <img src="/assets/deepseek_chibi.jpg" alt="DeepSeek">
+          <span>还没有决策事件，发车后将在此绘制战术时间轴</span>
+        </div>
+      </div>
     </div>
   </section>
+</main>
 
-  <!-- 底部：结构化日志抽屉 -->
-  <section class="card logcard" id="logCard">
-    <h2>
-      📜 原始日志
-      <span class="tag" id="logTag">-</span>
-      <div class="log-size-btns">
-        <button data-lsize="collapsed" title="收起日志栏">收起</button>
-        <button class="active" data-lsize="normal" title="标准高度">标准</button>
-        <button data-lsize="expanded" title="展开高度">放大</button>
-      </div>
-    </h2>
+<!-- 底部极简停靠条 + 46vh 滑出式琉璃终端抽屉 -->
+<section class="log-shell glass-surface" id="logShell">
+  <div class="log-dock" id="logDock" title="点击展开 / 收起日志终端（快捷键 `）">
+    <span class="dock-title" id="dockChevron">▲ 日志终端</span>
+    <span class="dock-node" id="dockNodeTag">④巡线+仲裁</span>
+    <span class="dock-err" id="dockErrBadge">ERR: 0</span>
+    <span class="dock-preview" id="dockPreview">等待日志流…</span>
+    <span class="dock-hint">按 ` 展开</span>
+  </div>
+  <div class="log-drawer-body">
     <div class="logbar">
       <select id="logFile">
         <option value="follow">④巡线+仲裁</option>
@@ -638,36 +1070,36 @@
       <label><input type="checkbox" id="autoscroll" checked> 自动滚动</label>
       <button id="btnReloadAll" title="从日志开头重新加载（会关闭“只看本次启动”）">从头看</button>
       <button id="btnClear">清屏</button>
+      <span class="mono" style="margin-left:auto;font-size:11px;color:var(--mute)" id="logTag">-</span>
+      <button id="btnLogClose" title="收起抽屉 (Esc)">▼ 收起</button>
     </div>
     <div id="log"></div>
-  </section>
-</main>
+  </div>
+</section>
 
 <!-- 帮助 / 指标说明 -->
 <div class="mask" id="mask">
   <div class="modal">
-    <h3>面板怎么读</h3>
+    <h3>RDK X5 双子星战术控制台 · 使用与指标说明</h3>
 
-    <h4>一、[DEC] 是什么</h4>
-    <p><code>DEC</code> = <b>Decision（决策）</b>。它是我们给代码里所有"做判断"的地方加的统一标记。
-       普通日志里混着 <code>cv_bridge</code>、BPU、launch 的噪声，加了 <code>[DEC]</code> 之后
-       就能一键过滤出"车在这一刻做了什么决定"。</p>
-    <p>格式统一为：<code>[DEC] 区域 事件 键=值 键=值</code>，同时会汇总成 <code>events.csv</code>，
-       一行一个事件，带相对时间，可以和录像时间轴对齐。</p>
+    <h4>一、快捷键与桌面小技巧</h4>
+    <ul>
+      <li><code>`</code>（Tab 上方反引号）：快速展开 / 收起底部 <b>日志终端抽屉</b>（<code>Esc</code> 一键收起）。</li>
+      <li><code>Shift + 点击</code> 参数步进按钮 <code>−</code> / <code>+</code>：按 <b>5 倍步长</b>快速微调。</li>
+      <li>顶栏 <code>☀ / 🌙</code> 切换 <b>柔光透璃 / 暗夜琉璃</b>；<code>👁</code> 虚化前景卡片欣赏第 3 张原画底图（绝不占用空格键，避免误触 ⑤ 窗口发车）。</li>
+    </ul>
 
-    <h4>二、常见决策事件</h4>
+    <h4>二、[DEC] 常见决策事件</h4>
     <table>
       <tr><th>事件</th><th>含义</th><th>对应规则</th></tr>
-      <tr><td>yellow stop_begin</td><td>看到黄线，开始刹车</td><td>停车线必须完全停住</td></tr>
-      <tr><td>yellow temp_stop</td><td>停 N 秒后继续</td><td>—</td></tr>
-      <tr><td>yellow final_stop</td><td>第 4 根黄线，永久停（完赛）</td><td>终点</td></tr>
+      <tr><td>yellow stop_begin</td><td>看到黄线，开始减速刹车</td><td>停车线必须完全停住</td></tr>
+      <tr><td>yellow temp_stop</td><td>停稳后继续巡线</td><td>—</td></tr>
+      <tr><td>yellow final_stop</td><td>到达终点黄线，永久停（完赛）</td><td>终点</td></tr>
       <tr><td>state change</td><td>巡线状态切换：tracking / lost / yellow_line_detected</td><td>—</td></tr>
-      <tr><td>red avoid_on</td><td>检测到路锥/红线，开始绕行（side=左还是右）</td><td>碰撞 +10s</td></tr>
-      <tr><td>digit turn</td><td>识别到数字，按数值决定转向</td><td>Bonus −5s/个</td></tr>
-      <tr><td>mux change</td><td>速度仲裁切换：follower → detection → stop</td><td>—</td></tr>
+      <tr><td>red avoid_on</td><td>检测到路锥/禁行区，开始绕行（side=左还是右）</td><td>碰撞 +10s / 闯入 +30s</td></tr>
+      <tr><td>digit turn</td><td>识别到数字，按数值决定转向或吃 Bonus</td><td>Bonus −5s/个</td></tr>
       <tr><td>safety deadman_on</td><td>上游全静默，兜底发零速救车</td><td>防失控</td></tr>
       <tr><td>param effective</td><td>节点启动时真正加载的参数值</td><td>判断改参数是否生效</td></tr>
-      <tr><td>panel param_write</td><td>面板把参数写进了 YAML</td><td>—</td></tr>
     </table>
 
     <h4>三、比赛指标怎么算</h4>
@@ -680,31 +1112,16 @@
       <tr><td>压线</td><td><b>+15 s</b> / 次；持续压线按每秒 1 次算</td></tr>
       <tr><td>Bonus 数字</td><td>完全覆盖数字即得分，<b>每个 −5 s</b></td></tr>
     </table>
-    <p><b>综合得分 = 时间 + 罚时 − 5 × Bonus</b>，分数越低排名越高。
-       所以：<b>一次违规 ≈ 3~6 个 Bonus 的收益</b>，稳比快重要。</p>
+    <p><b>综合得分 = 时间 + 罚时 − 5 × Bonus</b>，分数越低排名越高。一次违规 ≈ 3~6 个 Bonus 的收益，稳比快重要。</p>
 
     <h4>四、决赛正交调参（为什么改了不会互相打架）</h4>
-    <p>参数区拆分为两个独立标签页，聚焦决赛正交控制量与标定开关：</p>
     <table>
       <tr><th>标签页</th><th>定位</th><th>说明</th></tr>
       <tr><td><b>★ 决赛核心</b></td><td>日常只调这 4 组</td><td>速度（基准×弯道比例）、黄线停点（只看车头留白）、避障余量/限速、终点里程，全部为物理正交量</td></tr>
       <tr><td><b>⚙ 开关与标定</b></td><td>标定一次即冻结</td><td>模式总开关、B10 红障 HSV 应急覆盖、里程比例/后轴/刹车减速度标定、避障视野与看门狗</td></tr>
     </table>
-    <p><b>防纠缠约定：</b>调快「巡航速度」不会让黄线停过头（系统会先降到「接近黄线爬行速」再按物理公式刹停）；调停车前后位置只需动「车头留白距离」，不再和 ROI 纠缠。</p>
-
-    <h4>五、面板上的数字</h4>
-    <table>
-      <tr><td>黄线停稳 / 里程</td><td>已停稳次数与当前累计里程（m），终点由 FinishGuard 里程+视觉封口联合判定并显式停表</td></tr>
-      <tr><td>计时器</td><td>发车自动开始，收到终点信号（final=1）自动停表；也可手动「重置本轮」</td></tr>
-      <tr><td>生效参数</td><td>节点<b>实际</b>加载的值。和 YAML 不一致就说明要重启巡线</td></tr>
-    </table>
-
-    <h4>六、为什么改了参数车没变</h4>
-    <p>代码里大部分参数是<b>启动时读一次</b>存进变量的，运行中改 YAML 不会回头重读。
-       所以正确流程是：<b>改参数 → 保存 → 重启巡线节点</b>。点「保存并重启巡线」会自动做这两步，
-       重启后在「生效参数」卡片和日志 <code>[DEC] param effective</code> 行里能看到新值。</p>
-    <p style="text-align:right;margin-top:18px">
-      <button onclick="document.getElementById('mask').classList.remove('show')">知道了</button>
+    <p style="text-align:right;margin-top:16px">
+      <button class="primary" onclick="document.getElementById('mask').classList.remove('show')">知道了</button>
     </p>
   </div>
 </div>
@@ -715,14 +1132,15 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const PROC_LABEL = {base:'底盘', camera:'相机', yolo:'YOLO', follow:'巡线', start:'发车'};
+const LOG_LABEL = {follow:'④巡线+仲裁', base:'①底盘', camera:'②相机', yolo:'③YOLO', start:'⑤发车', panel:'⑥面板', safety:'⑦兜底', collector:'⑧DEC汇总'};
 const STATE_CN = {tracking:'正常巡线', lost:'丢线', yellow_line_detected:'停车中', unknown:'未发车'};
 const EV_CN = {
   'yellow|stop_begin':   ['检测到黄线', '开始减速停车'],
   'yellow|temp_stop':    ['临时停车',   '停稳后继续'],
   'yellow|stop_end':     ['停车结束',   '恢复巡线'],
-  'yellow|final_stop':   ['终点停车',   '第 N 根黄线，完赛'],
+  'yellow|final_stop':   ['终点停车',   '已到达终点，完赛'],
   'state|change':        ['状态切换',   ''],
-  'red|avoid_on':        ['避让红色目标','路锥或红线，开始绕行'],
+  'red|avoid_on':        ['避让红色目标','路锥或禁行区，开始绕行'],
   'red_src|detect':      ['红障来源',   'YOLO 与白道 CV 归因'],
   'red_src|clear':       ['红障离开',   '视野红障已清空'],
   'fork_decision|':      ['岔道决策',   '按投票选定支路'],
@@ -752,9 +1170,12 @@ const FOLD_KEYS = new Set(['state|change', 'mux|change', 'red_src|detect', 'red_
 let logOffset = 0, logFile = 'follow', lastStarted = null, lastLocked = null;
 let paramsState = null, dirty = false, lastEff = {}, effMismatch = false;
 let runningMap = null, yamlStale = false, restarting = false, pendingChanged = '';
-let lastFollowEpoch = null, mapMismatchPrev = null, mapAutoSynced = false, lastRunId = null;
+let lastFollowEpoch = null, mapMismatchPrev = null, mapAutoSynced = false, lastRunId = null, lastRoundNum = null;
 let lowVoltWarned = false, recActive = false, lastRecFilesSig = '';
 let decFilter = 'all', logLevelFilter = 'all', lastEventsCache = [];
+let eventHistory = [], logErrCount = 0;
+let statusBusy = false, logsBusy = false, statusFailCount = 0;
+let prevFramesLive = {debug:false, yolo:false}, imgLoaded = {debug:false, yolo:false};
 const expandedFoldGroups = new Set();
 
 function toast(msg, bad){
@@ -763,73 +1184,157 @@ function toast(msg, bad){
   t.style.borderLeftColor = bad ? 'var(--bad)' : 'var(--acc)';
   t.classList.add('show');
   clearTimeout(t._h);
-  t._h = setTimeout(()=>t.classList.remove('show'), 3000);
+  t._h = setTimeout(()=>t.classList.remove('show'), 3200);
 }
 function fmt(s){ if(s<0)s=0; const m=Math.floor(s/60); return String(m).padStart(2,'0')+':'+(s-m*60).toFixed(1).padStart(4,'0'); }
 function escHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function stepDecimals(step){
+  const s = String(step || 1);
+  const idx = s.indexOf('.');
+  return idx >= 0 ? (s.length - idx - 1) : 0;
+}
 
-// ---------------- 双子星看板状态联动
+// ---------------- 主题与透视壁纸切换
+function applyTheme(theme){
+  const t = (theme === 'light') ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', t);
+  $('btnTheme').textContent = (t === 'light') ? '🌙' : '☀';
+  $('btnTheme').title = (t === 'light') ? '切换为 🌙 暗夜琉璃' : '切换为 ☀ 柔光透璃';
+  try{ localStorage.setItem('rdkx5_theme', t); }catch(e){}
+}
+try{ applyTheme(localStorage.getItem('rdkx5_theme') || 'dark'); }catch(e){ applyTheme('dark'); }
+$('btnTheme').addEventListener('click', ()=>{
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+});
+$('btnPeek').addEventListener('click', ()=>{
+  const on = document.body.classList.toggle('peek-mode');
+  $('btnPeek').classList.toggle('active-toggle', on);
+});
+
+// ---------------- 双路视频状态与待命封面同步
+function syncVideoSlot(key, wrapEl, imgEl, pillEl, live){
+  const isLive = !!live;
+  if(isLive && !prevFramesLive[key]){
+    imgLoaded[key] = false;
+    imgEl.src = `/api/stream/${key}?t=${Date.now()}`;
+  }
+  prevFramesLive[key] = isLive;
+  const showLive = isLive && imgLoaded[key];
+  wrapEl.classList.toggle('live', showLive);
+  pillEl.textContent = showLive ? '● LIVE' : (isLive ? 'LINKING' : 'STANDBY');
+}
+$('imgDebug').addEventListener('load', ()=>{ imgLoaded.debug = true; if(prevFramesLive.debug) $('wrapDebug').classList.add('live'); $('dbgLivePill').textContent = '● LIVE'; });
+$('imgYolo').addEventListener('load', ()=>{ imgLoaded.yolo = true; if(prevFramesLive.yolo) $('wrapYolo').classList.add('live'); $('yoloLivePill').textContent = '● LIVE'; });
+$('imgDebug').addEventListener('error', ()=>{ imgLoaded.debug = false; $('wrapDebug').classList.remove('live'); $('dbgLivePill').textContent = 'STANDBY'; });
+$('imgYolo').addEventListener('error', ()=>{ imgLoaded.yolo = false; $('wrapYolo').classList.remove('live'); $('yoloLivePill').textContent = 'STANDBY'; });
+
+// ---------------- 双子星战术角色舞台联动
 function updateCompanions(d, evs){
-  const compGem = $('compGem'), gemMsg = $('gemMsg');
-  const compDs = $('compDs'), dsMsg = $('dsMsg');
+  const compGem = $('compGem'), gemMood = $('gemMood'), gemMsg = $('gemMsg');
+  const compDs = $('compDs'), dsMood = $('dsMood'), dsMsg = $('dsMsg');
   const frames = d.frames || {};
   const recentRed = evs.slice().reverse().find(e => e.area === 'red' || (e.area === 'red_src' && e.event === 'detect'));
   const recentDigit = evs.slice().reverse().find(e => e.area === 'digit');
   const recentSafety = evs.slice().reverse().find(e => e.area === 'safety');
 
-  // Gemini (视觉感知官)
-  let gState = 'gem', gText = '双路图像待命中…';
+  let gCls = 'gem', gMood = '待命', gText = '双路图像待命中…';
   if(recActive){
-    gState = 'gem warn';
+    gCls = 'gem warn'; gMood = '录制中';
     gText = '正在录制视频流，请保持画面稳定';
   } else if(recentRed && (d.timer.elapsed - Number(recentRed.t || 0) < 4)){
-    gState = 'gem alert';
+    gCls = 'gem alert'; gMood = '红障警戒';
     gText = '视野发现红障！已同步坐标给决策模块';
   } else if(recentDigit && (d.timer.elapsed - Number(recentDigit.t || 0) < 6)){
     const m = /best=(\d+)/.exec(recentDigit.kv || '');
-    gState = 'gem ok';
+    gCls = 'gem ok'; gMood = '锁定数字';
     gText = `锁定数字 ${m ? m[1] : '?'}，已提交转向参考！`;
   } else if(frames.debug && frames.yolo){
-    gState = 'gem ok';
+    gCls = 'gem ok'; gMood = '双流在线';
     gText = '巡线调试 + YOLO 检测双路流正常 (6fps)';
   } else if(frames.debug || frames.yolo){
-    gState = 'gem warn';
+    gCls = 'gem warn'; gMood = '单路在线';
     gText = frames.debug ? '仅调试图在线，等待 YOLO 图像…' : '仅 YOLO 图在线，等待调试图…';
   }
-  compGem.className = 'companion ' + gState;
+  compGem.className = 'hero-banner reticle ' + gCls;
+  gemMood.textContent = gMood;
   gemMsg.textContent = gText;
 
-  // DeepSeek (决策领航员)
-  let dsState = 'ds', dsText = '系统待命，等待 ⑤ 窗口空格发车';
+  let dsCls = 'ds', dsMoodTxt = '待命', dsText = '系统待命，等待 ⑤ 窗口空格发车';
   if(recentSafety && (d.timer.elapsed - Number(recentSafety.t || 0) < 5)){
-    dsState = 'ds alert';
+    dsCls = 'ds alert'; dsMoodTxt = '兜底接管';
     dsText = '⚠ 上游信号静默，已触发安全兜底零速！';
   } else if(d.timer && d.timer.final){
-    dsState = 'ds ok';
+    dsCls = 'ds ok'; dsMoodTxt = '完赛停稳';
     dsText = `🏁 已到达终点线完成停车！总用时 ${fmt(d.timer.elapsed)}`;
   } else if(d.started){
-    dsState = 'ds ok';
+    dsCls = 'ds ok'; dsMoodTxt = '领航中';
     const stCn = STATE_CN[d.track_state] || d.track_state;
-    dsText = `正在领航：${stCn}（黄线 ${d.yellow.count} 次）`;
+    dsText = `正在领航：${stCn}（黄线已停 ${d.yellow.count} 次）`;
   } else if(restarting){
-    dsState = 'ds warn';
+    dsCls = 'ds warn'; dsMoodTxt = '重启中';
     dsText = '正在重启巡线节点，等待参数生效回报…';
   } else if(yamlStale || effMismatch){
-    dsState = 'ds warn';
+    dsCls = 'ds warn'; dsMoodTxt = '待重启';
     dsText = '参数已改但未生效，请点「保存并重启巡线」';
   } else if(dirty){
-    dsState = 'ds warn';
+    dsCls = 'ds warn'; dsMoodTxt = '未保存';
     dsText = '检测到未保存的参数修改，记得保存哦';
   }
-  compDs.className = 'companion ' + dsState;
+  compDs.className = 'hero-banner reticle ' + dsCls;
+  dsMood.textContent = dsMoodTxt;
   dsMsg.textContent = dsText;
+}
+
+// ---------------- 前端事件去重环形缓冲 (最多 120 条)
+function mergeEventHistory(batch){
+  if(!Array.isArray(batch) || !batch.length) return eventHistory;
+  const sig = e => `${e.t}|${e.source||''}|${e.area}|${e.event}|${e.kv||''}`;
+  if(!eventHistory.length){
+    eventHistory = batch.slice(-120);
+    return eventHistory;
+  }
+  const batchSigs = batch.map(sig);
+  const histSigs = eventHistory.map(sig);
+  let overlap = 0;
+  const maxCheck = Math.min(histSigs.length, batchSigs.length);
+  for(let k = maxCheck; k >= 1; k--){
+    let ok = true;
+    for(let i = 0; i < k; i++){
+      if(histSigs[histSigs.length - k + i] !== batchSigs[i]){ ok = false; break; }
+    }
+    if(ok){ overlap = k; break; }
+  }
+  if(overlap > 0){
+    eventHistory = eventHistory.concat(batch.slice(overlap)).slice(-120);
+  } else {
+    const lastHistT = Number(eventHistory[eventHistory.length - 1].t || 0);
+    const firstBatchT = Number(batch[0].t || 0);
+    if(firstBatchT + 0.5 < lastHistT){
+      eventHistory = batch.slice(-120);
+    } else {
+      const existing = new Set(histSigs);
+      batch.forEach((e, idx)=>{ if(!existing.has(batchSigs[idx])) eventHistory.push(e); });
+      eventHistory = eventHistory.slice(-120);
+    }
+  }
+  return eventHistory;
 }
 
 // ---------------- 状态轮询
 async function pollStatus(){
+  if(statusBusy) return;
+  statusBusy = true;
   try{
-    const d = await (await fetch('/api/status',{cache:'no-store'})).json();
+    const resp = await fetch('/api/status',{cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP ' + resp.status);
+    const d = await resp.json();
     if(!d.ok) return;
+
+    statusFailCount = 0;
+    $('connBanner').classList.remove('show');
+    $('connBadge').className = 'conn-pill ok';
+    $('connBadge').innerHTML = '<span class="dot"></span>在线';
 
     const ks = Object.keys(PROC_LABEL);
     if($('lights').children.length !== ks.length){
@@ -881,7 +1386,20 @@ async function pollStatus(){
     $('stState').style.color = (d.started && d.track_state==='lost') ? 'var(--bad)' : '';
     $('stStateSub').textContent = d.started ? '运行中' : '在 ⑤发车窗口按空格';
 
-    const dg = (d.events||[]).filter(e=>e.area==='digit').slice(-1)[0];
+    if(d.run_id && lastRunId && d.run_id !== lastRunId){
+      logOffset=0; $('log').innerHTML='';
+      logErrCount = 0; updateDockStats();
+      eventHistory = [];
+      toast('日志已切换到新一轮：' + d.run_id);
+    }
+    if(d.run_id) lastRunId = d.run_id;
+    if(lastRoundNum !== null && d.round !== lastRoundNum){
+      eventHistory = [];
+    }
+    lastRoundNum = d.round;
+
+    const mergedEvents = mergeEventHistory(d.events || []);
+    const dg = mergedEvents.filter(e=>e.area==='digit').slice(-1)[0];
     if(dg){
       const m = /best=(\d+)/.exec(dg.kv||'');
       $('stDigit').textContent = m ? m[1] : '-';
@@ -912,12 +1430,6 @@ async function pollStatus(){
     const mm = !!(runningMap && $('mapSel').value !== runningMap);
     if(mm !== mapMismatchPrev){ mapMismatchPrev = mm; refreshMapWarn(); updateButtons(); }
 
-    if(d.run_id && lastRunId && d.run_id !== lastRunId){
-      logOffset=0; $('log').innerHTML='';
-      toast('日志已切换到新一轮：' + d.run_id);
-    }
-    if(d.run_id) lastRunId = d.run_id;
-
     const fe = (d.follow||{}).started_epoch || 0;
     if(fe && lastFollowEpoch && fe !== lastFollowEpoch && !restarting){
       toast('④巡线进程已重新启动（' + isoHms(d.follow.started_iso) + '）'
@@ -925,7 +1437,11 @@ async function pollStatus(){
     }
     if(fe) lastFollowEpoch = fe;
 
-    lastEventsCache = d.events || [];
+    const frames = d.frames || {};
+    syncVideoSlot('debug', $('wrapDebug'), $('imgDebug'), $('dbgLivePill'), frames.debug);
+    syncVideoSlot('yolo', $('wrapYolo'), $('imgYolo'), $('yoloLivePill'), frames.yolo);
+
+    lastEventsCache = mergedEvents;
     renderFeed(lastEventsCache);
     updateCompanions(d, lastEventsCache);
 
@@ -943,7 +1459,16 @@ async function pollStatus(){
 
     handleRestart(d.restart);
     if(d.recording) renderRecording(d.recording);
-  }catch(e){}
+  }catch(e){
+    statusFailCount++;
+    if(statusFailCount >= 3){
+      $('connBanner').classList.add('show');
+      $('connBadge').className = 'conn-pill bad';
+      $('connBadge').innerHTML = '<span class="dot"></span>离线';
+    }
+  }finally{
+    statusBusy = false;
+  }
 }
 
 function fmtMMSS(s){
@@ -1003,17 +1528,19 @@ function renderRecording(rec){
         const enc = encodeURIComponent(f.name);
         const badge = (f.kind === 'debug') ? '[复盘]' : '[原图]';
         return `<div class="rec-file">
-          <span class="fn" title="${f.name} (${f.mtime_str||''})">${badge} ${f.name}</span>
+          <span class="fn" title="${escHtml(f.name)} (${escHtml(f.mtime_str||'')})">${badge} ${escHtml(f.name)}</span>
           <span class="sz">${Number(f.size_mb).toFixed(1)}M</span>
-          <a href="/api/record/download/${enc}" download="${f.name}">下载</a>
-          <button class="del" data-del="${f.name}" title="删除该文件">✕</button>
+          <a href="/api/record/download/${enc}" download="${escHtml(f.name)}">下载</a>
+          <button class="del" data-del="${escHtml(f.name)}" title="删除该文件">✕</button>
         </div>`;
       }).join('');
     }
   }
 }
 
-// ---------------- 决策流分级格式化 + 高频折叠
+// ---------------- 决策流：人类友好的战术时间轴
+const AREA_ICON = {yellow:'🟨', digit:'🔢', red:'🔺', red_src:'🔺', safety:'🛡️', state:'⚡', mux:'🎚️', param:'⚙', proc:'🛰️', fork_decision:'🧭', ctrl:'🧭'};
+
 function formatEv(e){
   const key = (e.area+'|'+e.event);
   const cn = EV_CN[key];
@@ -1021,13 +1548,11 @@ function formatEv(e){
   let desc = cn ? cn[1] : '';
   const kv = (e.kv||'').trim();
   if(e.area==='state' && kv){ const m=/from=(\S+) to=(\S+)/.exec(kv); if(m) desc = (STATE_CN[m[1]]||m[1])+' → '+(STATE_CN[m[2]]||m[2]); }
-  if(e.area==='yellow' && kv){ desc = kv.replace(/count=/,'第').replace('/4',' 根').replace(/dur=/,'停 '); }
-  if(e.area==='red' && kv){ desc = kv.replace(/side=L/,'障碍在左→向右避').replace(/side=R/,'障碍在右→向左避'); }
+  if(e.area==='yellow' && kv){ desc = kv.replace(/count=/,'第').replace(/dur=/,'停 '); }
+  if(e.area==='red' && kv){ desc = kv.replace(/side=L/,'障碍在左 → 向右避让').replace(/side=R/,'障碍在右 → 向左避让'); }
   if(e.area==='red_src' && kv){
     const srcMap = {yolo_only:'仅 YOLO 识别', both:'YOLO+CV 双检', cv_only:'仅 CV 兜底'};
-    const ms = /src=(\S+)/.exec(kv);
-    const md = /d=([0-9.]+)/.exec(kv);
-    const mt = /totals=(\S+)/.exec(kv);
+    const ms = /src=(\S+)/.exec(kv), md = /d=([0-9.]+)/.exec(kv), mt = /totals=(\S+)/.exec(kv);
     if(e.event==='detect' && ms){
       title = '红障 · ' + (srcMap[ms[1]] || ms[1]);
       desc = (md ? `最近 ${md[1]}m` : '') + (mt ? ` · 累计 ${mt[1]}` : '');
@@ -1035,35 +1560,40 @@ function formatEv(e){
       desc = '本轮累计 ' + mt[1];
     }
   }
-  if(e.area==='digit' && kv){ desc = kv.replace(/best=/,'数字 ').replace(/yaw=/,' 角速度 '); }
+  if(e.area==='digit' && kv){ desc = kv.replace(/best=/,'数字 ').replace(/yaw=/,' · 角速度 '); }
   if(e.area==='safety'){ desc = kv || '上游静默，自动发零速'; }
   if(e.area==='proc' && kv){ desc = kv; }
   const isKey = KEY_AREAS.has(e.area);
   const isAlert = ALERT_AREAS.has(e.area) || (e.area==='state' && kv.includes('to=lost'));
-  return { raw:e, key, title, desc: desc || kv, isKey, isAlert };
+  const icon = AREA_ICON[e.area] || '🔹';
+  return { raw:e, key, title, desc: desc || kv, isKey, isAlert, icon };
 }
 
 function renderFeed(evs){
   const box = $('feed');
+  const focusCard = $('decFocus'), sumIcon = $('decSumIcon');
   const sumPill = $('decSumPill'), sumTitle = $('decSumTitle'), sumDesc = $('decSumDesc');
   if(!evs.length){
-    box.innerHTML = '<div class="empty">还没有决策事件</div>';
+    box.innerHTML = `<div class="tl-empty"><img src="/assets/deepseek_chibi.jpg" alt="DeepSeek"><span>还没有决策事件，发车后将在此绘制战术时间轴</span></div>`;
     $('decCount').textContent = '0 条';
+    focusCard.className = 'focus-card';
+    sumIcon.textContent = '🧭';
     sumPill.className = 'dec-sum-pill'; sumPill.textContent = '待命';
     sumTitle.textContent = '等待关键决策事件';
     sumDesc.textContent = '高频状态切换将自动折叠合并，重点里程碑直接高亮';
     return;
   }
 
-  // 1. 置顶最近一条关键事件（若无则取最新事件）
   const parsed = evs.map(formatEv);
   const latestKey = parsed.slice().reverse().find(x => x.isKey || x.isAlert) || parsed[parsed.length - 1];
-  sumPill.className = 'dec-sum-pill ' + (latestKey.isAlert ? 'bad' : (latestKey.raw.area==='yellow' ? 'warn' : (latestKey.isKey ? 'ok' : '')));
+  const fTone = latestKey.isAlert ? 'bad' : (latestKey.raw.area==='yellow' ? 'warn' : (latestKey.isKey ? 'ok' : ''));
+  focusCard.className = 'focus-card ' + fTone;
+  sumIcon.textContent = latestKey.icon;
+  sumPill.className = 'dec-sum-pill ' + fTone;
   sumPill.textContent = `t=${Number(latestKey.raw.t).toFixed(1)}s`;
   sumTitle.textContent = latestKey.title;
   sumDesc.textContent = latestKey.desc || '已执行';
 
-  // 2. 过滤
   const filtered = parsed.filter(item => {
     if(decFilter === 'key') return item.isKey;
     if(decFilter === 'alert') return item.isAlert;
@@ -1072,11 +1602,10 @@ function renderFeed(evs){
   $('decCount').textContent = `${filtered.length} / ${parsed.length} 条`;
 
   if(!filtered.length){
-    box.innerHTML = '<div class="empty">当前筛选条件下暂无事件</div>';
+    box.innerHTML = '<div class="tl-empty"><span>当前筛选条件下暂无事件</span></div>';
     return;
   }
 
-  // 3. 倒序并将连续相同的高频琐碎事件折叠合并
   const rev = filtered.slice().reverse();
   const groups = [];
   rev.forEach(item => {
@@ -1089,14 +1618,13 @@ function renderFeed(evs){
     }
   });
 
-  box.innerHTML = groups.map((g, idx) => {
+  box.innerHTML = groups.map(g => {
     const top = g.items[0];
     const cnt = g.items.length;
     const gid = `${top.key}-${top.raw.t}-${cnt}`;
     const isOpen = expandedFoldGroups.has(gid);
-    const cls = [
+    const evCls = [
       'ev',
-      top.raw.area,
       top.isKey ? 'key-ev' : '',
       cnt > 1 ? 'folded' : '',
       isOpen ? 'open' : ''
@@ -1104,16 +1632,19 @@ function renderFeed(evs){
 
     const badgeTxt = top.isAlert ? '告警' : (top.isKey ? '关键' : top.raw.area);
     const foldHtml = cnt > 1 ? `<span class="fold-cnt">×${cnt} 折叠</span>` : '';
-    const subHtml = cnt > 1 ? `<div class="sub-list">${g.items.slice(0, 12).map(sub =>
+    const subHtml = cnt > 1 ? `<div class="sub-list">${g.items.slice(0, 14).map(sub =>
       `<div class="sub-item"><span>${Number(sub.raw.t).toFixed(1)}s</span><span>${escHtml(sub.desc || sub.title)}</span></div>`
-    ).join('')}${cnt > 12 ? `<div class="sub-item">… 其余 ${cnt - 12} 条已省略</div>` : ''}</div>` : '';
+    ).join('')}${cnt > 14 ? `<div class="sub-item">… 其余 ${cnt - 14} 条已省略</div>` : ''}</div>` : '';
 
-    return `<div class="${cls}" data-gid="${escHtml(gid)}">
-      <div class="t">${Number(top.raw.t).toFixed(1)}</div>
-      <div class="body">
-        <div class="head"><span class="badge-ev">${escHtml(badgeTxt)}</span><b>${escHtml(top.title)}</b>${foldHtml}</div>
-        ${top.desc ? `<i>${escHtml(top.desc)}</i>` : ''}
-        ${subHtml}
+    return `<div class="tl-item ${escHtml(top.raw.area)}">
+      <div class="tl-t">${Number(top.raw.t).toFixed(1)}s</div>
+      <div class="tl-rail"><div class="tl-node">${top.icon}</div></div>
+      <div class="${evCls}" data-gid="${escHtml(gid)}">
+        <div class="body">
+          <div class="head"><span class="badge-ev">${escHtml(badgeTxt)}</span><b>${escHtml(top.title)}</b>${foldHtml}</div>
+          ${top.desc ? `<i>${escHtml(top.desc)}</i>` : ''}
+          ${subHtml}
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -1136,6 +1667,7 @@ document.querySelectorAll('#decFilters .pill-btn').forEach(btn => {
   });
 });
 
+// ---------------- 锁定与按钮状态
 function setLocked(running, quiet){
   lastLocked = running;
   updateButtons();
@@ -1147,18 +1679,19 @@ function updateButtons(){
   const mismatch = !!(runningMap && sel !== runningMap);
   const locked = lastLocked === true;
   $('btnSave').disabled = locked;
+  $('btnUndo').disabled = locked || !dirty;
   $('btnSaveRestart').disabled = locked || mismatch || restarting;
   $('btnSaveRestart').title = mismatch
     ? ('当前运行的是 ' + runningMap + '.yaml；改 ' + sel + '.yaml 再重启不会生效')
     : (restarting ? '重启进行中，等新进程就绪' : '');
-  document.querySelectorAll('#params input, #params select').forEach(el=>{ el.disabled = locked; });
+  document.querySelectorAll('#params input, #params select, #params button.step-btn').forEach(el=>{ el.disabled = locked; });
 }
 
 function refreshMapWarn(){
   if(dirty || restarting) return;
   const sel = $('mapSel').value;
   if(runningMap && sel !== runningMap){
-    $('memo').textContent = `正在编辑 ${sel}.yaml；当前运行 ${runningMap}.yaml，重启不生效`;
+    $('memo').textContent = `正在编辑 ${sel}.yaml；当前运行 ${runningMap}.yaml`;
   } else if($('memo').textContent.indexOf('正在编辑 ') === 0){
     $('memo').textContent = '未修改';
   }
@@ -1166,7 +1699,7 @@ function refreshMapWarn(){
 
 function isoHms(s){ const m=/(\d\d:\d\d:\d\d)/.exec(s||''); return m ? m[1] : '--:--:--'; }
 
-// ---------------- 参数
+// ---------------- 参数整定台
 let activeTier = 'finals_core';
 const TIER_IDS = ['finals_core', 'calibration'];
 
@@ -1176,9 +1709,7 @@ function tierMeta(id){
 }
 
 function syncTierBadges(){
-  const banner = $('tierBanner');
   const txt = $('tierBannerText');
-  banner.className = 'ptier-banner';
   if(activeTier === 'finals_core'){
     txt.textContent = tierMeta('finals_core').subtitle || '日常只调这 4 组正交物理量';
   } else {
@@ -1205,6 +1736,21 @@ function updateTabDirtyDots(){
     if(!pane || !btn) return;
     const has = !!pane.querySelector('.row.dirty, .row.pending');
     btn.classList.toggle('has-dirty', has);
+  });
+}
+
+function applyParamSearch(){
+  const q = ($('paramSearch').value || '').trim().toLowerCase();
+  $('btnParamSearchClear').classList.toggle('show', q.length > 0);
+  document.querySelectorAll('#params details.grp').forEach(grp=>{
+    let visibleCount = 0;
+    grp.querySelectorAll('.row').forEach(row=>{
+      const hit = !q || (row.dataset.searchText || '').includes(q);
+      row.classList.toggle('hidden-filter', !hit);
+      if(hit) visibleCount++;
+    });
+    grp.style.display = visibleCount > 0 ? '' : 'none';
+    if(q && visibleCount > 0) grp.open = true;
   });
 }
 
@@ -1238,40 +1784,106 @@ async function loadParams(map){
       const row = document.createElement('div');
       row.className='row'; row.dataset.section=g.section; row.dataset.key=it.key;
       row.dataset.type=it.type; row.dataset.orig=String(it.value);
+      row.dataset.searchText = `${it.key} ${it.label} ${it.help||''}`.toLowerCase();
       const lab = document.createElement('label');
       lab.className='lbl';
-      lab.innerHTML = `${it.label}<span class="hint">${it.help||''}</span>`;
-      let inp;
-      if(it.type==='bool'){ inp=document.createElement('input'); inp.type='checkbox'; inp.checked=!!it.value; }
-      else if(it.type==='enum'){
-        inp=document.createElement('select');
-        (it.options||[]).forEach(opt=>{
-          const o=document.createElement('option'); o.value=opt; o.textContent=opt; inp.appendChild(o);
-        });
-        inp.value=String(it.value);
-      }
-      else { inp=document.createElement('input'); inp.type='number';
-             inp.min=it.min; inp.max=it.max; inp.step=it.step; inp.value=it.value; }
-      const onChange = ()=>{
+      lab.innerHTML = `${escHtml(it.label)}<span class="hint">${escHtml(it.help||'')}</span>`;
+
+      let inp, ctrlNode;
+      const syncDirty = ()=>{
+        const origVal = row.dataset.orig;
         const cur = it.type==='bool' ? String(inp.checked)
                   : (it.type==='enum' ? String(inp.value) : String(parseFloat(inp.value)));
-        const base = it.type==='bool' ? String(it.value)
-                   : (it.type==='enum' ? String(it.value) : String(parseFloat(it.value)));
+        const base = it.type==='bool' ? String(origVal === 'true' || origVal === '1')
+                   : (it.type==='enum' ? String(origVal) : String(parseFloat(origVal)));
         row.classList.toggle('dirty', cur !== base);
         dirty = !!document.querySelector('#params .row.dirty');
         $('memo').textContent = dirty ? '有未保存修改' : '未修改';
         updateTabDirtyDots();
+        updateButtons();
       };
-      inp.addEventListener(it.type==='enum' ? 'change' : 'input', onChange);
-      row.appendChild(lab); row.appendChild(inp); det.appendChild(row);
+
+      if(it.type==='bool'){
+        inp = document.createElement('input');
+        inp.type = 'checkbox';
+        inp.checked = !!it.value;
+        const wrap = document.createElement('label');
+        wrap.className = 'toggle';
+        const track = document.createElement('span');
+        track.className = 'track';
+        track.innerHTML = '<span class="thumb"></span>';
+        wrap.appendChild(inp);
+        wrap.appendChild(track);
+        ctrlNode = wrap;
+      } else if(it.type==='enum'){
+        inp = document.createElement('select');
+        (it.options||[]).forEach(opt=>{
+          const o=document.createElement('option'); o.value=opt; o.textContent=opt; inp.appendChild(o);
+        });
+        inp.value=String(it.value);
+        ctrlNode = inp;
+      } else {
+        inp = document.createElement('input');
+        inp.type = 'number';
+        inp.min = it.min; inp.max = it.max; inp.step = it.step; inp.value = it.value;
+        const wrap = document.createElement('div');
+        wrap.className = 'stepper';
+        const btnMinus = document.createElement('button');
+        btnMinus.type = 'button'; btnMinus.className = 'step-btn'; btnMinus.textContent = '−';
+        btnMinus.title = '减小（Shift+点击 5倍步进）';
+        const btnPlus = document.createElement('button');
+        btnPlus.type = 'button'; btnPlus.className = 'step-btn'; btnPlus.textContent = '+';
+        btnPlus.title = '增大（Shift+点击 5倍步进）';
+        const stepBy = (dir, ev)=>{
+          if(inp.disabled) return;
+          const mult = ev.shiftKey ? 5 : 1;
+          const step = Number(it.step) || 1;
+          const dec = stepDecimals(step);
+          const curNum = Number.isFinite(parseFloat(inp.value)) ? parseFloat(inp.value) : Number(it.value || 0);
+          let next = curNum + dir * step * mult;
+          if(typeof it.min === 'number') next = Math.max(it.min, next);
+          if(typeof it.max === 'number') next = Math.min(it.max, next);
+          inp.value = (it.type === 'int') ? String(Math.round(next)) : Number(next.toFixed(dec));
+          syncDirty();
+        };
+        btnMinus.addEventListener('click', e => stepBy(-1, e));
+        btnPlus.addEventListener('click', e => stepBy(1, e));
+        wrap.appendChild(btnMinus);
+        wrap.appendChild(inp);
+        wrap.appendChild(btnPlus);
+        ctrlNode = wrap;
+      }
+      inp.addEventListener(it.type==='enum' ? 'change' : 'input', syncDirty);
+      row._syncDirty = syncDirty;
+      row.appendChild(lab); row.appendChild(ctrlNode); det.appendChild(row);
     });
     panes[tid].appendChild(det);
   });
+
+  dirty = false;
   setTier(activeTier);
+  applyParamSearch();
   markPending();
   updateTabDirtyDots();
   $('memo').textContent = '已加载';
-  setLocked(lastLocked===true);
+  setLocked(lastLocked===true, true);
+}
+
+function undoParams(){
+  if(lastLocked === true || !dirty) return;
+  document.querySelectorAll('#params .row.dirty').forEach(row=>{
+    const inp = row.querySelector('input, select');
+    if(!inp) return;
+    const orig = row.dataset.orig;
+    if(row.dataset.type === 'bool') inp.checked = (orig === 'true' || orig === '1');
+    else inp.value = orig;
+    row.classList.remove('dirty');
+  });
+  dirty = false;
+  $('memo').textContent = '已撤销修改';
+  updateTabDirtyDots();
+  updateButtons();
+  toast('已恢复为当前 YAML 原值');
 }
 
 function markPending(){
@@ -1336,6 +1948,7 @@ async function saveParams(thenRestart){
                      : (row.dataset.type==='enum' ? String(inp.value) : String(parseFloat(inp.value)));
   });
   markPending();
+  updateButtons();
   if(thenRestart){
     if(runningMap && map !== runningMap){
       $('memo').textContent = '已保存，但不是正在运行的文件';
@@ -1384,7 +1997,27 @@ function handleRestart(rs){
   }
 }
 
-// ---------------- 结构化胶囊日志
+// ---------------- 底部极简停靠条 + 滑出式日志终端
+function setLogOpen(open){
+  const shell = $('logShell');
+  const isOpen = !!open;
+  shell.classList.toggle('open', isOpen);
+  $('dockChevron').textContent = isOpen ? '▼ 日志终端' : '▲ 日志终端';
+  document.querySelector('.dock-hint').textContent = isOpen ? '按 Esc 收起' : '按 ` 展开';
+  if(isOpen && $('autoscroll').checked){
+    const box = $('log');
+    requestAnimationFrame(()=>{ box.scrollTop = box.scrollHeight; });
+  }
+}
+
+function updateDockStats(latestMsg){
+  const eb = $('dockErrBadge');
+  eb.textContent = `ERR: ${logErrCount}`;
+  eb.classList.toggle('has-err', logErrCount > 0);
+  $('dockNodeTag').textContent = LOG_LABEL[logFile] || logFile;
+  if(latestMsg !== undefined) $('dockPreview').textContent = latestMsg || '等待日志流…';
+}
+
 function applyLogRowFilter(div, q){
   const lvl = div.dataset.lvl || 'info';
   const matchLvl = (logLevelFilter === 'all') || (lvl === logLevelFilter);
@@ -1398,6 +2031,8 @@ function refreshLogFilters(){
 }
 
 async function pollLogs(){
+  if(logsBusy) return;
+  logsBusy = true;
   try{
     const url = `/api/logs?f=${encodeURIComponent(logFile)}&dec=${$('onlyDec').checked?1:0}&offset=${logOffset}`;
     const d = await (await fetch(url,{cache:'no-store'})).json();
@@ -1406,12 +2041,14 @@ async function pollLogs(){
     const box=$('log'), q=$('search').value.trim(), stick=$('autoscroll').checked;
     const onlyCur = $('onlyCurrent').checked;
     let frag=document.createDocumentFragment();
+    let latestSummary = '';
     d.lines.forEach(ln=>{
       const isStart = /^\[DEC\] proc start name=/.test(ln);
       if(isStart && ln.indexOf('name='+logFile) !== -1){
         if(onlyCur){
           box.innerHTML='';
           frag=document.createDocumentFragment();
+          logErrCount = 0;
         } else {
           const sep=document.createElement('div');
           sep.className='sep'; sep.textContent='── 以上是更早的启动 ──';
@@ -1422,16 +2059,17 @@ async function pollLogs(){
         const div=document.createElement('div');
         div.className='sep'; div.textContent=ln;
         frag.appendChild(div);
+        latestSummary = ln;
         return;
       }
 
       const isPe = ln.includes('[DEC] param effective') || ln.includes('[DEC] panel param_write');
       const isDec = ln.includes('[DEC]');
       const isErr = /error|fail|exception|traceback|warn/i.test(ln);
+      if(isErr) logErrCount++;
       const lvl = isErr ? 'err' : (isPe ? 'pe' : (isDec ? 'dec' : 'info'));
       const badgeTxt = isErr ? 'ERR' : (isPe ? 'PARAM' : (isDec ? 'DEC' : 'LOG'));
 
-      // 提取时间戳 [123456.789] 或 HH:MM:SS
       let ts = '';
       let msg = ln;
       const mTs = /^\s*\[?(\d{2}:\d{2}:\d{2}(?:\.\d+)?|\d{8,}\.\d+)\]?\s*(.*)$/.exec(ln);
@@ -1449,25 +2087,54 @@ async function pollLogs(){
         + `<span class="log-msg">${escHtml(msg)}</span>`;
       applyLogRowFilter(div, q);
       frag.appendChild(div);
+      if(isErr || isDec || !latestSummary) latestSummary = ln;
     });
     box.appendChild(frag);
     while(box.childNodes.length>1200) box.removeChild(box.firstChild);
-    if(stick) box.scrollTop=box.scrollHeight;
+    updateDockStats(latestSummary || d.lines[d.lines.length - 1]);
+    if(stick && $('logShell').classList.contains('open')) box.scrollTop=box.scrollHeight;
   }catch(e){}
+  finally{
+    logsBusy = false;
+  }
 }
 
 // ---------------- 事件绑定
 $('btnSave').addEventListener('click',()=>saveParams(false));
 $('btnSaveRestart').addEventListener('click',()=>saveParams(true));
+$('btnUndo').addEventListener('click', undoParams);
+
+let prevMapVal = $('mapSel').value;
 $('mapSel').addEventListener('change',()=>{
-  logOffset=0; loadParams($('mapSel').value);
+  const nextVal = $('mapSel').value;
+  if(dirty && !confirm('当前有未保存的参数修改，切换地图会放弃未保存内容，确定切换吗？')){
+    $('mapSel').value = prevMapVal;
+    return;
+  }
+  prevMapVal = nextVal;
+  loadParams(nextVal);
   refreshMapWarn(); updateButtons();
 });
+
+$('paramSearch').addEventListener('input', applyParamSearch);
+$('btnParamSearchClear').addEventListener('click', ()=>{
+  $('paramSearch').value = '';
+  applyParamSearch();
+});
+
 document.querySelectorAll('#paramTabs .ptab').forEach(btn=>{
   btn.addEventListener('click',()=>setTier(btn.dataset.tier));
 });
-$('logFile').addEventListener('change',()=>{ logFile=$('logFile').value; logOffset=0; $('log').innerHTML=''; });
-$('onlyCurrent').addEventListener('change',()=>{ logOffset=0; $('log').innerHTML=''; });
+
+$('logDock').addEventListener('click', ()=> setLogOpen(!$('logShell').classList.contains('open')));
+$('btnLogClose').addEventListener('click', ()=> setLogOpen(false));
+$('logFile').addEventListener('change',()=>{
+  logFile=$('logFile').value; logOffset=0; $('log').innerHTML='';
+  logErrCount=0; updateDockStats('切换节点日志中…');
+});
+$('onlyCurrent').addEventListener('change',()=>{
+  logOffset=0; $('log').innerHTML=''; logErrCount=0; updateDockStats();
+});
 $('search').addEventListener('input', refreshLogFilters);
 document.querySelectorAll('#logLvls .pill-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
@@ -1476,28 +2143,21 @@ document.querySelectorAll('#logLvls .pill-btn').forEach(btn=>{
     refreshLogFilters();
   });
 });
-document.querySelectorAll('.log-size-btns button').forEach(btn=>{
-  btn.addEventListener('click',()=>{
-    const sz = btn.dataset.lsize;
-    document.querySelectorAll('.log-size-btns button').forEach(b=>b.classList.toggle('active', b===btn));
-    const card = $('logCard');
-    card.classList.remove('h-collapsed', 'h-expanded');
-    if(sz === 'collapsed') card.classList.add('h-collapsed');
-    else if(sz === 'expanded') card.classList.add('h-expanded');
-  });
-});
 $('btnReloadAll').addEventListener('click',()=>{
   $('onlyCurrent').checked = false;
-  logOffset=0; $('log').innerHTML='';
+  logOffset=0; $('log').innerHTML=''; logErrCount=0; updateDockStats();
 });
-$('btnClear').addEventListener('click',()=>{ $('log').innerHTML=''; });
+$('btnClear').addEventListener('click',()=>{
+  $('log').innerHTML=''; logErrCount=0; updateDockStats('已清屏');
+});
+
 $('btnHelp').addEventListener('click',()=>$('mask').classList.add('show'));
 $('mask').addEventListener('click',e=>{ if(e.target.id==='mask') $('mask').classList.remove('show'); });
 $('btnReset').addEventListener('click',async()=>{
   const d = await (await fetch('/api/round/reset',{method:'POST'})).json();
   toast(d.ok?d.msg:('失败：'+d.error), !d.ok);
   if(d.ok){
-    logOffset=0; $('log').innerHTML='';
+    logOffset=0; $('log').innerHTML=''; logErrCount=0; eventHistory=[]; updateDockStats();
     setLocked(false, true);
   }
 });
@@ -1506,6 +2166,7 @@ $('estop').addEventListener('click',async()=>{
   toast(d.ok?'已停车，参数已解锁':('失败：'+d.error), !d.ok);
   if(d.ok){ setLocked(false, true); }
 });
+
 $('recMode').addEventListener('change', syncRecModeUI);
 $('btnRecToggle').addEventListener('click',async()=>{
   const btn = $('btnRecToggle');
@@ -1549,14 +2210,34 @@ $('recFiles').addEventListener('click',async(e)=>{
   toast(d.ok ? d.msg : ('删除失败：'+(d.error||d.msg)), !d.ok);
   if(d.recording) renderRecording(d.recording);
 });
+
+// 快捷键：仅使用 ` 开关终端、Esc 收起浮层（绝不占用空格）
+document.addEventListener('keydown', e=>{
+  const tag = (e.target && e.target.tagName) || '';
+  const editing = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
+  if(e.code === 'Backquote' && !editing && !e.ctrlKey && !e.altKey && !e.metaKey){
+    e.preventDefault();
+    setLogOpen(!$('logShell').classList.contains('open'));
+    return;
+  }
+  if(e.key === 'Escape'){
+    if($('mask').classList.contains('show')) $('mask').classList.remove('show');
+    else if($('logShell').classList.contains('open')) setLogOpen(false);
+    else if(document.body.classList.contains('peek-mode')){
+      document.body.classList.remove('peek-mode');
+      $('btnPeek').classList.remove('active-toggle');
+    }
+  }
+});
+
 $('imgDebug').src='/api/stream/debug';
 $('imgYolo').src='/api/stream/yolo';
 
 syncRecModeUI();
 loadParams('finals_fork');
 pollStatus(); pollLogs();
-setInterval(pollStatus,500);
-setInterval(pollLogs,700);
+setInterval(pollStatus, 500);
+setInterval(pollLogs, 700);
 </script>
 </body>
 </html>

@@ -526,6 +526,84 @@ class TestPanelAndTelemetry(unittest.TestCase):
             self.assertEqual(panel_server.SH.timer_stop, 122.5)
             panel_server.reset_round_locked()
 
+    def test_panel_backend_hardening_events_params_and_logs(self):
+        # 1. save_params rejects non-numeric / NaN / bool values cleanly without crashing
+        orig_dir = panel_server.CONFIG_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(REPO_ROOT / "tools" / "config" / "finals_fork.yaml", Path(tmp) / "finals_fork.yaml")
+            panel_server.CONFIG_DIR = tmp
+            try:
+                for bad_val in ("", "nan", "inf", True):
+                    ok, msg = panel_server.save_params("finals_fork", {
+                        "line_follower_node": {"target_speed": bad_val}
+                    })
+                    self.assertFalse(ok)
+                    self.assertIn("target_speed", msg)
+            finally:
+                panel_server.CONFIG_DIR = orig_dir
+
+        # 2. read_recent_events preserves commas inside kv and supports >10 rows
+        orig_logroot = panel_server.LOGROOT
+        orig_state_dir = panel_server.STATE_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            run_id = "test_run_01"
+            log_dir = Path(tmp) / "logs" / run_id
+            state_dir = Path(tmp) / "state"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "status.json").write_text(json.dumps({"run_id": run_id}), encoding="utf-8")
+            rows = ["ts,t,src,area,event,kv\n"]
+            for i in range(25):
+                rows.append(f"100.{i},{i}.5,follow,red,avoid_on,side=L,d=0.45\n")
+            (log_dir / "events.csv").write_text("".join(rows), encoding="utf-8")
+            (log_dir / "follow.log").write_text("hello log\n", encoding="utf-8")
+
+            panel_server.LOGROOT = str(Path(tmp) / "logs")
+            panel_server.STATE_DIR = str(state_dir)
+            try:
+                evs = panel_server.read_recent_events()
+                self.assertEqual(len(evs), 25)
+                self.assertEqual(evs[-1]["kv"], "side=L,d=0.45")
+
+                # 3. _logs rejects path traversal outside ALLOWED_LOG_FILES & Handler serves assets/status
+                import io
+                def _invoke_get(req_path):
+                    buf = io.BytesIO()
+                    h = panel_server.Handler.__new__(panel_server.Handler)
+                    h.path = req_path
+                    h.headers = {}
+                    h.wfile = buf
+                    h.requestline = f"GET {req_path} HTTP/1.1"
+                    h.request_version = "HTTP/1.1"
+                    h.client_address = ("127.0.0.1", 12345)
+                    captured = {"status": 0, "headers": {}}
+                    h.send_response = lambda code, msg=None: captured.__setitem__("status", code)
+                    h.send_header = lambda k, v: captured["headers"].__setitem__(k.lower(), v)
+                    h.end_headers = lambda: None
+                    h.do_GET()
+                    return captured["status"], captured["headers"], buf.getvalue()
+
+                st_code, _hdrs, raw = _invoke_get("/api/logs?f=../../secret&offset=bad")
+                body = json.loads(raw.decode("utf-8"))
+                self.assertEqual(st_code, 400)
+                self.assertFalse(body["ok"])
+
+                st_code2, _hdrs2, raw2 = _invoke_get("/api/status")
+                body2 = json.loads(raw2.decode("utf-8"))
+                self.assertEqual(st_code2, 200)
+                self.assertTrue(body2["ok"])
+                self.assertIn("frame_age", body2)
+                self.assertEqual(len(body2["events"]), 25)
+
+                for asset in ("bg_playroom.webp", "gemini_banner.jpg", "deepseek_banner.jpg",
+                              "gemini_chibi.jpg", "deepseek_chibi.jpg", "duo_standby.jpg"):
+                    acode, _ahdrs, abody = _invoke_get(f"/assets/{asset}")
+                    self.assertEqual(acode, 200, f"Asset failed: {asset}")
+                    self.assertGreater(len(abody), 1000, f"Asset empty: {asset}")
+            finally:
+                panel_server.LOGROOT = orig_logroot
+                panel_server.STATE_DIR = orig_state_dir
+
     def test_raw_video_recorder_and_keyframe_extractor_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmp:
             cap_dir = Path(tmp) / "raw_videos"

@@ -15,6 +15,7 @@ Web 面板后端（零第三方依赖，只用标准库 + rclpy/cv2/yaml）。
 import argparse
 import datetime
 import json
+import math
 import os
 import queue
 import re
@@ -73,9 +74,11 @@ def _resolve_map_name(name):
 STREAM_FPS = 6.0
 STREAM_PERIOD = 1.0 / STREAM_FPS
 JPEG_QUALITY = 70
+FRAME_STALE_SEC = 3.0
 VOLTAGE_LOW_THRESHOLD = 11.6
 RECORD_DEFAULT_FPS = 15.0
 RECORD_MAX_DURATION_SEC = 120.0
+ALLOWED_LOG_FILES = frozenset({'follow', 'base', 'camera', 'yolo', 'start', 'panel', 'safety', 'collector'})
 _TAG_SAFE_RE = re.compile(r'[^a-zA-Z0-9_-]+')
 
 
@@ -385,7 +388,8 @@ class RawVideoRecorder:
 
     def list_files(self, limit=30):
         out = []
-        active_name = self._filename if self.is_active else ''
+        with self._lock:
+            active_name = self._filename if self.is_active else ''
         scan_dirs = [
             ('debug', self.debug_dir, ('.zip', '.mp4', '.avi')),
             ('raw', self.capture_dir, ('.mp4', '.avi')),
@@ -479,6 +483,8 @@ class Shared:
     def __init__(self):
         self.lock = threading.Lock()
         self.frames = {'debug': None, 'yolo': None}
+        self.frame_ts = {'debug': 0.0, 'yolo': 0.0}
+        self.frame_seq = {'debug': 0, 'yolo': 0}
         self.started = False
         self.start_cmd = False   # start_toggle 最近一次发布的原始值（不认沿）
         self.locked = False       # 参数是否锁定：只在"真正发车"的上升沿置位
@@ -570,12 +576,16 @@ class PanelNode(Node):
         if ok:
             with SH.lock:
                 SH.frames['debug'] = buf.tobytes()
+                SH.frame_ts['debug'] = time.time()
+                SH.frame_seq['debug'] += 1
 
     def _on_yolo(self, msg):
         data = self._encode(msg)
         if data:
             with SH.lock:
                 SH.frames['yolo'] = data
+                SH.frame_ts['yolo'] = time.time()
+                SH.frame_seq['yolo'] += 1
 
     def _on_raw_image(self, msg):
         # 空闲或处于调试复盘模式时直接返回，不做任何图像拷贝或解码
@@ -796,7 +806,7 @@ def restart_state():
     return {'name': name, 'state': state, 'elapsed': round(elapsed, 1)}
 
 
-def read_recent_events(limit=10):
+def read_recent_events(limit=60):
     rd = run_dir()
     if not rd:
         return []
@@ -810,7 +820,7 @@ def read_recent_events(limit=10):
         return []
     out = []
     for line in rows[1:][-limit:]:
-        parts = line.rstrip('\n').split(',')
+        parts = line.rstrip('\r\n').split(',', 5)
         if len(parts) >= 6:
             out.append({'t': parts[1], 'source': parts[2], 'area': parts[3],
                         'event': parts[4], 'kv': parts[5]})
@@ -894,9 +904,24 @@ def save_params(map_name, values):
                 if val not in lo:
                     return False, f'{key}={val} 不在可选项 {lo} 中'
             elif typ == 'int':
-                val = int(round(float(val)))
+                if isinstance(val, bool):
+                    return False, f'{key} 数值无效'
+                try:
+                    fval = float(val)
+                except (TypeError, ValueError):
+                    return False, f'{key} 数值无效'
+                if not math.isfinite(fval):
+                    return False, f'{key} 数值无效'
+                val = int(round(fval))
             else:
-                val = float(val)
+                if isinstance(val, bool):
+                    return False, f'{key} 数值无效'
+                try:
+                    val = float(val)
+                except (TypeError, ValueError):
+                    return False, f'{key} 数值无效'
+                if not math.isfinite(val):
+                    return False, f'{key} 数值无效'
             if typ in ('int', 'float') and not (lo <= val <= hi):
                 return False, f'{key}={val} 超出范围 [{lo}, {hi}]'
             if params.get(key) != val:
@@ -908,8 +933,11 @@ def save_params(map_name, values):
 
     with open(path + '.bak', 'w', encoding='utf-8') as f:
         yaml.safe_dump(backup, f, allow_unicode=True, sort_keys=False)
-    with open(path, 'w', encoding='utf-8') as f:
+    tmp_path = path + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+        f.flush()
+    os.replace(tmp_path, path)
 
     print(f'[DEC] panel param_write map={map_name} ' + ' '.join(changed), flush=True)
     return True, '; '.join(changed)
@@ -955,7 +983,7 @@ class Handler(BaseHTTPRequestHandler):
             for kv in self.path.split('?', 1)[1].split('&'):
                 if '=' in kv:
                     k, v = kv.split('=', 1)
-                    query[k] = v
+                    query[urllib.parse.unquote_plus(k)] = urllib.parse.unquote_plus(v)
 
         try:
             if path == '/':
@@ -1038,6 +1066,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({'ok': True, 'msg': '本轮已清零，参数已解锁'})
 
             if path == '/api/estop':
+                if NODE is None:
+                    return self._err(503, 'ROS 节点未就绪，无法发送急停指令')
                 threading.Thread(target=NODE.estop, daemon=True).start()
                 with SH.lock:
                     SH.started = False
@@ -1117,12 +1147,14 @@ class Handler(BaseHTTPRequestHandler):
             body = f.read()
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-cache')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def _status(self):
         st = read_status()
+        now = time.time()
         with SH.lock:
             started = SH.started
             locked = SH.locked
@@ -1133,7 +1165,14 @@ class Handler(BaseHTTPRequestHandler):
             ts, te = SH.timer_start, SH.timer_stop
             rnd = SH.round
             seg_info = dict(SH.segment)
-            frames_ok = {k: (v is not None) for k, v in SH.frames.items()}
+            frames_ok = {
+                k: bool(SH.frames[k] is not None and (now - SH.frame_ts[k]) < FRAME_STALE_SEC)
+                for k in ('debug', 'yolo')
+            }
+            frame_age = {
+                k: (round(now - SH.frame_ts[k], 2) if SH.frame_ts[k] > 0 else None)
+                for k in ('debug', 'yolo')
+            }
             volt = SH.voltage
             volt_ts = SH.voltage_ts
 
@@ -1176,8 +1215,9 @@ class Handler(BaseHTTPRequestHandler):
             'yaml': {'file': f'{map_name}.yaml', 'mtime': ymtime, 'stale': yaml_stale},
             'restart': restart_state(),
             'effective': read_effective_params(),
-            'events': read_recent_events(10),
+            'events': read_recent_events(60),
             'frames': frames_ok,
+            'frame_age': frame_age,
             'voltage': {
                 'value': round(volt, 2) if volt is not None else None,
                 'low': bool(volt is not None and volt < VOLTAGE_LOW_THRESHOLD),
@@ -1214,17 +1254,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
+        last_seq = -1
         try:
             while True:
                 with SH.lock:
                     data = SH.frames.get(name)
-                if data:
+                    seq = SH.frame_seq.get(name, 0)
+                if data and seq != last_seq:
                     self.wfile.write(b'--frame\r\n')
                     self.wfile.write(b'Content-Type: image/jpeg\r\n')
                     self.wfile.write(f'Content-Length: {len(data)}\r\n\r\n'.encode())
                     self.wfile.write(data)
                     self.wfile.write(b'\r\n')
                     self.wfile.flush()
+                    last_seq = seq
                 time.sleep(STREAM_PERIOD)
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
@@ -1234,8 +1277,13 @@ class Handler(BaseHTTPRequestHandler):
         if rd is None:
             return self._json({'lines': [], 'offset': 0, 'eof': True})
         fname = query.get('f', 'follow')
+        if fname not in ALLOWED_LOG_FILES:
+            return self._err(400, f'未知日志 {fname}')
         only_dec = query.get('dec', '0') == '1'
-        offset = int(query.get('offset', '0') or 0)
+        try:
+            offset = max(0, int(query.get('offset', '0') or 0))
+        except (TypeError, ValueError):
+            offset = 0
         path = os.path.join(rd, f'{fname}.log')
         if not os.path.isfile(path):
             return self._json({'lines': [], 'offset': 0, 'eof': True})
@@ -1276,7 +1324,7 @@ def bind_server(host, start_port, tries=10):
     for p in range(start_port, start_port + tries):
         try:
             srv = ThreadingHTTPServer((host, p), Handler)
-            PORT = p
+            PORT = srv.server_address[1]
             return srv
         except OSError:
             continue
@@ -1288,18 +1336,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--host', default='127.0.0.1')
     ap.add_argument('--port', type=int, default=8080)
+    ap.add_argument('--preview', action='store_true', help='离线预览模式（不初始化 ROS2）')
     args = ap.parse_args()
 
     os.makedirs(STATE_DIR, exist_ok=True)
 
-    rclpy.init()
-    NODE = PanelNode()
-    threading.Thread(target=rclpy.spin, args=(NODE,), daemon=True).start()
+    preview_mode = bool(args.preview or not HAS_ROS)
+    if not preview_mode:
+        rclpy.init()
+        NODE = PanelNode()
+        threading.Thread(target=rclpy.spin, args=(NODE,), daemon=True).start()
 
     srv = bind_server(args.host, args.port)
     _write_state_file('panel_port', str(PORT))
     _write_state_file('started', '0')
-    print(f'[panel] http://{args.host}:{PORT}/  (发车后只读)', flush=True)
+    mode_hint = '(离线预览模式，无 ROS2)' if preview_mode else '(发车后只读)'
+    print(f'[panel] http://{args.host}:{PORT}/  {mode_hint}', flush=True)
 
     try:
         srv.serve_forever()
@@ -1309,8 +1361,9 @@ def main():
         if RECORDER.is_active:
             RECORDER.stop()
         srv.server_close()
-        NODE.destroy_node()
-        if rclpy.ok():
+        if NODE is not None:
+            NODE.destroy_node()
+        if HAS_ROS and rclpy is not None and rclpy.ok():
             rclpy.shutdown()
     return 0
 
