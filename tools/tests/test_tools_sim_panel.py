@@ -595,11 +595,45 @@ class TestPanelAndTelemetry(unittest.TestCase):
                 self.assertIn("frame_age", body2)
                 self.assertEqual(len(body2["events"]), 25)
 
-                for asset in ("bg_playroom.webp", "gemini_banner.jpg", "deepseek_banner.jpg",
+                for asset in ("duo_hero_day.jpg", "atelier_banner.jpg",
                               "gemini_chibi.jpg", "deepseek_chibi.jpg", "duo_standby.jpg"):
                     acode, _ahdrs, abody = _invoke_get(f"/assets/{asset}")
                     self.assertEqual(acode, 200, f"Asset failed: {asset}")
                     self.assertGreater(len(abody), 1000, f"Asset empty: {asset}")
+
+                # 4. read_diagnostics extracts perf metrics and keeps early milestones/faults across 100 perf rows
+                diag_rows = [
+                    "ts,t,src,area,event,kv\n",
+                    "100.0,1.2,follow,yellow,stop_begin,count=1 s=2.40 finish=0\n",
+                    "101.0,2.5,follow,state,change,from=tracking to=lost\n",
+                    "102.0,3.0,follow,state,change,from=lost to=tracking\n",
+                ]
+                for i in range(100):
+                    diag_rows.append(
+                        f"110.{i},{10+i}.0,camera,camera,perf,fps=15.0 read_p50=63.45ms read_p95=67.39ms fails=0\n"
+                    )
+                    diag_rows.append(
+                        f"110.{i},{10+i}.2,yolo,yolo,perf,proc_fps=14.5 dropped=1 e2e_p95=32.17ms\n"
+                    )
+                diag_rows.append("210.0,115.0,follow,red_src,detect,src=cv_only d=0.12\n")
+                (log_dir / "events.csv").write_text("".join(diag_rows), encoding="utf-8")
+
+                st_code3, _hdrs3, raw3 = _invoke_get("/api/status")
+                body3 = json.loads(raw3.decode("utf-8"))
+                self.assertEqual(st_code3, 200)
+                self.assertAlmostEqual(body3["perf"]["cam_fps"], 15.0)
+                self.assertAlmostEqual(body3["perf"]["cam_read_p95"], 67.39)
+                self.assertEqual(body3["perf"]["cam_fails"], 0)
+                self.assertAlmostEqual(body3["perf"]["yolo_fps"], 14.5)
+                self.assertEqual(body3["perf"]["yolo_dropped"], 1)
+                self.assertAlmostEqual(body3["perf"]["yolo_e2e_p95"], 32.17)
+                self.assertTrue(body3["red_hint"]["active"])
+                self.assertEqual(body3["red_hint"]["src"], "cv_only")
+
+                # Early yellow stop & lost state survive 200 perf rows; normal tracking & perf rows are filtered out
+                m_pairs = [(m["area"], m["event"]) for m in body3["milestones"]]
+                self.assertEqual(m_pairs, [("yellow", "stop_begin"), ("state", "change")])
+                self.assertIn("to=lost", body3["milestones"][1]["kv"])
             finally:
                 panel_server.LOGROOT = orig_logroot
                 panel_server.STATE_DIR = orig_state_dir

@@ -827,6 +827,109 @@ def read_recent_events(limit=60):
     return out
 
 
+def _parse_kv_tokens(kv_str):
+    out = {}
+    for tok in str(kv_str or '').split():
+        if '=' in tok:
+            k, v = tok.split('=', 1)
+            out[k] = v
+    return out
+
+
+def _parse_metric_num(raw, as_int=False):
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if s.endswith('ms'):
+        s = s[:-2]
+    try:
+        val = float(s)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(val):
+        return None
+    return int(round(val)) if as_int else round(val, 2)
+
+
+def read_diagnostics(scan_lines=400, milestone_limit=40):
+    """从 events.csv 剥离高频性能心跳与冗余帧状态，提取结构化健康指标与关键里程碑/故障。"""
+    perf = {
+        'cam_fps': None, 'cam_read_p95': None, 'cam_fails': None,
+        'yolo_fps': None, 'yolo_dropped': None, 'yolo_e2e_p95': None,
+    }
+    red_hint = {'active': False, 'src': '', 'd': None, 't': ''}
+    milestones = []
+
+    rd = run_dir()
+    if not rd:
+        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint}
+    path = os.path.join(rd, 'events.csv')
+    if not os.path.isfile(path):
+        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            rows = f.readlines()
+    except OSError:
+        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint}
+
+    for line in rows[1:][-scan_lines:]:
+        parts = line.rstrip('\r\n').split(',', 5)
+        if len(parts) < 6:
+            continue
+        t_str, source, area, event, kv = parts[1], parts[2], parts[3], parts[4], parts[5]
+
+        if area == 'camera' and event == 'perf':
+            kv_map = _parse_kv_tokens(kv)
+            if 'fps' in kv_map:
+                perf['cam_fps'] = _parse_metric_num(kv_map.get('fps'))
+            if 'read_p95' in kv_map:
+                perf['cam_read_p95'] = _parse_metric_num(kv_map.get('read_p95'))
+            if 'fails' in kv_map:
+                perf['cam_fails'] = _parse_metric_num(kv_map.get('fails'), as_int=True)
+            continue
+
+        if area == 'yolo' and event == 'perf':
+            kv_map = _parse_kv_tokens(kv)
+            fps_tok = kv_map.get('proc_fps') if 'proc_fps' in kv_map else kv_map.get('fps')
+            if fps_tok is not None:
+                perf['yolo_fps'] = _parse_metric_num(fps_tok)
+            if 'dropped' in kv_map:
+                perf['yolo_dropped'] = _parse_metric_num(kv_map.get('dropped'), as_int=True)
+            if 'e2e_p95' in kv_map:
+                perf['yolo_e2e_p95'] = _parse_metric_num(kv_map.get('e2e_p95'))
+            continue
+
+        if area == 'red_src':
+            kv_map = _parse_kv_tokens(kv)
+            if event == 'detect':
+                red_hint = {
+                    'active': True,
+                    'src': kv_map.get('src', ''),
+                    'd': _parse_metric_num(kv_map.get('d')),
+                    't': t_str,
+                }
+            elif event == 'clear':
+                red_hint = {'active': False, 'src': '', 'd': None, 't': t_str}
+            continue
+
+        if area == 'ctrl':
+            continue
+        if area == 'state' and event == 'change' and 'to=lost' not in kv:
+            continue
+        if area == 'mux' and event == 'change' and 'active=stop' not in kv:
+            continue
+
+        milestones.append({
+            't': t_str, 'source': source, 'area': area, 'event': event, 'kv': kv,
+        })
+
+    return {
+        'perf': perf,
+        'milestones': milestones[-milestone_limit:],
+        'red_hint': red_hint,
+    }
+
+
 def load_params(map_name):
     if map_name not in MAP_FILES:
         raise FileNotFoundError(os.path.join(CONFIG_DIR, f'{map_name}.yaml'))
@@ -1193,6 +1296,7 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             ymtime = 0.0
         yaml_stale = bool(started_epoch and ymtime > started_epoch + 1)
+        diag = read_diagnostics()
 
         self._json({
             'ok': True,
@@ -1216,6 +1320,9 @@ class Handler(BaseHTTPRequestHandler):
             'restart': restart_state(),
             'effective': read_effective_params(),
             'events': read_recent_events(60),
+            'perf': diag['perf'],
+            'milestones': diag['milestones'],
+            'red_hint': diag['red_hint'],
             'frames': frames_ok,
             'frame_age': frame_age,
             'voltage': {
