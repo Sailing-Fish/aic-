@@ -126,8 +126,8 @@ public:
 private:
   struct DigitTrack
   {
-    bool active{false};
     int digit{0};
+    int track_id{-1};
     int frames{0};
     double mean_conf{0.0};
     double d_bumper_m{0.0};
@@ -154,7 +154,7 @@ private:
   int committed_branch_{0};
   double commit_start_s_m_{-1e9};
 
-  std::array<DigitTrack, 9> digit_tracks_{};
+  std::vector<DigitTrack> digit_tracks_{};
 };
 
 }  // namespace line_follower

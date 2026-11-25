@@ -17,6 +17,7 @@ void ObstacleMemory::set_config(const ObstacleMemoryConfig & config)
   config_.merge_radius_m = std::max(0.02, config_.merge_radius_m);
   config_.memory_ttl_sec = std::max(0.1, config_.memory_ttl_sec);
   config_.car_length_m = std::max(0.05, config_.car_length_m);
+  config_.rear_axle_to_bumper_m = std::max(0.0, config_.rear_axle_to_bumper_m);
   config_.rear_keep_margin_m = std::max(0.0, config_.rear_keep_margin_m);
   config_.max_forward_dist_m = std::max(0.3, config_.max_forward_dist_m);
   config_.ema_alpha = std::clamp(config_.ema_alpha, 0.05, 1.0);
@@ -41,12 +42,15 @@ void ObstacleMemory::bumper_to_world(
   double d_bumper_m,
   double y_lat_m,
   double & wx,
-  double & wy)
+  double & wy,
+  double rear_axle_to_bumper_m)
 {
+  // EKF pose is at the rear axle; shift bumper point into rear-axle frame before rotating.
+  const double d_axle = d_bumper_m + rear_axle_to_bumper_m;
   const double c = std::cos(pose.yaw);
   const double s = std::sin(pose.yaw);
-  wx = pose.x + d_bumper_m * c - y_lat_m * s;
-  wy = pose.y + d_bumper_m * s + y_lat_m * c;
+  wx = pose.x + d_axle * c - y_lat_m * s;
+  wy = pose.y + d_axle * s + y_lat_m * c;
 }
 
 void ObstacleMemory::world_to_bumper(
@@ -54,13 +58,15 @@ void ObstacleMemory::world_to_bumper(
   double wx,
   double wy,
   double & d_bumper_m,
-  double & y_lat_m)
+  double & y_lat_m,
+  double rear_axle_to_bumper_m)
 {
   const double dx = wx - pose.x;
   const double dy = wy - pose.y;
   const double c = std::cos(pose.yaw);
   const double s = std::sin(pose.yaw);
-  d_bumper_m = dx * c + dy * s;
+  const double d_axle = dx * c + dy * s;
+  d_bumper_m = d_axle - rear_axle_to_bumper_m;
   y_lat_m = -dx * s + dy * c;
 }
 
@@ -93,7 +99,8 @@ void ObstacleMemory::update(
 
     double wx = 0.0;
     double wy = 0.0;
-    bumper_to_world(ref_pose, det.d_bumper_m, det.y_lat_m, wx, wy);
+    bumper_to_world(
+      ref_pose, det.d_bumper_m, det.y_lat_m, wx, wy, config_.rear_axle_to_bumper_m);
 
     int best_idx = -1;
     double best_dist = config_.merge_radius_m;
@@ -154,7 +161,8 @@ void ObstacleMemory::prune(const VehiclePose2D & pose, double now_sec)
         if (pose.valid) {
           double d_bumper = 0.0;
           double y_lat = 0.0;
-          world_to_bumper(pose, e.wx, e.wy, d_bumper, y_lat);
+          world_to_bumper(
+            pose, e.wx, e.wy, d_bumper, y_lat, config_.rear_axle_to_bumper_m);
           // Expire only once the ENTIRE obstacle footprint is behind the rear-keep limit
           if ((d_bumper + e.half_len_m) < min_rear_d) {
             return true;
@@ -202,7 +210,8 @@ std::vector<LocalObstacle> ObstacleMemory::get_local_obstacles(
 
     double d_bumper = 0.0;
     double y_lat = 0.0;
-    world_to_bumper(ref_pose, e.wx, e.wy, d_bumper, y_lat);
+    world_to_bumper(
+      ref_pose, e.wx, e.wy, d_bumper, y_lat, config_.rear_axle_to_bumper_m);
 
     if ((d_bumper + e.half_len_m) < min_rear_d) {
       continue;

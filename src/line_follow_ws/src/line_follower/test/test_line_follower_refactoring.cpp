@@ -4,9 +4,6 @@
 #include "line_follower/motion_controller.hpp"
 #include "line_follower/track_state_machine.hpp"
 
-#define DETECTION_TURN_CONTROLLER_PURE_LOGIC_ONLY
-#include "../src/detection_turn_controller.cpp"
-
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -38,7 +35,6 @@ using line_follower::LaneGeometryConfig;
 using line_follower::MotionController;
 using line_follower::MotionControllerConfig;
 using line_follower::MotionState;
-using line_follower::RedAvoidState;
 using line_follower::TrackState;
 using line_follower::TrackStateConfig;
 using line_follower::TrackStateMachine;
@@ -184,7 +180,6 @@ void test_yellow_line_and_lost_line_state_machine()
   cfg.yellow_stop_min_time = 0.35;
   cfg.odom_still_threshold = 0.02;
   cfg.odom_still_hold = 0.25;
-  cfg.yellow_permanent_count = 2;
   cfg.yellow_clear_frames_required = 3;
   cfg.line_lost_stop_time = 0.8;
 
@@ -231,8 +226,8 @@ void test_yellow_line_and_lost_line_state_machine()
   CHECK(ev.base_state == TrackState::LOST);
   sm.commit_state(ev.base_state);
 
-  // Second yellow line at t=13.0 -> count=2 == yellow_permanent_count -> permanent_stop
-  ev = sm.step(true, true, 13.0);
+  // Second yellow line at t=13.0 with external_is_finish=true -> permanent_stop
+  ev = sm.step(true, true, 13.0, true);
   CHECK(ev.yellow_final_stop && sm.state().permanent_stop && ev.yellow_hold_stop);
   sm.commit_state(ev.base_state);
 
@@ -248,7 +243,8 @@ void test_motion_controller_and_parameterized_lost_thresholds()
   cfg.max_speed = 0.6;
   cfg.min_speed = 0.0;
   cfg.max_yaw_rate = 1.5;
-  cfg.kp = 2.0;
+  cfg.corridor_kp_y = 4.0;
+  cfg.corridor_heading_gain = 0.8;
   cfg.speed_gain_damping = 0.5;
   cfg.line_lost_forward_speed = 0.30;
   cfg.line_lost_yaw_hold_factor = 0.80;
@@ -258,18 +254,19 @@ void test_motion_controller_and_parameterized_lost_thresholds()
 
   MotionController controller(cfg);
   CurveAssistState curve{};
-  const auto track_cmd = controller.compute_tracking_command(0.25, curve);
-  CHECK(std::abs(track_cmd.yaw_rate - (-0.5)) < 1e-6);
+  MotionState motion{};
+  const auto track_cmd =
+    controller.compute_corridor_command(-0.10, 0.0, 0.0, 0.20, 1.0, 0.6, curve, motion);
+  CHECK(std::abs(track_cmd.yaw_rate - (-0.4)) < 1e-6);
   CHECK(track_cmd.linear_speed > 0.0 && track_cmd.linear_speed <= 0.5);
 
-  MotionState motion{};
   MotionController::record_motion(false, track_cmd.linear_speed, track_cmd.yaw_rate, motion);
   CHECK(motion.valid);
 
   // Phase 1: since_detection <= line_lost_slow_time (0.50s)
   const auto lost1 = controller.compute_lost_line_command(0.30, motion);
   CHECK(std::abs(lost1.linear_speed - 0.30) < 1e-6);
-  CHECK(std::abs(lost1.yaw_rate - (-0.40)) < 1e-6);
+  CHECK(std::abs(lost1.yaw_rate - (-0.32)) < 1e-6);
 
   // Phase 2: line_lost_slow_time < since_detection <= line_lost_full_stop_time
   const auto lost2 = controller.compute_lost_line_command(0.80, motion);
@@ -278,18 +275,6 @@ void test_motion_controller_and_parameterized_lost_thresholds()
   // Phase 3: since_detection > line_lost_full_stop_time (1.50s)
   const auto lost3 = controller.compute_lost_line_command(1.60, motion);
   CHECK(std::abs(lost3.linear_speed) < 1e-9);
-
-  // Soft red avoidance fusion check
-  RedAvoidState red{};
-  red.valid = true;
-  red.is_red_line = false;
-  red.bottom_ratio = 0.72;
-  double v = 0.45;
-  double w = 0.30;  // turning left toward left cone
-  controller.fuse_soft_red_avoidance(-0.20, curve, red, v, w);
-  CHECK(red.risk > 0.99 && red.very_close);
-  CHECK(w < 0.30);  // pushed right away from left cone
-  CHECK(v >= cfg.red_min_forward_speed && v <= cfg.red_soft_speed);
 }
 
 void test_debug_renderer()
@@ -305,16 +290,7 @@ void test_debug_renderer()
   auto res = geometry.evaluate(*seg, curve);
   res.yellow_line_detected = true;
 
-  RedAvoidState red{};
-  red.valid = true;
-  red.bbox_img = cv::Rect(300, 320, 30, 40);
-  red.center_img = cv::Point2d(315.0, 340.0);
-  red.bottom_img = cv::Point2d(315.0, 360.0);
-  red.bottom_ratio = 0.55;
-  red.risk = 0.5;
-  red.in_corridor = true;
-
-  const cv::Mat out = renderer.render(img, res, curve, red, true, 0.1, true);
+  const cv::Mat out = renderer.render(img, res, curve, true);
   CHECK(!out.empty());
   CHECK(out.rows == img.rows && out.cols == img.cols && out.type() == CV_8UC3);
 }
@@ -362,20 +338,17 @@ void test_roundabout_wide_white_observation_and_turn_response()
   img_cfg.white_v_min = 80;
   ImageProcessor processor(img_cfg);
 
-  // Baseline configuration (legacy fork-like defaults)
+  // Baseline configuration (un-tuned defaults)
   LaneGeometryConfig base_geo_cfg{};
   MotionControllerConfig base_ctrl_cfg{};
   base_ctrl_cfg.target_speed = 0.50;
   base_ctrl_cfg.max_speed = 0.50;
   base_ctrl_cfg.max_yaw_rate = 1.50;
-  base_ctrl_cfg.kp = 3.30;
+  base_ctrl_cfg.corridor_kp_y = 6.0;
+  base_ctrl_cfg.corridor_heading_gain = 0.0;
   base_ctrl_cfg.speed_gain_damping = 0.26;
-  base_ctrl_cfg.enable_continuous_curve_assist = true;
-  base_ctrl_cfg.reverse_curve_speed = 0.28;
-  base_ctrl_cfg.sharp_curve_threshold = 0.42;
-  base_ctrl_cfg.sharp_curve_speed = 0.33;
 
-  // Roundabout configuration (separated from fork.yaml)
+  // Roundabout configuration
   LaneGeometryConfig rb_geo_cfg{};
   rb_geo_cfg.far_band_top_ratio = 0.22;
   rb_geo_cfg.far_band_bottom_ratio = 0.42;
@@ -395,7 +368,7 @@ void test_roundabout_wide_white_observation_and_turn_response()
   rb_geo_cfg.enable_continuous_curve_assist = true;
 
   MotionControllerConfig rb_ctrl_cfg = base_ctrl_cfg;
-  rb_ctrl_cfg.heading_gain = 1.15;
+  rb_ctrl_cfg.corridor_heading_gain = 1.15;
   rb_ctrl_cfg.low_confidence_threshold = 0.58;
   rb_ctrl_cfg.low_confidence_speed = 0.26;
   rb_ctrl_cfg.low_confidence_yaw_hold = 0.80;
@@ -431,14 +404,28 @@ void test_roundabout_wide_white_observation_and_turn_response()
     CHECK(seg.has_value());
 
     const auto base_res = base_geo.evaluate(*seg, base_curve);
-    const auto base_cmd =
-      base_ctrl.compute_lane_command(base_res.observation, base_curve, base_motion);
+    const auto base_cmd = base_ctrl.compute_corridor_command(
+      0.0,
+      base_res.observation.lateral_error * 0.215,
+      base_res.observation.heading_proxy,
+      base_res.observation.curvature_proxy,
+      base_res.observation.confidence,
+      1.0,
+      base_curve,
+      base_motion);
     MotionController::record_motion(
       false, base_cmd.linear_speed, base_cmd.yaw_rate, base_motion);
 
     const auto rb_res = rb_geo.evaluate(*seg, rb_curve);
-    const auto rb_cmd =
-      rb_ctrl.compute_lane_command(rb_res.observation, rb_curve, rb_motion);
+    const auto rb_cmd = rb_ctrl.compute_corridor_command(
+      0.0,
+      rb_res.observation.lateral_error * 0.215,
+      rb_res.observation.heading_proxy,
+      rb_res.observation.curvature_proxy,
+      rb_res.observation.confidence,
+      1.0,
+      rb_curve,
+      rb_motion);
     MotionController::record_motion(
       false, rb_cmd.linear_speed, rb_cmd.yaw_rate, rb_motion);
 
@@ -474,194 +461,45 @@ void test_roundabout_wide_white_observation_and_turn_response()
   CHECK(base_turn_start_frame > rb_turn_start_frame);
 }
 
-void test_detection_turn_controller_scenarios()
+void test_b1_yellow_independent_roi_and_three_lane_modes()
 {
-  using line_follower::DetectionRoiInput;
-  using line_follower::DetectionTurnConfig;
-  using line_follower::DetectionTurnLogic;
-  using line_follower::DigitTaskState;
-  using line_follower::TurnEndReason;
+  // Synthetic 640x480 frame: blue mat outside, black border, white lane,
+  // horizontal yellow bar at y = [428..444] (below lane roi_bottom_ratio = 0.20 -> y = 384).
+  cv::Mat frame(480, 640, CV_8UC3, cv::Scalar(166, 85, 37));
+  cv::rectangle(frame, cv::Rect(180, 140, 280, 340), cv::Scalar(20, 20, 20), cv::FILLED);
+  cv::rectangle(frame, cv::Rect(194, 140, 252, 340), cv::Scalar(240, 240, 240), cv::FILLED);
+  cv::rectangle(frame, cv::Rect(194, 428, 252, 16), cv::Scalar(0, 230, 240), cv::FILLED);
 
-  DetectionTurnConfig cfg{};
-  cfg.confidence_threshold = 0.30;
-  cfg.det_frame_width = 640;
-  cfg.det_frame_height = 480;
-  cfg.frame_window = 2;
-  cfg.turn_cooldown = 0.80;
-  cfg.turn_duration = 0.60;
-  cfg.min_turn_duration = 0.12;
-  cfg.recovery_center_tolerance = 0.10;
-  cfg.recovery_confirm_frames = 2;
-  cfg.dedup_clear_time = 2.0;
-  cfg.max_detection_gap = 0.35;
-  cfg.max_missed_frames = 1;
-  cfg.max_position_jump = 0.15;
-  cfg.min_position_consistency = 0.45;
-  cfg.y_align_tolerance = 0.05;
-  cfg.turn_linear = 0.20;
-  cfg.yaw_gain = 1.6;
-  cfg.max_yaw_rate = 1.3;
-  cfg.turn_direction_sign = -1.0;
-  cfg.require_start_cmd = true;
+  ImageProcessorConfig cfg{};
+  cfg.roi_top_ratio = 0.65;         // roi_top = 168
+  cfg.roi_bottom_ratio = 0.20;      // lane roi_bottom = 384 (misses y=428..444!)
+  cfg.yellow_roi_bottom_ratio = 0.0;  // yellow ROI reaches y = 480
+  cfg.use_yellow_filter = true;
+  cfg.yellow_detect_mode = "geometric_cv";
+  cfg.lane_seg_mode = "relative_border";
 
-  // =========================================================================
-  // 1. 未启动门控 (Unstarted gating): 未收到 start_cmd=true 时绝不触发或发布命令
-  // =========================================================================
-  DetectionTurnLogic logic(cfg);
-  logic.update_track_state("tracking", 1.00);
-  logic.update_centroid(0.50, 0.50, 1.00);
+  ImageProcessor proc(cfg);
+  const auto seg_rel = proc.segment(frame);
+  CHECK(seg_rel.has_value());
+  CHECK(seg_rel->roi_bottom == 384);
+  CHECK(seg_rel->yellow_line_detected && seg_rel->yellow_is_geometric);
+  CHECK(seg_rel->yellow_top_y_full >= 425.0 && seg_rel->yellow_bottom_y_full <= 446.0);
+  CHECK(!seg_rel->yellow_has_dead_end_ahead);
+  CHECK(seg_rel->active_lane_seg_mode == "relative_border");
 
-  DetectionRoiInput d2_high{"2", 0.92, 420, 220, 40, 40};  // center=(440,240) -> norm=(0.6875, 0.50)
-  auto out = logic.on_detection({d2_high}, 1.00);
-  CHECK(!logic.is_armed(1.00));
-  CHECK(out.state == DigitTaskState::IDLE && !out.should_publish);
-  out = logic.on_detection({d2_high}, 1.05);
-  CHECK(out.state == DigitTaskState::IDLE && !out.should_publish);
+  // Confirm all 3 lane_seg_mode emergency fallback options remain functional
+  cfg.lane_seg_mode = "hybrid";
+  proc.set_config(cfg);
+  const auto seg_hyb = proc.segment(frame);
+  CHECK(seg_hyb.has_value() && seg_hyb->contour_valid && seg_hyb->active_lane_seg_mode == "hybrid");
 
-  // 启动门控开启
-  logic.update_start_cmd(true, 2.00);
-  logic.update_track_state("tracking", 2.00);
-  logic.update_centroid(0.50, 0.50, 2.00);
-  CHECK(logic.is_armed(2.00));
-
-  // =========================================================================
-  // 2. 多数字与多置信度 (Multiple digits & confidences, NOT ordered by digit value)
-  // =========================================================================
-  // Frame 1: Digit 8 (low conf 0.35), Digit 2 (high conf 0.92), Digit 5 (below threshold 0.15)
-  DetectionRoiInput d8_low{"8", 0.35, 420, 220, 40, 40};
-  DetectionRoiInput d5_sub{"5", 0.15, 420, 220, 40, 40};
-  out = logic.on_detection({d8_low, d2_high, d5_sub}, 2.05);
-  CHECK(out.state == DigitTaskState::CANDIDATE);
-  CHECK(!out.should_publish);
-  CHECK(out.active_digit == 2);  // Digit 2 beats Digit 8 due to higher confidence!
-  CHECK(!logic.track(5).active);  // Digit 5 rejected below threshold
-
-  // Frame 2: Digit 8 jumps wildly (x_offset=50 -> norm_x=0.11, jump > 0.15), Digit 2 stays consistent
-  DetectionRoiInput d8_jump{"8", 0.95, 50, 220, 40, 40};
-  out = logic.on_detection({d8_jump, d2_high}, 2.10);
-  CHECK(out.state == DigitTaskState::CONFIRMED);
-  CHECK(out.just_confirmed);
-  CHECK(out.should_publish);
-  CHECK(out.active_digit == 2);
-  CHECK(out.linear_x == 0.20 && out.angular_z < -0.10);
-
-  // =========================================================================
-  // 3. 状态流转与视觉恢复提前结束 (CONFIRMED -> EXECUTING -> RECOVERED -> COOLDOWN -> IDLE)
-  // =========================================================================
-  // Next control tick transitions CONFIRMED -> EXECUTING
-  out = logic.step_control(2.15);
-  CHECK(out.state == DigitTaskState::EXECUTING);
-  CHECK(out.should_publish);
-
-  // Before min_turn_duration (elapsed = 0.08s < 0.12s), even if centered, keeps executing
-  logic.update_centroid(0.50, 0.50, 2.16);
-  logic.update_centroid(0.50, 0.50, 2.18);
-  out = logic.step_control(2.18);
-  CHECK(out.state == DigitTaskState::EXECUTING && out.should_publish);
-
-  // After min_turn_duration (t = 2.26, elapsed = 0.16s < max 0.60s), centroid is centered -> visual recovery!
-  logic.update_centroid(0.49, 0.50, 2.24);
-  logic.update_centroid(0.50, 0.50, 2.26);
-  out = logic.step_control(2.26);
-  CHECK(out.state == DigitTaskState::RECOVERED);
-  CHECK(out.just_recovered);
-  CHECK(out.end_reason == TurnEndReason::VISUAL_RECOVERY);
-  CHECK(!out.should_publish && out.linear_x == 0.0 && out.angular_z == 0.0);
-
-  // Next control tick transitions RECOVERED -> COOLDOWN
-  out = logic.step_control(2.30);
-  CHECK(out.state == DigitTaskState::COOLDOWN);
-  CHECK(!out.should_publish);
-
-  // =========================================================================
-  // 4. 重复检测保护 (Duplicate detection prevention during & after cooldown)
-  // =========================================================================
-  // During cooldown (2.26 + 0.80 = 3.06), detections of Digit 2 or Digit 3 are ignored
-  DetectionRoiInput d3_high{"3", 0.90, 200, 220, 40, 40};
-  out = logic.on_detection({d2_high, d3_high}, 2.60);
-  CHECK(out.state == DigitTaskState::COOLDOWN && !out.should_publish);
-
-  // Cooldown expires at t = 3.10 -> IDLE
-  logic.update_centroid(0.50, 0.50, 3.10);
-  out = logic.step_control(3.10);
-  CHECK(out.state == DigitTaskState::IDLE);
-
-  // Repeated detection of same Digit 2 at t = 3.15, 3.20 (within dedup_clear_time = 2.0s) must NOT re-turn!
-  out = logic.on_detection({d2_high}, 3.15);
-  CHECK(out.state == DigitTaskState::IDLE && !out.should_publish);
-  out = logic.on_detection({d2_high}, 3.20);
-  CHECK(out.state == DigitTaskState::IDLE && !out.should_publish);
-
-  // =========================================================================
-  // 5. 稀疏帧场景 (Sparse frames: empty frames expire; stale gaps reset; 1-frame dropout tolerated)
-  // =========================================================================
-  // 5a: 1 detection of Digit 3 followed by 3 empty callbacks -> expires back to IDLE, never triggers
-  logic.update_centroid(0.50, 0.50, 3.30);
-  out = logic.on_detection({d3_high}, 3.30);
-  CHECK(out.state == DigitTaskState::CANDIDATE && out.active_digit == 3);
-  out = logic.on_detection({}, 3.35);  // 1st missed frame (tolerated, max_missed_frames=1)
-  CHECK(out.state == DigitTaskState::CANDIDATE);
-  out = logic.on_detection({}, 3.40);  // 2nd missed frame (> max_missed_frames) -> expires to IDLE!
-  CHECK(out.state == DigitTaskState::IDLE && !out.should_publish);
-
-  // 5b: Stale gap (> max_detection_gap = 0.35s) resets count to 1 instead of confirming
-  logic.update_centroid(0.50, 0.50, 4.00);
-  out = logic.on_detection({d3_high}, 4.00);
-  CHECK(out.state == DigitTaskState::CANDIDATE && logic.track(3).consecutive_count == 1);
-  logic.update_centroid(0.50, 0.50, 4.50);
-  out = logic.on_detection({d3_high}, 4.50);  // dt = 0.50s > 0.35s -> reset to count=1!
-  CHECK(out.state == DigitTaskState::CANDIDATE && logic.track(3).consecutive_count == 1);
-  CHECK(!out.should_publish);
-
-  // 5c: 1-frame dropout within max_detection_gap (seen at 4.50, missed at 4.55, seen at 4.60) -> CONFIRMED!
-  logic.update_centroid(0.50, 0.50, 4.55);
-  out = logic.on_detection({}, 4.55);
-  CHECK(out.state == DigitTaskState::CANDIDATE);
-  logic.update_centroid(0.50, 0.50, 4.60);
-  out = logic.on_detection({d3_high}, 4.60);
-  CHECK(out.state == DigitTaskState::CONFIRMED && out.active_digit == 3 && out.should_publish);
-
-  // =========================================================================
-  // 6. 超时场景与黄线停车中断 (Max duration timeout & Yellow line stop abort)
-  // =========================================================================
-  // Advance to EXECUTING; keep centroid off-center (x = 0.25) so visual recovery does NOT trigger
-  out = logic.step_control(4.65);
-  CHECK(out.state == DigitTaskState::EXECUTING && out.should_publish);
-  logic.update_centroid(0.25, 0.50, 5.00);
-  out = logic.step_control(5.00);  // elapsed = 0.40s < 0.60s -> still executing
-  CHECK(out.state == DigitTaskState::EXECUTING && out.should_publish);
-
-  // At t = 5.21s (elapsed = 0.61s >= turn_duration = 0.60s) -> ends via MAX_DURATION_TIMEOUT!
-  logic.update_centroid(0.25, 0.50, 5.21);
-  out = logic.step_control(5.21);
-  CHECK(out.state == DigitTaskState::RECOVERED);
-  CHECK(out.just_recovered);
-  CHECK(out.end_reason == TurnEndReason::MAX_DURATION_TIMEOUT);
-  CHECK(!out.should_publish);
-
-  // Yellow line detected at t = 5.30s: clears cooldown & dedup lock, and disarms while yellow is active
-  logic.update_track_state("yellow_line_detected", 5.30);
-  CHECK(!logic.is_armed(5.30));
-  CHECK(logic.last_executed_digit() == -1);
-  out = logic.on_detection({d3_high}, 5.35);
-  CHECK(out.state == DigitTaskState::IDLE && !out.should_publish);
-
-  // Resume tracking after yellow line -> trigger Digit 4, then abort mid-turn via yellow line stop!
-  logic.update_track_state("tracking", 6.00);
-  logic.update_centroid(0.50, 0.50, 6.00);
-  DetectionRoiInput d4_high{"4", 0.90, 420, 220, 40, 40};
-  logic.on_detection({d4_high}, 6.05);
-  out = logic.on_detection({d4_high}, 6.10);
-  CHECK(out.state == DigitTaskState::CONFIRMED && out.should_publish);
-  out = logic.step_control(6.15);
-  CHECK(out.state == DigitTaskState::EXECUTING && out.should_publish);
-
-  // Yellow line stop arrives during EXECUTING -> immediately aborts turn and zeroes output!
-  logic.update_track_state("yellow_line_detected", 6.20);
-  out = logic.step_control(6.20);
-  CHECK(out.state == DigitTaskState::IDLE);
-  CHECK(out.end_reason == TurnEndReason::ABORTED_BY_STOP_OR_DISARM);
-  CHECK(!out.should_publish && out.linear_x == 0.0 && out.angular_z == 0.0);
+  cfg.lane_seg_mode = "legacy_hsv";
+  cfg.use_white_filter = true;
+  cfg.white_s_max = 60;
+  cfg.white_v_min = 120;
+  proc.set_config(cfg);
+  const auto seg_hsv = proc.segment(frame);
+  CHECK(seg_hsv.has_value() && seg_hsv->contour_valid && seg_hsv->active_lane_seg_mode == "legacy_hsv");
 }
 
 void run_roundabout_sequence_replay(
@@ -683,12 +521,9 @@ void run_roundabout_sequence_replay(
   base_ctrl_cfg.target_speed = 0.50;
   base_ctrl_cfg.max_speed = 0.50;
   base_ctrl_cfg.max_yaw_rate = 1.50;
-  base_ctrl_cfg.kp = 3.30;
+  base_ctrl_cfg.corridor_kp_y = 6.0;
+  base_ctrl_cfg.corridor_heading_gain = 0.0;
   base_ctrl_cfg.speed_gain_damping = 0.22;
-  base_ctrl_cfg.enable_continuous_curve_assist = true;
-  base_ctrl_cfg.reverse_curve_speed = 0.34;
-  base_ctrl_cfg.sharp_curve_threshold = 0.50;
-  base_ctrl_cfg.sharp_curve_speed = 0.41;
 
   LaneGeometryConfig rb_geo_cfg{};
   rb_geo_cfg.far_band_top_ratio = 0.22;
@@ -708,17 +543,9 @@ void run_roundabout_sequence_replay(
   rb_geo_cfg.observation_filter_alpha = 0.85;
   rb_geo_cfg.enable_continuous_curve_assist = true;
 
-  MotionControllerConfig rb_ctrl_cfg{};
-  rb_ctrl_cfg.target_speed = 0.50;
-  rb_ctrl_cfg.max_speed = 0.50;
-  rb_ctrl_cfg.max_yaw_rate = 1.50;
-  rb_ctrl_cfg.kp = 3.30;
+  MotionControllerConfig rb_ctrl_cfg = base_ctrl_cfg;
   rb_ctrl_cfg.speed_gain_damping = 0.26;
-  rb_ctrl_cfg.enable_continuous_curve_assist = true;
-  rb_ctrl_cfg.reverse_curve_speed = 0.28;
-  rb_ctrl_cfg.sharp_curve_threshold = 0.42;
-  rb_ctrl_cfg.sharp_curve_speed = 0.33;
-  rb_ctrl_cfg.heading_gain = 1.15;
+  rb_ctrl_cfg.corridor_heading_gain = 1.15;
   rb_ctrl_cfg.low_confidence_threshold = 0.58;
   rb_ctrl_cfg.low_confidence_speed = 0.26;
   rb_ctrl_cfg.low_confidence_yaw_hold = 0.80;
@@ -757,14 +584,28 @@ void run_roundabout_sequence_replay(
     }
 
     const auto base_res = base_geo.evaluate(*seg, base_curve);
-    const auto base_cmd =
-      base_ctrl.compute_lane_command(base_res.observation, base_curve, base_motion);
+    const auto base_cmd = base_ctrl.compute_corridor_command(
+      0.0,
+      base_res.observation.lateral_error * 0.215,
+      base_res.observation.heading_proxy,
+      base_res.observation.curvature_proxy,
+      base_res.observation.confidence,
+      1.0,
+      base_curve,
+      base_motion);
     MotionController::record_motion(
       false, base_cmd.linear_speed, base_cmd.yaw_rate, base_motion);
 
     const auto rb_res = rb_geo.evaluate(*seg, rb_curve);
-    const auto rb_cmd =
-      rb_ctrl.compute_lane_command(rb_res.observation, rb_curve, rb_motion);
+    const auto rb_cmd = rb_ctrl.compute_corridor_command(
+      0.0,
+      rb_res.observation.lateral_error * 0.215,
+      rb_res.observation.heading_proxy,
+      rb_res.observation.curvature_proxy,
+      rb_res.observation.confidence,
+      1.0,
+      rb_curve,
+      rb_motion);
     MotionController::record_motion(
       false, rb_cmd.linear_speed, rb_cmd.yaw_rate, rb_motion);
 
@@ -908,12 +749,9 @@ void run_closed_loop_curve_sim(const std::string & dir, const std::string & map_
     ctrl_cfg.target_speed = 0.50;
     ctrl_cfg.max_speed = 0.50;
     ctrl_cfg.max_yaw_rate = 1.50;
-    ctrl_cfg.kp = 3.30;
+    ctrl_cfg.corridor_kp_y = 6.0;
+    ctrl_cfg.corridor_heading_gain = 0.0;
     ctrl_cfg.speed_gain_damping = use_rb ? 0.26 : 0.22;
-    ctrl_cfg.enable_continuous_curve_assist = true;
-    ctrl_cfg.reverse_curve_speed = use_rb ? 0.28 : 0.34;
-    ctrl_cfg.sharp_curve_threshold = use_rb ? 0.42 : 0.50;
-    ctrl_cfg.sharp_curve_speed = use_rb ? 0.33 : 0.41;
 
     if (use_rb) {
       geo_cfg.far_band_top_ratio = 0.22;
@@ -933,7 +771,7 @@ void run_closed_loop_curve_sim(const std::string & dir, const std::string & map_
       geo_cfg.observation_filter_alpha = 0.85;
       geo_cfg.enable_continuous_curve_assist = true;
 
-      ctrl_cfg.heading_gain = 0.85;
+      ctrl_cfg.corridor_heading_gain = 0.85;
       ctrl_cfg.low_confidence_threshold = 0.58;
       ctrl_cfg.low_confidence_speed = 0.26;
       ctrl_cfg.low_confidence_yaw_hold = 0.80;
@@ -960,7 +798,15 @@ void run_closed_loop_curve_sim(const std::string & dir, const std::string & map_
       cv::Mat frame = render_cam(x_mm, y_mm, yaw);
       const auto seg = processor.segment(frame);
       const auto res = geo.evaluate(*seg, curve);
-      const auto cmd = ctrl.compute_lane_command(res.observation, curve, motion);
+      const auto cmd = ctrl.compute_corridor_command(
+        0.0,
+        res.observation.lateral_error * 0.215,
+        res.observation.heading_proxy,
+        res.observation.curvature_proxy,
+        res.observation.confidence,
+        1.0,
+        curve,
+        motion);
       MotionController::record_motion(false, cmd.linear_speed, cmd.yaw_rate, motion);
 
       double best_d = 1e9;
@@ -1023,8 +869,8 @@ int main(int argc, char ** argv)
     test_motion_controller_and_parameterized_lost_thresholds();
     test_debug_renderer();
     test_roundabout_wide_white_observation_and_turn_response();
-    test_detection_turn_controller_scenarios();
-    std::cout << "8 line_follower, roundabout & detection_turn_controller test groups passed\n";
+    test_b1_yellow_independent_roi_and_three_lane_modes();
+    std::cout << "8 line_follower & B1 refactoring test groups passed\n";
     return 0;
   } catch (const std::exception & e) {
     std::cerr << "Test failure: " << e.what() << '\n';

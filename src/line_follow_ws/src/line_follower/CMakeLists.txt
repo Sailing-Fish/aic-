@@ -12,7 +12,6 @@ set(LINE_FOLLOWER_PURE_SOURCES
   src/obstacle_memory.cpp
   src/corridor_planner.cpp
   src/finish_guard.cpp
-  src/segment_planner.cpp
   src/track_state_machine.cpp
   src/motion_controller.cpp
 )
@@ -79,14 +78,6 @@ ament_target_dependencies(${PROJECT_NAME}_core
 add_executable(line_follower_node src/main.cpp)
 target_link_libraries(line_follower_node ${PROJECT_NAME}_core)
 
-add_executable(detection_turn_controller src/detection_turn_controller.cpp)
-ament_target_dependencies(detection_turn_controller
-  rclcpp
-  ai_msgs
-  geometry_msgs
-  std_msgs
-)
-
 add_executable(cmd_mux_node src/cmd_mux_node.cpp)
 ament_target_dependencies(cmd_mux_node
   rclcpp
@@ -119,8 +110,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS ${PROJECT_NAME}_core line_follower_node
-  DESTINATION lib/${PROJECT_NAME})
-install(TARGETS detection_turn_controller
   DESTINATION lib/${PROJECT_NAME})
 install(TARGETS cmd_mux_node
   DESTINATION lib/${PROJECT_NAME})

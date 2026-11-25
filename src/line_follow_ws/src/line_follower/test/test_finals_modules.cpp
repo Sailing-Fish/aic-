@@ -4,7 +4,6 @@
 #include "line_follower/ground_projector.hpp"
 #include "line_follower/motion_controller.hpp"
 #include "line_follower/obstacle_memory.hpp"
-#include "line_follower/segment_planner.hpp"
 #include "line_follower/track_state_machine.hpp"
 
 #include <cmath>
@@ -368,7 +367,6 @@ void test_track_state_machine_odom_freshness_and_finals_mode()
   cfg.odom_max_age_sec = 0.20;
   cfg.yellow_require_odom_still = true;
   cfg.yellow_max_hold_sec = 3.0;
-  cfg.use_external_finish_decision = true;
   cfg.yellow_clear_frames_required = 2;
 
   TrackStateMachine sm(cfg);
@@ -434,11 +432,6 @@ void test_motion_controller_corridor_and_safe_lost()
   MotionState motion{};
 
   // +y target (left) -> +yaw_rate (CCW / left), speed capped cleanly by speed_cap_mps
-  // without double-damping or hidden sharp_curve_speed interference
-  cfg.speed_gain_damping = 0.40;
-  cfg.enable_continuous_curve_assist = true;
-  cfg.sharp_curve_threshold = 0.20;
-  cfg.sharp_curve_speed = 0.15;
   ctrl.set_config(cfg);
   const MotionCommand cmd_l = ctrl.compute_corridor_command(
     +0.08, 0.0, 0.0, 0.30, 1.0, 0.25, curve, motion);
@@ -446,6 +439,8 @@ void test_motion_controller_corridor_and_safe_lost()
   CHECK(std::abs(cmd_l.linear_speed - 0.25) < 1e-6);
 
   // Without event cap, curve speed scales purely with target_speed * (1 - damping * slow_factor)
+  cfg.speed_gain_damping = 0.40;
+  ctrl.set_config(cfg);
   const MotionCommand cmd_curve = ctrl.compute_corridor_command(
     0.0, 0.0, 0.0, 0.50, 1.0, 1.0, curve, motion);
   CHECK(cmd_curve.linear_speed > 0.25 && cmd_curve.linear_speed < cfg.target_speed);
@@ -582,6 +577,116 @@ void test_corridor_two_zone_staggered_and_curve_horizon()
   CHECK(curve_plan.speed_cap_mps <= cfg.obstacle_speed_mps + 1e-6);
 }
 
+void test_b3_rear_axle_rotation_pivot()
+{
+  ObstacleMemoryConfig cfg{};
+  cfg.rear_axle_to_bumper_m = 0.18;
+  cfg.car_length_m = 0.28;
+  cfg.rear_keep_margin_m = 0.15;
+  ObstacleMemory mem(cfg);
+
+  // Car rear axle at world (0, 0), facing +X (yaw = 0).
+  // Obstacle at d_bumper = -0.08m (0.10m ahead of rear axle), y_lat = +0.16m (left of rear axle).
+  const VehiclePose2D pose0{true, 0.0, 0.0, 0.0, 0.3, 0.0, 1.0};
+  double wx = 0.0, wy = 0.0;
+  ObstacleMemory::bumper_to_world(pose0, -0.08, +0.16, wx, wy, cfg.rear_axle_to_bumper_m);
+  CHECK(std::abs(wx - 0.10) < 1e-9);
+  CHECK(std::abs(wy - 0.16) < 1e-9);
+
+  // Car pivots 90 deg CCW around rear axle (0, 0) -> now facing +Y world.
+  constexpr double kHalfPi = 1.5707963267948966;
+  const VehiclePose2D pose_rot{true, 0.0, 0.0, kHalfPi, 0.3, 0.5, 1.2};
+  double d_rot = 0.0, y_rot = 0.0;
+  ObstacleMemory::world_to_bumper(pose_rot, wx, wy, d_rot, y_rot, cfg.rear_axle_to_bumper_m);
+  // World (0.10, 0.16) relative to +Y heading: +0.16m ahead of rear axle (d_bumper = -0.02),
+  // and +0.10m to the RIGHT (y_lat = -0.10).
+  CHECK(std::abs(d_rot - (-0.02)) < 1e-6);
+  CHECK(std::abs(y_rot - (-0.10)) < 1e-6);
+
+  // Full ObstacleMemory update & query preserves exact rear-axle transform
+  GroundDetection det{};
+  det.type = SemanticObjectType::RED_NO_ENTRY;
+  det.confidence = 0.9;
+  det.d_bumper_m = -0.08;
+  det.y_lat_m = +0.16;
+  det.half_len_m = 0.065;
+  det.half_wid_m = 0.065;
+  mem.update({det}, pose0, 1.0);
+  const auto locs = mem.get_local_obstacles(pose_rot, 1.2);
+  CHECK(locs.size() == 1);
+  CHECK(std::abs(locs[0].d_bumper_m - (-0.02)) < 1e-6);
+  CHECK(std::abs(locs[0].y_lat_m - (-0.10)) < 1e-6);
+}
+
+void test_b7_reverse_motion_never_adds_arc_length()
+{
+  FinishGuardConfig cfg{};
+  cfg.odom_scale_factor = 1.0;
+  cfg.finish_min_dist_m = 8.5;
+  FinishGuard guard(cfg);
+
+  guard.update_motion(2.5, 0.2);
+  CHECK(std::abs(guard.total_arc_m() - 2.5) < 1e-9);
+
+  guard.mark_yellow_stop_triggered();
+  CHECK(std::abs(guard.dist_since_last_yellow_m()) < 1e-9);
+
+  // Reverse braking / pushback (ds_fwd_m < 0) MUST NOT accumulate forward mileage or rearm!
+  guard.update_motion(-0.40, 0.01);
+  guard.update_motion(-0.10, 0.01);
+  CHECK(std::abs(guard.total_arc_m() - 2.5) < 1e-9);
+  CHECK(std::abs(guard.dist_since_last_yellow_m()) < 1e-9);
+  CHECK(!guard.is_yellow_rearmed());
+}
+
+void test_b9_same_digit_vector_tracks_and_horizon_clamping()
+{
+  CorridorPlannerConfig cfg{};
+  cfg.obstacle_lookahead_m = 1.00;
+  cfg.obstacle_steer_horizon_m = 5.0;      // invalid > lookahead -> clamped to 1.00
+  cfg.obstacle_curve_min_horizon_m = 2.0;  // invalid > steer_horizon -> clamped to 1.00
+  cfg.obstacle_stagger_gap_m = 0.0;        // invalid < 0.05 -> clamped to 0.05
+  cfg.digit_min_conf = 0.55;
+  cfg.digit_min_frames = 2;
+  cfg.allow_dual_digit_cover = true;
+  cfg.max_digit_lateral_shift_m = 0.15;
+
+  CorridorPlanner planner(cfg);
+  CHECK(std::abs(planner.config().obstacle_steer_horizon_m - 1.00) < 1e-9);
+  CHECK(std::abs(planner.config().obstacle_curve_min_horizon_m - 1.00) < 1e-9);
+  CHECK(std::abs(planner.config().obstacle_stagger_gap_m - 0.05) < 1e-9);
+
+  // Guard: obstacle_lookahead_m < 0.25 must clamp up to 0.25 before std::clamp(steer_horizon, 0.25, lookahead)
+  CorridorPlannerConfig small_cfg = cfg;
+  small_cfg.obstacle_lookahead_m = 0.10;
+  small_cfg.obstacle_steer_horizon_m = 0.20;
+  small_cfg.obstacle_curve_min_horizon_m = 0.10;
+  CorridorPlanner small_planner(small_cfg);
+  CHECK(std::abs(small_planner.config().obstacle_lookahead_m - 0.25) < 1e-9);
+  CHECK(std::abs(small_planner.config().obstacle_steer_horizon_m - 0.25) < 1e-9);
+  CHECK(std::abs(small_planner.config().obstacle_curve_min_horizon_m - 0.20) < 1e-9);
+
+  // Two IDENTICAL digits (both digit=5) 10cm apart on a straight, with distinct track_ids
+  GroundDetection d5_left{SemanticObjectType::BONUS_DIGIT, 5, 0.90, 0.65, +0.05, 0.04, 0.04, 21, 10.0};
+  GroundDetection d5_right{SemanticObjectType::BONUS_DIGIT, 5, 0.88, 0.65, -0.05, 0.04, 0.04, 22, 10.0};
+  planner.plan(+0.215, -0.215, 0.0, {}, {d5_left, d5_right}, false, 2.0, 10.0);
+  const CorridorPlan dual_plan =
+    planner.plan(+0.215, -0.215, 0.0, {}, {d5_left, d5_right}, false, 2.0, 10.05);
+  CHECK(dual_plan.digit_target_active && dual_plan.target_digit == 5);
+  // Both tracks preserved -> dual_digit_cover centers midpoint at ~0.0 (instead of clobbering to +0.05 or -0.05)
+  CHECK(std::abs(dual_plan.target_y_m) < 0.015);
+
+  // Same test WITHOUT track_ids (track_id = -1), spatial nearest-neighbor must also preserve both tracks!
+  planner.reset();
+  GroundDetection d6_l{SemanticObjectType::BONUS_DIGIT, 6, 0.90, 0.65, +0.06, 0.04, 0.04, -1, 12.0};
+  GroundDetection d6_r{SemanticObjectType::BONUS_DIGIT, 6, 0.85, 0.65, -0.06, 0.04, 0.04, -1, 12.0};
+  planner.plan(+0.215, -0.215, 0.0, {}, {d6_l, d6_r}, false, 2.5, 12.0);
+  const CorridorPlan spatial_plan =
+    planner.plan(+0.215, -0.215, 0.0, {}, {d6_l, d6_r}, false, 2.5, 12.05);
+  CHECK(spatial_plan.digit_target_active && spatial_plan.target_digit == 6);
+  CHECK(std::abs(spatial_plan.target_y_m) < 0.015);
+}
+
 }  // namespace
 
 int main()
@@ -595,6 +700,9 @@ int main()
   test_motion_controller_corridor_and_safe_lost();
   test_red_obstacle_or_fusion_and_attribution();
   test_corridor_two_zone_staggered_and_curve_horizon();
+  test_b3_rear_axle_rotation_pivot();
+  test_b7_reverse_motion_never_adds_arc_length();
+  test_b9_same_digit_vector_tracks_and_horizon_clamping();
   std::cout << "ALL_FINALS_CPP_TESTS_PASSED" << std::endl;
   return 0;
 }

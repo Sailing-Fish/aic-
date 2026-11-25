@@ -170,7 +170,7 @@ def main():
     ap.add_argument("--n", type=int, default=14, help="随机组数（另加 2 组基准）")
     ap.add_argument("--jobs", type=int, default=4, help="并发数，8 核建议不超过 4")
     ap.add_argument("--track", default="fork_s")
-    ap.add_argument("--yaml", default=str(WS / "tools/config/fork.yaml"))
+    ap.add_argument("--yaml", default=str(WS / "tools/config/finals_fork.yaml"))
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 

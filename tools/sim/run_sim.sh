@@ -19,8 +19,14 @@ source /opt/tros/humble/setup.bash
 source "$WS/install/setup.bash"
 
 # 用真实参数，但把 mux 输出改到仿真话题
-SRC_PARAMS="$WS/tools/config/$TRACK.yaml"
-[[ -f "$SRC_PARAMS" ]] || SRC_PARAMS="$WS/tools/config/fork.yaml"
+if [[ "$TRACK" == "roundabout" ]]; then
+  SRC_PARAMS="$WS/tools/config/finals_roundabout.yaml"
+elif [[ "$TRACK" == "fork_s" || "$TRACK" == "fork" ]]; then
+  SRC_PARAMS="$WS/tools/config/finals_fork.yaml"
+else
+  SRC_PARAMS="$WS/tools/config/$TRACK.yaml"
+  [[ -f "$SRC_PARAMS" ]] || SRC_PARAMS="$WS/tools/config/finals_fork.yaml"
+fi
 TMP_PARAMS="/tmp/sim_${TRACK}_params.yaml"
 sed -e 's|output_topic: */cmd_vel$|output_topic: /sim/cmd_vel|' \
     -e 's|output_topic: /cmd_vel|output_topic: /sim/cmd_vel|' \

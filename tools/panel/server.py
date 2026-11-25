@@ -59,6 +59,17 @@ PANEL_DIR = os.path.dirname(os.path.abspath(__file__))
 CAPTURE_DIR = os.path.join(WS, 'dataset_capture', 'raw_videos')
 DEBUG_RUNS_DIR = os.path.join(WS, 'dataset_capture', 'debug_runs')
 
+MAP_FILES = ('finals_fork', 'finals_roundabout')
+DEFAULT_MAP = 'finals_fork'
+
+
+def _resolve_map_name(name):
+    if name in MAP_FILES:
+        return name
+    if name == 'roundabout':
+        return 'finals_roundabout'
+    return DEFAULT_MAP
+
 STREAM_FPS = 6.0
 STREAM_PERIOD = 1.0 / STREAM_FPS
 JPEG_QUALITY = 70
@@ -496,7 +507,35 @@ def reset_round_locked():
     SH.last_yellow_ts = 0.0
     SH.final_stopped = False
     SH.track_state = 'unknown'
+    SH.segment = {}
     SH.round += 1
+
+
+def apply_segment_message(raw_text, now=None):
+    """解析 line_follower/segment 消息；显式 final=1 时立即停表（B6）。"""
+    info = {}
+    for tok in str(raw_text or '').split():
+        if '=' not in tok:
+            continue
+        k, v = tok.split('=', 1)
+        try:
+            info[k] = float(v)
+        except ValueError:
+            info[k] = v
+    if 'seg' in info or 'mode' in info or 'final' in info:
+        ts = time.time() if now is None else float(now)
+        is_final = False
+        if 'final' in info:
+            try:
+                is_final = int(round(float(info['final']))) == 1
+            except (TypeError, ValueError):
+                is_final = str(info['final']).strip().lower() in ('1', 'true')
+        with SH.lock:
+            SH.segment = info
+            if is_final and SH.timer_start is not None and not SH.final_stopped and SH.timer_stop is None:
+                SH.timer_stop = ts
+                SH.final_stopped = True
+    return info
 
 
 # ---------------------------------------------------------------- ROS 节点
@@ -511,12 +550,11 @@ class PanelNode(Node):
         self.create_subscription(Image, '/image_raw', self._on_raw_image, 5)
         self.create_subscription(Bool, 'line_follower/start_cmd', self._on_start, 10)
         self.create_subscription(String, 'line_follower/track_state', self._on_state, 10)
-        # 当前段号：面板用它显示"现在跑的是哪一段"，并给段选择器打 ●
+        # 当前状态与显式终点标志：mode=finals s=.. count=.. branch=.. final=0/1
         self.create_subscription(String, 'line_follower/segment', self._on_segment, 10)
         self.create_subscription(Float32, '/PowerVoltage', self._on_voltage, 10)
         self.estop_pub = self.create_publisher(Twist, '/cmd_vel_stop', 10)
 
-        self.create_timer(0.2, self._tick)
         self.get_logger().info('panel_node ready')
 
     def _encode(self, msg):
@@ -561,15 +599,16 @@ class PanelNode(Node):
         with SH.lock:
             if new_val:
                 # 上升沿 = 发车 → 新的一轮。
-                # 必须把 last_yellow_ts / track_state 也清掉：
-                # 上一轮永久停车后 state 会一直停在 yellow_line_detected，
-                # 不清的话计时器会在新一圈刚开始就立刻被判定"终点已到"而冻结。
+                # 必须把 last_yellow_ts / track_state / segment 也清掉：
+                # 上一轮永久停车后 state / final=1 会滞留，
+                # 不清的话新一圈刚开始就会异常状态残留。
                 SH.timer_start = time.time()
                 SH.timer_stop = None
                 SH.final_stopped = False
                 SH.yellow_count = 0
                 SH.last_yellow_ts = 0.0
                 SH.track_state = 'unknown'
+                SH.segment = {}
                 SH.round += 1
                 SH.started = True
                 SH.locked = True
@@ -589,38 +628,14 @@ class PanelNode(Node):
                 SH.last_yellow_ts = time.time()
 
     def _on_segment(self, msg):
-        """节点上报：legacy "seg=2 n=4 count=1 dist=1.23" 或 finals "mode=finals s=3.20 count=1 branch=-1"。"""
-        info = {}
-        for tok in msg.data.split():
-            if '=' not in tok:
-                continue
-            k, v = tok.split('=', 1)
-            try:
-                info[k] = float(v)
-            except ValueError:
-                info[k] = v
-        if 'seg' in info or 'mode' in info:
-            with SH.lock:
-                SH.segment = info
+        """节点上报：finals "mode=finals s=3.20 count=1 branch=-1 final=0"。"""
+        apply_segment_message(msg.data)
 
     def _on_voltage(self, msg):
         val = float(msg.data)
         with SH.lock:
             SH.voltage = val
             SH.voltage_ts = time.time()
-
-    def _tick(self):
-        # 永久停车的判据：黄线状态持续 >2s（临时停车只有 yellow_stop_duration≈1s）
-        with SH.lock:
-            if (SH.track_state == 'yellow_line_detected'
-                    and SH.last_yellow_ts > 0
-                    and not SH.final_stopped
-                    and time.time() - SH.last_yellow_ts > 2.0
-                    and SH.timer_start is not None
-                    and SH.last_yellow_ts >= SH.timer_start   # 只认本轮之后的黄线
-                    and SH.timer_stop is None):
-                SH.timer_stop = SH.last_yellow_ts
-                SH.final_stopped = True
 
     def estop(self, frames=30, rate=20.0):
         msg = Twist()
@@ -803,18 +818,16 @@ def read_recent_events(limit=10):
 
 
 def load_params(map_name):
+    if map_name not in MAP_FILES:
+        raise FileNotFoundError(os.path.join(CONFIG_DIR, f'{map_name}.yaml'))
     path = os.path.join(CONFIG_DIR, f'{map_name}.yaml')
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     with open(path, 'r', encoding='utf-8') as f:
         data = yaml.safe_load(f) or {}
 
-    lf_params = (data.get('line_follower_node') or {}).get('ros__parameters') or {}
-    planner_mode = str(lf_params.get('planner_mode', 'legacy_segment'))
-
     groups = []
     for g in params_schema.SCHEMA:
-        # 分段分组只对对应地图显示（岔路 3 段、环岛 4 段）
         if g.get('maps') and map_name not in g['maps']:
             continue
         sec = g['section']
@@ -846,12 +859,9 @@ def load_params(map_name):
                 grp['desc'] = g['desc']
             if 'default_open' in g:
                 grp['default_open'] = bool(g['default_open'])
-            if g.get('segment'):
-                grp['segment'] = g['segment']
             groups.append(grp)
     return {
         'map': map_name,
-        'planner_mode': planner_mode,
         'tiers': params_schema.TIERS,
         'groups': groups,
     }
@@ -950,6 +960,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == '/':
                 return self._index()
+            if path.startswith('/assets/'):
+                return self._asset(path[len('/assets/'):])
             if path == '/api/status':
                 return self._status()
             if path == '/api/stream/debug':
@@ -959,7 +971,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/logs':
                 return self._logs(query)
             if path == '/api/params':
-                return self._json(load_params(query.get('map', 'fork')))
+                return self._json(load_params(_resolve_map_name(query.get('map'))))
             if path == '/api/record/status':
                 return self._json({'ok': True, 'recording': RECORDER.status()})
             if path.startswith('/api/record/download/'):
@@ -980,7 +992,7 @@ class Handler(BaseHTTPRequestHandler):
                 if self._is_running():
                     return self._err(423, '已发车，参数锁定（赛规禁止赛中调车）')
                 body = self._body()
-                ok, msg = save_params(body.get('map', 'fork'), body.get('values', {}))
+                ok, msg = save_params(_resolve_map_name(body.get('map')), body.get('values', {}))
                 return self._json({'ok': ok, 'msg': msg}, 200 if ok else 400)
 
             if path.startswith('/api/restart/'):
@@ -1075,6 +1087,30 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(500, f'{type(e).__name__}: {e}')
 
     # ---------- handlers
+    def _asset(self, rel_name):
+        safe = os.path.basename(urllib.parse.unquote(rel_name))
+        if not safe or safe != rel_name or not safe.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.svg')):
+            return self._err(404, 'asset not found')
+        p = os.path.join(PANEL_DIR, 'assets', safe)
+        if not os.path.isfile(p):
+            return self._err(404, 'asset not found')
+        ext = os.path.splitext(safe)[1].lower()
+        ctype = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.webp': 'image/webp',
+            '.svg': 'image/svg+xml',
+        }.get(ext, 'application/octet-stream')
+        with open(p, 'rb') as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Cache-Control', 'public, max-age=86400')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _index(self):
         p = os.path.join(PANEL_DIR, 'index.html')
         with open(p, 'rb') as f:
@@ -1112,7 +1148,7 @@ class Handler(BaseHTTPRequestHandler):
         # 只要保存过且晚于 follow 进程启动时间，就一定有参数没生效。
         seg = read_seg('follow')
         started_epoch = int(seg.get('started_epoch') or 0)
-        map_name = st.get('params_file') or 'fork'
+        map_name = _resolve_map_name(st.get('params_file'))
         try:
             ymtime = os.stat(os.path.join(CONFIG_DIR, f'{map_name}.yaml')).st_mtime
         except OSError:
@@ -1259,15 +1295,6 @@ def main():
     rclpy.init()
     NODE = PanelNode()
     threading.Thread(target=rclpy.spin, args=(NODE,), daemon=True).start()
-
-    # 黄线总数从“正在运行的”参数文件取，供面板显示 n/N
-    try:
-        for g in load_params(read_status().get('params_file') or 'fork')['groups']:
-            for it in g['items']:
-                if it['key'] == 'yellow_permanent_count':
-                    SH.yellow_permanent = int(it['value'])
-    except Exception:
-        pass
 
     srv = bind_server(args.host, args.port)
     _write_state_file('panel_port', str(PORT))

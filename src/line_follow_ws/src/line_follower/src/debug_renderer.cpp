@@ -13,30 +13,6 @@ cv::Mat DebugRenderer::render(
   const cv::Mat & frame_bgr,
   const ProcessingResult & result,
   const CurveAssistState & curve_state,
-  const RedAvoidState & red_state,
-  bool red_overlay_valid,
-  double red_divider_angle_rad,
-  bool enable_continuous_curve_assist) const
-{
-  const FinalsDebugOverlay empty_overlay{};
-  return render(
-    frame_bgr,
-    result,
-    curve_state,
-    red_state,
-    red_overlay_valid,
-    red_divider_angle_rad,
-    enable_continuous_curve_assist,
-    empty_overlay);
-}
-
-cv::Mat DebugRenderer::render(
-  const cv::Mat & frame_bgr,
-  const ProcessingResult & result,
-  const CurveAssistState & curve_state,
-  const RedAvoidState & red_state,
-  bool red_overlay_valid,
-  double red_divider_angle_rad,
   bool enable_continuous_curve_assist,
   const FinalsDebugOverlay & finals_overlay) const
 {
@@ -83,89 +59,6 @@ cv::Mat DebugRenderer::render(
       cv::Point(overlay.cols / 2, result.roi_bottom),
       cv::Scalar(0, 255, 255),
       2);
-
-    cv::Point2d base(
-      static_cast<double>(frame_bgr.cols) * 0.5,
-      static_cast<double>(result.roi_bottom));
-
-    cv::Point2d v_line(
-      static_cast<double>(result.centroid.x) - base.x,
-      static_cast<double>(result.centroid.y + result.roi_top) - base.y);
-
-    if (red_divider_angle_rad != 0.0) {
-      const double angle =
-        v_line.x >= 0.0 ? red_divider_angle_rad : -red_divider_angle_rad;
-      const double c = std::cos(angle);
-      const double s = std::sin(angle);
-      v_line = cv::Point2d(
-        v_line.x * c - v_line.y * s,
-        v_line.x * s + v_line.y * c);
-    }
-
-    const cv::Point2d target = base + v_line;
-    cv::line(overlay, base, target, cv::Scalar(0, 255, 255), 2);
-
-    if (red_overlay_valid && red_state.valid) {
-      cv::rectangle(
-        overlay,
-        red_state.bbox_img,
-        cv::Scalar(0, 0, 255),
-        2);
-
-      cv::circle(
-        overlay,
-        red_state.center_img,
-        6,
-        cv::Scalar(0, 0, 255),
-        -1);
-
-      cv::circle(
-        overlay,
-        red_state.bottom_img,
-        6,
-        cv::Scalar(0, 255, 255),
-        -1);
-
-      char red_text[200];
-      std::snprintf(
-        red_text,
-        sizeof(red_text),
-        "%s bottom=%.2f risk=%.2f area=%.4f %s%s",
-        red_state.is_red_line ? "RED_LINE" : "CONE",
-        red_state.bottom_ratio,
-        red_state.risk,
-        red_state.contour_area_ratio,
-        red_state.in_corridor ? "IN_PATH " : "OUT_PATH ",
-        red_state.very_close ? "VERY_CLOSE" : "");
-
-      cv::putText(
-        overlay,
-        red_text,
-        cv::Point(10, 90),
-        cv::FONT_HERSHEY_SIMPLEX,
-        0.50,
-        cv::Scalar(0, 0, 255),
-        2);
-    }
-
-    if (red_state.red_line_detected) {
-      cv::rectangle(
-        overlay,
-        red_state.red_line_bbox_img,
-        cv::Scalar(255, 0, 255),
-        2);
-
-      cv::putText(
-        overlay,
-        "RED LINE AVOID",
-        cv::Point(
-          red_state.red_line_bbox_img.x,
-          std::max(20, red_state.red_line_bbox_img.y - 5)),
-        cv::FONT_HERSHEY_SIMPLEX,
-        0.50,
-        cv::Scalar(255, 0, 255),
-        2);
-    }
   }
 
   if (enable_continuous_curve_assist) {
@@ -205,7 +98,7 @@ cv::Mat DebugRenderer::render(
   }
 
   // ==========================================================================
-  // Optional Finals Overlay (corridor, yellow distance, obstacles, fork/finish)
+  // Finals Overlay (corridor, yellow distance, obstacle boxes, fork/finish HUD)
   // ==========================================================================
   if (finals_overlay.enabled) {
     // 1. Geometric yellow bar box & exact bottom edge
@@ -368,9 +261,8 @@ cv::Mat DebugRenderer::render(
     std::snprintf(
       hud_line,
       sizeof(hud_line),
-      "seg=%s plan=%s[%s] vcap=%.2f br=%d yel=%s(%.2fm%s) cor=[%+.2f,%+.2f]->%+.2f",
+      "seg=%s [%s] vcap=%.2f br=%d yel=%s(%.2fm%s) cor=[%+.2f,%+.2f]->%+.2f",
       finals_overlay.lane_seg_mode.c_str(),
-      finals_overlay.planner_mode.c_str(),
       finals_overlay.active_mode_tag.c_str(),
       finals_overlay.speed_cap_mps,
       finals_overlay.preferred_branch,

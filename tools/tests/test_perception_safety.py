@@ -377,6 +377,11 @@ class TestBPUYoloV8PostProcessAndTracker(unittest.TestCase):
 
 
 class TestSafetyWatchdogLogic(unittest.TestCase):
+    def test_upstream_topics_exclude_detection_channel(self):
+        self.assertEqual(safety_mod.UPSTREAM_TOPICS, ['/cmd_vel_follower', '/cmd_vel_stop'])
+        safety_src = (WS_ROOT / 'tools' / 'safety_node.py').read_text(encoding='utf-8')
+        self.assertNotIn('/cmd_vel_detection', safety_src)
+
     def test_idle_normal_and_upstream_silence(self):
         wd = safety_mod.SafetyWatchdogLogic(
             silence_timeout=0.30, mux_timeout_sec=0.35, mux_startup_grace_sec=3.0
@@ -472,17 +477,18 @@ class TestConfigAndLaunchHygiene(unittest.TestCase):
         self.assertIn('DeclareLaunchArgument', launch_text)
         self.assertIn('ParameterValue', launch_text)
 
-    def test_line_follower_with_detection_launch_no_hardcoded_timeouts(self):
+    def test_line_follower_with_detection_launch_no_detection_turn_controller(self):
         launch_text = (
             WS_ROOT / 'src' / 'line_follow_ws' / 'src' / 'line_follower'
             / 'launch' / 'line_follower_with_detection.launch.py'
         ).read_text(encoding='utf-8')
         self.assertNotIn('"high_timeout"', launch_text)
         self.assertNotIn('"stop_timeout"', launch_text)
-        self.assertIn('enable_detection_turn_controller', launch_text)
-        self.assertIn('IfCondition', launch_text)
+        self.assertNotIn('detection_turn_controller', launch_text)
+        self.assertIn('line_follower_node', launch_text)
+        self.assertIn('cmd_mux_node', launch_text)
 
-    def test_cmd_mux_node_has_watchdog_heartbeat_override_and_cooldown(self):
+    def test_cmd_mux_node_two_channel_watchdog_and_heartbeat(self):
         cpp_text = (
             WS_ROOT / 'src' / 'line_follow_ws' / 'src' / 'line_follower'
             / 'src' / 'cmd_mux_node.cpp'
@@ -490,11 +496,34 @@ class TestConfigAndLaunchHygiene(unittest.TestCase):
         for token in (
             'watchdog_rate_hz',
             '/cmd_mux/heartbeat',
-            'enable_detection_override',
-            'session_cooldown',
             'create_wall_timer',
         ):
             self.assertIn(token, cpp_text)
+        for legacy_tok in ('enable_detection_override', 'session_cooldown', '/cmd_vel_detection'):
+            self.assertNotIn(legacy_tok, cpp_text)
+
+    def test_start_sh_b2_params_and_two_node_health_check(self):
+        start_text = (WS_ROOT / 'tools' / 'start.sh').read_text(encoding='utf-8')
+        self.assertIn('PARAMS="finals_fork"', start_text)
+        self.assertIn('可选: finals_fork / finals_roundabout', start_text)
+        self.assertIn("python3 -u camera.py --ros-args --params-file '$PARAMS_FILE'", start_text)
+        self.assertIn("python3 -u bpu_yolov8_node.py --ros-args --params-file '$PARAMS_FILE'", start_text)
+        self.assertIn('for exe in line_follower_node cmd_mux_node; do', start_text)
+        self.assertIn('-lt 2', start_text)
+        self.assertIn('$cnt/2', start_text)
+        self.assertIn('Line follower (finals) subscribing', start_text)
+        self.assertNotIn('Line follower subscribing', start_text)
+        self.assertNotIn('detection_turn_controller', start_text)
+
+        for sim_sh in ('run_sim.sh', 'verify.sh'):
+            sim_text = (WS_ROOT / 'tools' / 'sim' / sim_sh).read_text(encoding='utf-8')
+            self.assertIn('finals_fork', sim_text)
+            self.assertNotIn('detection_turn_controller', sim_text)
+        verify_text = (WS_ROOT / 'tools' / 'sim' / 'verify.sh').read_text(encoding='utf-8')
+        self.assertIn('corridor_kp_y', verify_text)
+        self.assertIn('yellow_stop_min_time', verify_text)
+        self.assertIn(r'count=(\d+)', verify_text)
+        self.assertNotIn('yellow_stop_duration', verify_text)
 
 
 if __name__ == '__main__':

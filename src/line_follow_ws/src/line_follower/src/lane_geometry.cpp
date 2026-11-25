@@ -597,7 +597,6 @@ ProcessingResult LaneGeometry::evaluate(
   ProcessingResult result{};
   result.line_detected = false;
   result.yellow_line_detected = seg.yellow_line_detected;
-  result.yellow_area_ratio = seg.yellow_area_ratio;
   result.yellow_is_geometric = seg.yellow_is_geometric;
   result.yellow_bottom_y_full = seg.yellow_bottom_y_full;
   result.yellow_top_y_full = seg.yellow_top_y_full;

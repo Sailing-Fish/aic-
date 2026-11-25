@@ -42,9 +42,9 @@ void FinishGuard::reset()
   fork_passed_ = false;
 }
 
-void FinishGuard::update_motion(double ds_raw_m, double dyaw_rad)
+void FinishGuard::update_motion(double ds_fwd_m, double dyaw_rad)
 {
-  const double ds = std::abs(ds_raw_m) * config_.odom_scale_factor;
+  const double ds = std::max(0.0, ds_fwd_m) * config_.odom_scale_factor;
   s_total_m_ += ds;
   dist_since_last_yellow_m_ += ds;
   cum_abs_yaw_rad_ += std::abs(dyaw_rad);

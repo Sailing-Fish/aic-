@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # RDK X5 智能车 · 一键启动与守护
 #
-#   ./tools/start.sh                     # 全部拉起（5 个窗口 + 面板 + 兜底 + DEC 汇总）
-#   ./tools/start.sh --params roundabout # 用环岛参数
-#   ./tools/start.sh --no-panel          # 不起面板
-#   ./tools/start.sh --headless          # 不开窗口（无 X11 时用，也能做自检）
-#   ./tools/start.sh --stop follow       # 单独停掉某个进程且不自动重启
-#   ./tools/start.sh --status            # 打印当前状态
+#   ./tools/start.sh                            # 全部拉起（默认 finals_fork）
+#   ./tools/start.sh --params finals_roundabout # 用决赛环岛参数
+#   ./tools/start.sh --no-panel                 # 不起面板
+#   ./tools/start.sh --headless                 # 不开窗口（无 X11 时用，也能做自检）
+#   ./tools/start.sh --stop follow              # 单独停掉某个进程且不自动重启
+#   ./tools/start.sh --status                   # 打印当前状态
 #
 # 设计见 tools/DESIGN.md。核心约束：
 #   1) 必须在 MobaXterm 的 SSH 终端直接运行，不能套 screen（会丢 DISPLAY）
@@ -24,7 +24,7 @@ FOLLOW_GRACE=25          # ④ launch 启动后多少秒内不检查节点数
 NODE_CHECK_EVERY=5
 
 # ---------------------------------------------------------------- 参数解析
-PARAMS="fork"
+PARAMS="finals_fork"
 NO_PANEL=0
 HEADLESS=0
 STOP_TARGET=""
@@ -82,7 +82,7 @@ if [[ -n "$STOP_TARGET" ]]; then
 fi
 
 # ---------------------------------------------------------------- 前置检查
-[[ -f "$PARAMS_FILE" ]] || die "参数文件不存在: $PARAMS_FILE（可选: fork / roundabout）"
+[[ -f "$PARAMS_FILE" ]] || die "参数文件不存在: $PARAMS_FILE（可选: finals_fork / finals_roundabout）"
 [[ -f "$WS/install/setup.bash" ]] || die "工作区未编译: $WS/install/setup.bash 不存在"
 
 if [[ $HEADLESS -eq 0 && -z "${DISPLAY:-}" ]]; then
@@ -151,8 +151,8 @@ cmd_string() {
   local n="$1"
   case "$n" in
     base)   echo "ros2 launch turn_on_wheeltec_robot turn_on_wheeltec_robot.launch.py" ;;
-    camera) echo "cd '$WS/src/camera' && python3 -u camera.py" ;;
-    yolo)   echo "cd '$WS/src/yolov8' && python3 -u bpu_yolov8_node.py" ;;
+    camera) echo "cd '$WS/src/camera' && python3 -u camera.py --ros-args --params-file '$PARAMS_FILE'" ;;
+    yolo)   echo "cd '$WS/src/yolov8' && python3 -u bpu_yolov8_node.py --ros-args --params-file '$PARAMS_FILE'" ;;
     follow) echo "ros2 launch line_follower line_follower_with_detection.launch.py params_file:='$PARAMS_FILE'" ;;
     start)  echo "ros2 run line_follower start_toggle_node" ;;
     panel)  echo "python3 -u '$TOOLS/panel/server.py'${PORT_HINT:+ --port $PORT_HINT}" ;;
@@ -169,7 +169,7 @@ ready_pat() {
     base)   echo "serial port opened" ;;
     camera) echo "摄像头已成功启动" ;;
     yolo)   echo "视觉检测节点就绪" ;;
-    follow) echo "Line follower subscribing" ;;
+    follow) echo "Line follower (finals) subscribing" ;;
     panel)  echo "[panel] http://" ;;
     *)      echo "[DEC] proc start name=$1" ;;
   esac
@@ -202,7 +202,7 @@ kill_proc() {
     # cmdline 里没有 $WS 前缀，只能按文件名匹配
     camera)    pkill -TERM -f "camera.py" 2>/dev/null || true ;;
     yolo)      pkill -TERM -f "bpu_yolov8_node.py" 2>/dev/null || true ;;
-    follow)    pkill -TERM -f "install/line_follower/lib/line_follower/(line_follower_node|detection_turn_controller|cmd_mux_node)" 2>/dev/null || true ;;
+    follow)    pkill -TERM -f "install/line_follower/lib/line_follower/(line_follower_node|cmd_mux_node)" 2>/dev/null || true ;;
     start)     pkill -TERM -f "start_toggle_node" 2>/dev/null || true ;;
     panel)     pkill -TERM -f "$TOOLS/panel/server.py" 2>/dev/null || true ;;
     safety)    pkill -TERM -f "$TOOLS/safety_node.py" 2>/dev/null || true ;;
@@ -341,7 +341,7 @@ launch_proc yolo
 wait_for_log yolo "视觉检测节点就绪" 20
 
 launch_proc follow
-wait_for_log follow "Line follower subscribing" 20
+wait_for_log follow "Line follower (finals) subscribing" 20
 
 launch_proc start
 
@@ -460,13 +460,13 @@ while [[ $STOPPING -eq 0 ]]; do
       # 不用 ros2 node list：CLI 启动要 1~4s，系统忙时会误判成“节点缺失”。
       # 直接数进程，瞬间完成且不依赖 ROS daemon。
       cnt=0
-      for exe in line_follower_node detection_turn_controller cmd_mux_node; do
+      for exe in line_follower_node cmd_mux_node; do
         if pgrep -f "install/line_follower/lib/line_follower/$exe" >/dev/null 2>&1; then
           cnt=$(( cnt + 1 ))
         fi
       done
-      if [[ "${cnt:-0}" -lt 3 ]]; then
-        log "\033[33m④ 巡线节点缺失（$cnt/3），重启整个 launch\033[0m"
+      if [[ "${cnt:-0}" -lt 2 ]]; then
+        log "\033[33m④ 巡线节点缺失（$cnt/2），重启整个 launch\033[0m"
         printf '[DEC] follow_nodes_missing have=%s\n' "${cnt:-0}"
         pid="$(read_file "$STATE/follow.pid")"
         proc_alive "$pid" && kill -TERM "$pid" 2>/dev/null

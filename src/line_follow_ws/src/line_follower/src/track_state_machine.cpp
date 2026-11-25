@@ -19,7 +19,6 @@ TrackStateMachine::TrackStateMachine(const TrackStateConfig & config)
 void TrackStateMachine::set_config(const TrackStateConfig & config)
 {
   config_ = config;
-  config_.yellow_permanent_count = std::max(1, config_.yellow_permanent_count);
   config_.yellow_clear_frames_required = std::max(1, config_.yellow_clear_frames_required);
   config_.yellow_stop_duration = std::max(0.0, config_.yellow_stop_duration);
   config_.yellow_stop_min_time = std::max(0.0, config_.yellow_stop_min_time);
@@ -104,11 +103,7 @@ TrackStepEvents TrackStateMachine::step(
       state_.yellow_line_detection_time_sec = now_sec;
       events.yellow_stop_begin = true;
 
-      const bool is_final = config_.use_external_finish_decision ?
-        external_is_finish :
-        (state_.yellow_line_detection_count >= config_.yellow_permanent_count);
-
-      if (is_final) {
+      if (external_is_finish) {
         state_.permanent_stop = true;
         state_.yellow_line_stop_active = false;
         events.yellow_final_stop = true;

@@ -15,6 +15,7 @@ struct ImageProcessorConfig
 {
   double roi_top_ratio{0.5};
   double roi_bottom_ratio{0.05};
+  double yellow_roi_bottom_ratio{0.0};  // Independent bottom ratio for yellow stop line ROI
 
   int gaussian_kernel{5};
   double binary_threshold{160.0};
@@ -29,12 +30,11 @@ struct ImageProcessorConfig
   int white_s_max{60};
   int white_v_min{180};
 
-  bool use_yellow_filter{false};
+  bool use_yellow_filter{true};
   int yellow_h_low{20};
   int yellow_h_high{40};
   int yellow_s_min{80};
   int yellow_v_min{120};
-  double yellow_area_ratio_threshold{0.1};
 
   // ==========================================================================
   // Finals pluggable lane segmentation ("legacy_hsv" | "relative_border" | "hybrid")
@@ -58,9 +58,9 @@ struct ImageProcessorConfig
 
   // ==========================================================================
   // Geometric yellow bar, YOLO-guided CV refinement & dead-end-ahead detection
-  // yellow_detect_mode: "legacy_area" | "geometric_cv" | "yolo_cv_hybrid"
+  // yellow_detect_mode: "geometric_cv" | "yolo_cv_hybrid"
   // ==========================================================================
-  std::string yellow_detect_mode{"legacy_area"};
+  std::string yellow_detect_mode{"geometric_cv"};
   double yellow_min_aspect_ratio{2.5};
   double yellow_min_width_ratio{0.20};
   double yellow_min_area_px{120.0};

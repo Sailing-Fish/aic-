@@ -199,6 +199,9 @@ ImageProcessor::ImageProcessor(const ImageProcessorConfig & config)
 void ImageProcessor::set_config(const ImageProcessorConfig & config)
 {
   config_ = config;
+  config_.roi_top_ratio = std::clamp(config_.roi_top_ratio, 0.0, 1.0);
+  config_.roi_bottom_ratio = std::clamp(config_.roi_bottom_ratio, 0.0, 0.5);
+  config_.yellow_roi_bottom_ratio = std::clamp(config_.yellow_roi_bottom_ratio, 0.0, 0.5);
 
   if (config_.gaussian_kernel <= 0) {
     config_.gaussian_kernel = 1;
@@ -230,7 +233,7 @@ void ImageProcessor::set_config(const ImageProcessorConfig & config)
       config_.lane_seg_mode != "relative_border" &&
       config_.lane_seg_mode != "hybrid")
   {
-    config_.lane_seg_mode = "legacy_hsv";
+    config_.lane_seg_mode = "relative_border";
   }
 
   config_.blue_margin = std::clamp(config_.blue_margin, 0, 255);
@@ -246,11 +249,10 @@ void ImageProcessor::set_config(const ImageProcessorConfig & config)
   config_.hybrid_white_v_min = std::clamp(config_.hybrid_white_v_min, 0, 255);
   config_.semantic_hole_fill_dilate_px = std::max(0, config_.semantic_hole_fill_dilate_px);
 
-  if (config_.yellow_detect_mode != "legacy_area" &&
-      config_.yellow_detect_mode != "geometric_cv" &&
+  if (config_.yellow_detect_mode != "geometric_cv" &&
       config_.yellow_detect_mode != "yolo_cv_hybrid")
   {
-    config_.yellow_detect_mode = "legacy_area";
+    config_.yellow_detect_mode = "geometric_cv";
   }
   config_.yellow_min_aspect_ratio = std::max(1.0, config_.yellow_min_aspect_ratio);
   config_.yellow_min_width_ratio = std::clamp(config_.yellow_min_width_ratio, 0.01, 1.0);
@@ -314,10 +316,17 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
   cv::cvtColor(blurred, hsv, cv::COLOR_BGR2HSV);
 
   // ==========================================================================
-  // 1. Yellow stop line detection: legacy area + geometric CV + YOLO-CV hybrid
+  // 1. Yellow stop line detection on independent ROI [roi_top, yellow_roi_bottom]
+  //    Decoupled from lane roi_bottom_ratio so close-range yellow bars &
+  //    dead-end-ahead strip stay strictly aligned in full-image pixel space.
   // ==========================================================================
-  bool yellow_area_triggered = false;
-  double yellow_area_ratio = 0.0;
+  const int yellow_roi_bottom = std::clamp(
+    height - static_cast<int>(height * config_.yellow_roi_bottom_ratio),
+    roi_top + 1,
+    height);
+  const int yellow_roi_height = yellow_roi_bottom - roi_top;
+  const cv::Rect yellow_roi_rect(0, roi_top, width, yellow_roi_height);
+
   bool yellow_is_geometric = false;
   bool yellow_from_yolo_hybrid = false;
   double yellow_bottom_y_full = 0.0;
@@ -326,10 +335,21 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
   double yellow_center_x_full = 0.0;
   cv::Rect yellow_bbox_full{};
 
-  const bool run_yellow =
-    config_.use_yellow_filter || config_.yellow_detect_mode != "legacy_area";
+  if (config_.use_yellow_filter) {
+    cv::Mat yellow_hsv;
+    if (yellow_roi_bottom == roi_bottom) {
+      yellow_hsv = hsv;
+    } else {
+      const cv::Mat yellow_roi = frame_bgr(yellow_roi_rect);
+      cv::Mat yellow_blurred;
+      cv::GaussianBlur(
+        yellow_roi,
+        yellow_blurred,
+        cv::Size(config_.gaussian_kernel, config_.gaussian_kernel),
+        0);
+      cv::cvtColor(yellow_blurred, yellow_hsv, cv::COLOR_BGR2HSV);
+    }
 
-  if (run_yellow) {
     cv::Mat yellow_mask;
     const cv::Scalar lower_yellow(
       static_cast<double>(config_.yellow_h_low),
@@ -340,14 +360,9 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
       255.0,
       255.0);
 
-    cv::inRange(hsv, lower_yellow, upper_yellow, yellow_mask);
+    cv::inRange(yellow_hsv, lower_yellow, upper_yellow, yellow_mask);
 
     const int yellow_pixels = cv::countNonZero(yellow_mask);
-    yellow_area_ratio =
-      yellow_mask.total() > 0 ?
-      static_cast<double>(yellow_pixels) / static_cast<double>(yellow_mask.total()) :
-      0.0;
-    yellow_area_triggered = yellow_area_ratio >= config_.yellow_area_ratio_threshold;
 
     // Clean mask for geometric bar extraction
     cv::Mat yellow_clean;
@@ -356,7 +371,7 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
     cv::morphologyEx(yellow_mask, yellow_clean, cv::MORPH_OPEN, open_k, cv::Point(-1, -1), 1);
     cv::morphologyEx(yellow_clean, yellow_clean, cv::MORPH_CLOSE, close_k, cv::Point(-1, -1), 1);
 
-    // YOLO-guided CV refinement (best of both: YOLO selectivity + CV sub-row precision)
+    // YOLO-guided CV refinement (YOLO selectivity + CV sub-row precision)
     if (config_.yellow_detect_mode == "yolo_cv_hybrid" && !yolo_yellow_rects.empty()) {
       int best_yolo_idx = -1;
       int best_yolo_bottom = -1;
@@ -365,7 +380,7 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
         if (r.width <= 0 || r.height <= 0) {
           continue;
         }
-        const cv::Rect inter = r & roi_rect;
+        const cv::Rect inter = r & yellow_roi_rect;
         if (inter.width <= 0 || inter.height <= 0) {
           continue;
         }
@@ -378,11 +393,10 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
 
       if (best_yolo_idx >= 0) {
         const cv::Rect & yr = yolo_yellow_rects[static_cast<size_t>(best_yolo_idx)];
-        // Pad slightly vertically inside ROI to capture full yellow stripe edges
         const int px0 = std::clamp(yr.x - 4, 0, width - 1);
-        const int py0 = std::clamp(yr.y - 6, roi_top, roi_bottom - 1);
+        const int py0 = std::clamp(yr.y - 6, roi_top, yellow_roi_bottom - 1);
         const int px1 = std::clamp(yr.x + yr.width + 4, px0 + 1, width);
-        const int py1 = std::clamp(yr.y + yr.height + 6, py0 + 1, roi_bottom);
+        const int py1 = std::clamp(yr.y + yr.height + 6, py0 + 1, yellow_roi_bottom);
         const cv::Rect padded_full(px0, py0, px1 - px0, py1 - py0);
 
         const cv::Rect local_box(
@@ -390,7 +404,7 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
           padded_full.y - roi_top,
           padded_full.width,
           padded_full.height);
-        const cv::Rect local_clipped = local_box & cv::Rect(0, 0, width, roi_height);
+        const cv::Rect local_clipped = local_box & cv::Rect(0, 0, width, yellow_roi_height);
 
         yellow_from_yolo_hybrid = true;
         yellow_is_geometric = true;
@@ -473,15 +487,9 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
     }
   }
 
-  bool yellow_line_detected = false;
-  if (config_.yellow_detect_mode == "legacy_area") {
-    yellow_line_detected = config_.use_yellow_filter && yellow_area_triggered;
-  } else if (config_.yellow_detect_mode == "geometric_cv") {
-    yellow_line_detected = yellow_is_geometric;
-  } else {
-    // yolo_cv_hybrid
-    yellow_line_detected = yellow_from_yolo_hybrid || yellow_is_geometric;
-  }
+  const bool yellow_line_detected = (config_.yellow_detect_mode == "yolo_cv_hybrid") ?
+    (yellow_from_yolo_hybrid || yellow_is_geometric) :
+    yellow_is_geometric;
 
   // ==========================================================================
   // 2. Dead-end-ahead check above yellow bar (distinguishes END vs random straight yellow)
@@ -547,7 +555,7 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
   }
 
   // ==========================================================================
-  // 3. Lane binary mask segmentation (pluggable: legacy_hsv | relative_border | hybrid)
+  // 3. Lane binary mask segmentation (pluggable: relative_border | hybrid | legacy_hsv)
   // ==========================================================================
   cv::Mat binary;
   if (config_.lane_seg_mode == "relative_border") {
@@ -566,7 +574,7 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
     cv::inRange(hsv, lower_relaxed, upper_relaxed, relaxed_hsv);
     cv::bitwise_and(rel_mask, relaxed_hsv, binary);
   } else {
-    // Exact legacy_hsv pipeline
+    // Legacy HSV emergency fallback mode
     if (config_.use_white_filter) {
       const cv::Scalar lower_white(
         static_cast<double>(config_.white_h_low),
@@ -635,17 +643,14 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
       paint_full_rect(yellow_bbox_full);
     }
 
-    // Also fill small closed interior holes completely surrounded by white lane
-    // (e.g., dark-blue circular handwritten digit stickers not yet detected by YOLO).
-    // Exterior blue mat and fork blue islands touch ROI borders, so RETR_CCOMP child
-    // contours strictly inside the ROI never fill real track boundaries.
+    // Fill small closed interior holes completely surrounded by white lane
     std::vector<std::vector<cv::Point>> hole_contours;
     std::vector<cv::Vec4i> hole_hierarchy;
     cv::findContours(binary, hole_contours, hole_hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_SIMPLE);
     const double max_hole_area = 0.06 * static_cast<double>(binary.cols * binary.rows);
     for (size_t i = 0; i < hole_contours.size(); ++i) {
       if (hole_hierarchy[i][3] < 0) {
-        continue;  // outer contour, not a hole
+        continue;
       }
       const double a = cv::contourArea(hole_contours[i]);
       if (a <= 4.0 || a > max_hole_area) {
@@ -678,7 +683,6 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
   out.frame_width = width;
   out.frame_height = height;
   out.yellow_line_detected = yellow_line_detected;
-  out.yellow_area_ratio = yellow_area_ratio;
   out.yellow_is_geometric = yellow_is_geometric;
   out.yellow_bottom_y_full = yellow_bottom_y_full;
   out.yellow_top_y_full = yellow_top_y_full;

@@ -123,7 +123,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--speeds", type=float, nargs="+", default=SPEEDS)
     ap.add_argument("--track", default=TRACK)
-    ap.add_argument("--yaml", default=str(WS / "tools/config/fork.yaml"))
+    ap.add_argument("--yaml", default=str(WS / "tools/config/finals_fork.yaml"))
     args = ap.parse_args()
     TRACK = args.track
 

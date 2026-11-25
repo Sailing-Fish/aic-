@@ -13,6 +13,7 @@ struct ObstacleMemoryConfig
   double merge_radius_m{0.16};
   double memory_ttl_sec{1.8};
   double car_length_m{0.28};
+  double rear_axle_to_bumper_m{0.18};  // Distance from EKF pose (rear axle) forward to front bumper
   double rear_keep_margin_m{0.15};   // Keep obstacles down to d >= -(car_length + margin)
   double max_forward_dist_m{2.5};
   double ema_alpha{0.45};
@@ -56,14 +57,16 @@ public:
     double d_bumper_m,
     double y_lat_m,
     double & wx,
-    double & wy);
+    double & wy,
+    double rear_axle_to_bumper_m = 0.18);
 
   static void world_to_bumper(
     const VehiclePose2D & pose,
     double wx,
     double wy,
     double & d_bumper_m,
-    double & y_lat_m);
+    double & y_lat_m,
+    double rear_axle_to_bumper_m = 0.18);
 
 private:
   void prune(const VehiclePose2D & pose, double now_sec);

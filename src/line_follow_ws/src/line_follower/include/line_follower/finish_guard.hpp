@@ -50,7 +50,7 @@ public:
 
   void reset();
 
-  void update_motion(double ds_raw_m, double dyaw_rad);
+  void update_motion(double ds_fwd_m, double dyaw_rad);
   void mark_fork_passed();
   void mark_yellow_stop_triggered();
 

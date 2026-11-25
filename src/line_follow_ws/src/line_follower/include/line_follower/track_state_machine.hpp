@@ -8,22 +8,19 @@ namespace line_follower
 struct TrackStateConfig
 {
   double yellow_stop_duration{1.0};
-  int yellow_permanent_count{5};
   int yellow_clear_frames_required{10};
 
   double yellow_stop_min_time{0.35};
   double odom_still_threshold{0.02};
   double odom_still_hold{0.25};
 
-  // Odom freshness check (<= 0 disables freshness check for legacy unit-test compat;
+  // Odom freshness check (<= 0 disables freshness check for unit-test compat;
   // LineFollowerNode defaults ROS param odom_max_age_sec to 0.20s)
   double odom_max_age_sec{0.0};
   // Finals mode: require fresh odom standstill before releasing from yellow stop
   // (up to yellow_max_hold_sec anti-deadlock cap)
   bool yellow_require_odom_still{false};
   double yellow_max_hold_sec{3.0};
-  // Finals mode: use FinishGuard external_is_finish instead of yellow_count == permanent_count
-  bool use_external_finish_decision{false};
 
   double line_lost_stop_time{0.8};
 };

@@ -27,7 +27,6 @@ struct FinalsDebugOverlay
 {
   bool enabled{false};
   std::string lane_seg_mode{};
-  std::string planner_mode{};
   std::string active_mode_tag{};
 
   bool yellow_dist_valid{false};
@@ -57,26 +56,12 @@ class DebugRenderer
 public:
   DebugRenderer() = default;
 
-  // Backward-compatible legacy render signature
   cv::Mat render(
     const cv::Mat & frame_bgr,
     const ProcessingResult & result,
     const CurveAssistState & curve_state,
-    const RedAvoidState & red_state,
-    bool red_overlay_valid,
-    double red_divider_angle_rad,
-    bool enable_continuous_curve_assist) const;
-
-  // Finals render overload with corridor, yellow distance, obstacle boxes & guard status
-  cv::Mat render(
-    const cv::Mat & frame_bgr,
-    const ProcessingResult & result,
-    const CurveAssistState & curve_state,
-    const RedAvoidState & red_state,
-    bool red_overlay_valid,
-    double red_divider_angle_rad,
     bool enable_continuous_curve_assist,
-    const FinalsDebugOverlay & finals_overlay) const;
+    const FinalsDebugOverlay & finals_overlay = FinalsDebugOverlay{}) const;
 };
 
 }  // namespace line_follower

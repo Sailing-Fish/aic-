@@ -26,7 +26,6 @@ cleanup() {
   pkill -f "line_follower_with_detection" 2>/dev/null || true
   pkill -f "line_follower_node" 2>/dev/null || true
   pkill -f "cmd_mux_node" 2>/dev/null || true
-  pkill -f "detection_turn_controller" 2>/dev/null || true
 }
 
 echo "[1/5] 清理残留"
@@ -44,20 +43,19 @@ source install/setup.bash
 python3 - "$SPEED" "$KP" "$DAMP" "$YAW" "$STOP" "$TRACK" <<'PY'
 import re, sys
 speed, kp, damp, yaw, stop, track = sys.argv[1:]
-base = f"tools/config/{'roundabout' if track == 'roundabout' else 'fork'}.yaml"
+base = f"tools/config/{'finals_roundabout' if track == 'roundabout' else 'finals_fork'}.yaml"
 t = open(base).read()
-t = t.replace('    target_speed:',
-              f'    odom_topic: /sim/odom\n    target_speed:', 1)
+t = re.sub(r'(odom_topic:\s*)\S+', r'\g<1>/sim/odom', t)
 t = re.sub(r'(target_speed:\s*)[0-9.]+', rf'\g<1>{speed}', t)
 t = re.sub(r'(max_speed:\s*)[0-9.]+', rf'\g<1>{speed}', t)
-t = re.sub(r'(^    kp:\s*)[0-9.]+', rf'\g<1>{kp}', t, flags=re.M)
+t = re.sub(r'(corridor_kp_y:\s*)[0-9.]+', rf'\g<1>{kp}', t)
 t = re.sub(r'(speed_gain_damping:\s*)[0-9.]+', rf'\g<1>{damp}', t)
-t = re.sub(r'(^    max_yaw_rate:\s*)[0-9.]+', rf'\g<1>{yaw}', t, flags=re.M)
-t = re.sub(r'(yellow_stop_duration:\s*)[0-9.]+', rf'\g<1>{stop}', t)
+t = re.sub(r'(max_yaw_rate:\s*)[0-9.]+', rf'\g<1>{yaw}', t)
+t = re.sub(r'(yellow_stop_min_time:\s*)[0-9.]+', rf'\g<1>{stop}', t)
 t = t.replace('output_topic: /cmd_vel', 'output_topic: /sim/cmd_vel')
 open('/tmp/verify_params.yaml', 'w').write(t)
 PY
-grep -E "odom_topic|target_speed|max_speed|^    kp:|max_yaw_rate|speed_gain_damping|yellow_stop_duration|output_topic" /tmp/verify_params.yaml
+grep -E "odom_topic|target_speed|max_speed|corridor_kp_y|max_yaw_rate|speed_gain_damping|yellow_stop_min_time|output_topic" /tmp/verify_params.yaml
 
 echo "[3/5] 启动世界 + 巡线"
 python3 -u tools/sim/world_node.py --track "tools/sim/tracks/$TRACK.json" \
@@ -87,7 +85,7 @@ python3 - <<'PY'
 import re
 txt = open('/tmp/verify_follow.log', errors='ignore').read()
 m = re.search(r'\[(\d+\.\d+)\].*Start signal changed: false -> true', txt)
-stops = re.findall(r'\[(\d+\.\d+)\].*yellow stop_begin count=(\d)/4', txt)
+stops = re.findall(r'\[(\d+\.\d+)\].*yellow stop_begin count=(\d+)', txt)
 ends = re.findall(r'\[(\d+\.\d+)\].*yellow stop_end dur=([0-9.]+)', txt)
 fin = re.findall(r'\[(\d+\.\d+)\].*yellow final_stop', txt)
 lost = len(re.findall(r'state change from=tracking to=lost', txt))
@@ -95,7 +93,7 @@ wtxt = open('/tmp/verify_world.log', errors='ignore').read()
 off = re.findall(r'\[sim\] s=[0-9.-]+ off=([0-9.]+)', wtxt)
 smax = re.findall(r'\[sim\] s=([0-9.]+)', wtxt)
 print(f"  圈速        : {float(fin[-1]) - float(m.group(1)):.2f} s" if (m and fin) else "  圈速        : 未完成")
-print(f"  停车次数    : {len(stops)}/4")
+print(f"  停车次数    : {len(stops)}")
 print(f"  停车时长    : {[round(float(x),2) for _, x in ends]}")
 print(f"  丢线次数    : {lost}")
 print(f"  最大出界    : {max(map(float, off)) if off else 0:.2f} s")

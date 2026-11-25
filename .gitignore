@@ -40,3 +40,6 @@ handoff_决赛重构交接_20261124.md
 dataset_work/
 runs/
 weights/
+
+# 本地白盒交互式可视化手册（按需生成，不入库）
+finals_whitebox_guide.html

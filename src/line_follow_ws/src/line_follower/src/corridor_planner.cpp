@@ -21,7 +21,7 @@ void CorridorPlanner::set_config(const CorridorPlannerConfig & config)
   config_.border_margin_m = std::max(0.0, config_.border_margin_m);
   config_.cone_margin_m = std::max(0.0, config_.cone_margin_m);
   config_.no_entry_margin_m = std::max(0.0, config_.no_entry_margin_m);
-  config_.obstacle_lookahead_m = std::max(0.2, config_.obstacle_lookahead_m);
+  config_.obstacle_lookahead_m = std::max(0.25, config_.obstacle_lookahead_m);
   config_.obstacle_steer_horizon_m = std::clamp(
     config_.obstacle_steer_horizon_m, 0.25, config_.obstacle_lookahead_m);
   config_.obstacle_curve_min_horizon_m = std::clamp(
@@ -41,9 +41,7 @@ void CorridorPlanner::reset()
 {
   reset_fork_votes();
   clear_fork_commit();
-  for (auto & t : digit_tracks_) {
-    t = DigitTrack{};
-  }
+  digit_tracks_.clear();
 }
 
 void CorridorPlanner::reset_fork_votes()
@@ -267,9 +265,18 @@ void CorridorPlanner::update_straight_digit_tracks(
   const std::vector<GroundDetection> & detections,
   double now_sec)
 {
-  std::array<bool, 9> seen{};
-  std::array<const GroundDetection *, 9> best_obs{};
+  // 1. Prune expired tracks
+  digit_tracks_.erase(
+    std::remove_if(
+      digit_tracks_.begin(),
+      digit_tracks_.end(),
+      [&](const DigitTrack & t) {
+        return (now_sec - t.last_seen_sec) > config_.digit_track_ttl_sec;
+      }),
+    digit_tracks_.end());
 
+  // 2. Collect valid straight-road digit detections
+  std::vector<const GroundDetection *> valid_dets;
   for (const auto & det : detections) {
     if (det.type != SemanticObjectType::BONUS_DIGIT ||
       det.digit < 1 || det.digit > 8 ||
@@ -282,38 +289,88 @@ void CorridorPlanner::update_straight_digit_tracks(
     {
       continue;
     }
-    const std::size_t idx = static_cast<std::size_t>(det.digit);
-    if (!seen[idx] || det.confidence > best_obs[idx]->confidence) {
-      seen[idx] = true;
-      best_obs[idx] = &det;
+    valid_dets.push_back(&det);
+  }
+
+  std::vector<bool> track_matched(digit_tracks_.size(), false);
+  std::vector<bool> det_matched(valid_dets.size(), false);
+
+  auto apply_update = [&](DigitTrack & trk, const GroundDetection & obs) {
+      trk.frames++;
+      trk.mean_conf =
+        (trk.mean_conf * static_cast<double>(trk.frames - 1) + obs.confidence) /
+        static_cast<double>(trk.frames);
+      trk.d_bumper_m = 0.5 * trk.d_bumper_m + 0.5 * obs.d_bumper_m;
+      trk.y_lat_m = 0.5 * trk.y_lat_m + 0.5 * obs.y_lat_m;
+      if (obs.track_id > 0) {
+        trk.track_id = obs.track_id;
+      }
+      trk.last_seen_sec = now_sec;
+    };
+
+  // Pass 1: exact (digit, track_id) match when track_id > 0
+  for (std::size_t di = 0; di < valid_dets.size(); ++di) {
+    const GroundDetection & obs = *valid_dets[di];
+    if (obs.track_id <= 0) {
+      continue;
+    }
+    for (std::size_t ti = 0; ti < digit_tracks_.size(); ++ti) {
+      if (track_matched[ti]) {
+        continue;
+      }
+      if (digit_tracks_[ti].digit == obs.digit && digit_tracks_[ti].track_id == obs.track_id) {
+        apply_update(digit_tracks_[ti], obs);
+        track_matched[ti] = true;
+        det_matched[di] = true;
+        break;
+      }
     }
   }
 
-  for (int d = 1; d <= 8; ++d) {
-    const std::size_t idx = static_cast<std::size_t>(d);
-    auto & trk = digit_tracks_[idx];
-    if (seen[idx]) {
-      const auto * obs = best_obs[idx];
-      if (trk.active && (now_sec - trk.last_seen_sec) <= config_.digit_track_ttl_sec) {
-        trk.frames++;
-        trk.mean_conf =
-          (trk.mean_conf * static_cast<double>(trk.frames - 1) + obs->confidence) /
-          static_cast<double>(trk.frames);
-        trk.d_bumper_m = 0.5 * trk.d_bumper_m + 0.5 * obs->d_bumper_m;
-        trk.y_lat_m = 0.5 * trk.y_lat_m + 0.5 * obs->y_lat_m;
-        trk.last_seen_sec = now_sec;
-      } else {
-        trk.active = true;
-        trk.digit = d;
-        trk.frames = 1;
-        trk.mean_conf = obs->confidence;
-        trk.d_bumper_m = obs->d_bumper_m;
-        trk.y_lat_m = obs->y_lat_m;
-        trk.last_seen_sec = now_sec;
-      }
-    } else if (trk.active && (now_sec - trk.last_seen_sec) > config_.digit_track_ttl_sec) {
-      trk = DigitTrack{};
+  // Pass 2: spatial nearest-neighbor match (same digit, hypot(dd, dy) <= 0.18m)
+  constexpr double kMaxMatchDistM = 0.18;
+  for (std::size_t di = 0; di < valid_dets.size(); ++di) {
+    if (det_matched[di]) {
+      continue;
     }
+    const GroundDetection & obs = *valid_dets[di];
+    int best_ti = -1;
+    double best_dist = kMaxMatchDistM;
+    for (std::size_t ti = 0; ti < digit_tracks_.size(); ++ti) {
+      if (track_matched[ti] || digit_tracks_[ti].digit != obs.digit) {
+        continue;
+      }
+      const double dist = std::hypot(
+        obs.d_bumper_m - digit_tracks_[ti].d_bumper_m,
+        obs.y_lat_m - digit_tracks_[ti].y_lat_m);
+      if (dist <= best_dist) {
+        best_dist = dist;
+        best_ti = static_cast<int>(ti);
+      }
+    }
+    if (best_ti >= 0) {
+      const std::size_t ti = static_cast<std::size_t>(best_ti);
+      apply_update(digit_tracks_[ti], obs);
+      track_matched[ti] = true;
+      det_matched[di] = true;
+    }
+  }
+
+  // Pass 3: create new tracks for unmatched detections
+  for (std::size_t di = 0; di < valid_dets.size(); ++di) {
+    if (det_matched[di]) {
+      continue;
+    }
+    const GroundDetection & obs = *valid_dets[di];
+    DigitTrack trk{};
+    trk.digit = obs.digit;
+    trk.track_id = obs.track_id;
+    trk.frames = 1;
+    trk.mean_conf = obs.confidence;
+    trk.d_bumper_m = obs.d_bumper_m;
+    trk.y_lat_m = obs.y_lat_m;
+    trk.last_seen_sec = now_sec;
+    digit_tracks_.push_back(trk);
   }
 }
 
@@ -536,9 +593,8 @@ CorridorPlan CorridorPlanner::plan(
     update_straight_digit_tracks(raw_detections, now_sec);
 
     std::vector<const DigitTrack *> confirmed;
-    for (int d = 1; d <= 8; ++d) {
-      const auto & trk = digit_tracks_[static_cast<std::size_t>(d)];
-      if (trk.active && trk.frames >= config_.digit_min_frames &&
+    for (const auto & trk : digit_tracks_) {
+      if (trk.frames >= config_.digit_min_frames &&
         trk.mean_conf >= config_.digit_min_conf)
       {
         confirmed.push_back(&trk);

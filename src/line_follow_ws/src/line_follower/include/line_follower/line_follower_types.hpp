@@ -168,7 +168,6 @@ struct ProcessingResult
   int roi_bottom{0};
 
   // Geometric yellow bar, YOLO-hybrid refinement & dead-end-ahead cues
-  double yellow_area_ratio{0.0};
   bool yellow_is_geometric{false};
   double yellow_bottom_y_full{0.0};
   double yellow_top_y_full{0.0};
@@ -179,7 +178,7 @@ struct ProcessingResult
   double yellow_ahead_blue_ratio{0.0};
   double yellow_ahead_dark_ratio{0.0};
   bool yellow_has_dead_end_ahead{false};
-  std::string active_lane_seg_mode{"legacy_hsv"};
+  std::string active_lane_seg_mode{"relative_border"};
 
   LaneObservation observation{};
 };
@@ -200,7 +199,6 @@ struct SegmentedFrame
   cv::Point2f contour_centroid{0.0F, 0.0F};
 
   // Geometric yellow bar, YOLO-hybrid refinement & dead-end-ahead cues
-  double yellow_area_ratio{0.0};
   bool yellow_is_geometric{false};
   double yellow_bottom_y_full{0.0};
   double yellow_top_y_full{0.0};
@@ -211,7 +209,7 @@ struct SegmentedFrame
   double yellow_ahead_blue_ratio{0.0};
   double yellow_ahead_dark_ratio{0.0};
   bool yellow_has_dead_end_ahead{false};
-  std::string active_lane_seg_mode{"legacy_hsv"};
+  std::string active_lane_seg_mode{"relative_border"};
 };
 
 struct CurveAssistState
@@ -233,36 +231,6 @@ struct CurveAssistState
   double last_heading_proxy{0.0};
   double last_curvature_proxy{0.0};
   double last_lane_width_ratio{0.0};
-};
-
-struct RedAvoidState
-{
-  bool valid{false};
-
-  bool red_line_detected{false};
-  bool is_red_line{false};
-  cv::Rect red_line_bbox_img{};
-
-  cv::Rect bbox_img{};
-  cv::Point2d center_img{};
-  cv::Point2d bottom_img{};
-
-  double aspect_ratio{0.0};
-  double contour_area_ratio{0.0};
-  double bottom_ratio{0.0};
-
-  bool in_corridor{false};
-  double risk{0.0};
-  bool very_close{false};
-
-  bool soft_red_logged{false};
-
-  void clear_detection()
-  {
-    const bool prev_logged = soft_red_logged;
-    *this = RedAvoidState{};
-    soft_red_logged = prev_logged;
-  }
 };
 
 struct MotionState

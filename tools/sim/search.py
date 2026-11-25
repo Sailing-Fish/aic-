@@ -178,7 +178,7 @@ def fmt(cfg):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--track", default="fork_s")
-    ap.add_argument("--yaml", default=str(WS / "tools/config/fork.yaml"))
+    ap.add_argument("--yaml", default=str(WS / "tools/config/finals_fork.yaml"))
     ap.add_argument("--start", type=float, default=0.26)
     args = ap.parse_args()
 

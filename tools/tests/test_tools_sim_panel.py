@@ -37,38 +37,44 @@ import world_node as sim_world  # noqa: E402
 
 class TestYamlAndSchemaParity(unittest.TestCase):
     YAML_FILES = [
-        REPO_ROOT / "tools" / "config" / "fork.yaml",
-        REPO_ROOT / "tools" / "config" / "roundabout.yaml",
         REPO_ROOT / "tools" / "config" / "finals_fork.yaml",
         REPO_ROOT / "tools" / "config" / "finals_roundabout.yaml",
         REPO_ROOT / "src" / "line_follow_ws" / "src" / "line_follower" / "config" / "line_follower_params.yaml",
     ]
 
-    def test_all_yamls_parse_cleanly(self):
+    def test_legacy_yamls_removed_and_finals_yamls_parse_cleanly(self):
+        for removed in ("fork.yaml", "roundabout.yaml"):
+            self.assertFalse(
+                (REPO_ROOT / "tools" / "config" / removed).exists(),
+                f"Legacy config should be deleted: {removed}",
+            )
         for p in self.YAML_FILES:
             self.assertTrue(p.is_file(), f"Missing YAML: {p}")
             data = yaml.safe_load(p.read_text(encoding="utf-8"))
             self.assertIsInstance(data, dict, f"YAML root not dict: {p}")
             self.assertIn("line_follower_node", data, f"Missing line_follower_node in {p}")
             self.assertIn("cmd_mux_node", data, f"Missing cmd_mux_node in {p}")
+            self.assertNotIn("detection_turn_controller", data, f"Legacy section left in {p}")
 
-    def test_legacy_vs_finals_mode_defaults(self):
-        for name in ("fork.yaml", "roundabout.yaml"):
-            data = yaml.safe_load((REPO_ROOT / "tools" / "config" / name).read_text(encoding="utf-8"))
-            lf = data["line_follower_node"]["ros__parameters"]
-            mux = data["cmd_mux_node"]["ros__parameters"]
-            self.assertEqual(lf["planner_mode"], "legacy_segment")
-            self.assertEqual(lf["lane_seg_mode"], "legacy_hsv")
-            self.assertEqual(lf["yellow_detect_mode"], "legacy_area")
-            self.assertFalse(lf["enable_semantic_hole_fill"])
-            self.assertFalse(lf["enable_cv_red_fallback"])
-            self.assertTrue(mux["enable_detection_override"])
+    def test_finals_yamls_b1_b2_b3_b5_b10_and_cleanup(self):
+        removed_lf = {
+            "planner_mode", "enable_red_filter", "enable_soft_red_avoidance",
+            "seg1_target_speed", "seg2_start_count", "seg3_start_count",
+            "seg3_start_dist_m", "seg4_start_dist_m", "yellow_permanent_count",
+            "yellow_area_ratio_threshold", "red_soft_yaw",
+        }
+        removed_mux = {"high_topic", "high_timeout", "enable_detection_override", "session_cooldown"}
 
         for name in ("finals_fork.yaml", "finals_roundabout.yaml"):
             data = yaml.safe_load((REPO_ROOT / "tools" / "config" / name).read_text(encoding="utf-8"))
+            self.assertIn("camera_publisher_node", data)
+            self.assertIn("bpu_yolov8_digit_node", data)
+
             lf = data["line_follower_node"]["ros__parameters"]
             mux = data["cmd_mux_node"]["ros__parameters"]
-            self.assertEqual(lf["planner_mode"], "finals_corridor")
+            cam = data["camera_publisher_node"]["ros__parameters"]
+            yolo = data["bpu_yolov8_digit_node"]["ros__parameters"]
+
             self.assertEqual(lf["lane_seg_mode"], "relative_border")
             self.assertEqual(lf["yellow_detect_mode"], "geometric_cv")
             self.assertTrue(lf["enable_semantic_hole_fill"])
@@ -76,24 +82,46 @@ class TestYamlAndSchemaParity(unittest.TestCase):
             self.assertTrue(lf["enable_cv_red_fallback"])
             self.assertTrue(lf["yellow_require_odom_still"])
             self.assertTrue(lf["lost_line_safe_mode"])
-            self.assertFalse(mux["enable_detection_override"])
             self.assertEqual(len(lf["homography_matrix"]), 9)
 
-    def test_schema_keys_exist_in_cpp_declarations(self):
+            # B1 / B3 / B5 parameters
+            self.assertAlmostEqual(lf["yellow_roi_bottom_ratio"], 0.0)
+            self.assertAlmostEqual(lf["rear_axle_to_bumper_m"], 0.18)
+            self.assertAlmostEqual(lf["obstacle_steer_horizon_m"], 0.65)
+            self.assertAlmostEqual(lf["obstacle_curve_min_horizon_m"], 0.45)
+            self.assertAlmostEqual(lf["obstacle_stagger_gap_m"], 0.25)
+
+            # B10 red fallback HSV parameters
+            for k in ("red_h_low_1", "red_h_high_1", "red_h_low_2", "red_h_high_2",
+                      "red_s_min", "red_v_min", "red_cone_area_ratio_threshold"):
+                self.assertIn(k, lf)
+
+            # B2 camera + 8-class YOLO params
+            self.assertEqual(cam["ae_awb_mode"], "lock_on_start")
+            self.assertEqual(cam["power_line_frequency"], 1)
+            self.assertEqual(cam["backlight_compensation"], 0)
+            self.assertTrue(cam["unlock_on_stop"])
+            self.assertEqual(yolo["cls_list_path"], "")
+            self.assertAlmostEqual(yolo["conf_thresh"], 0.25)
+            self.assertEqual(yolo["class_conf_overrides"], "{}")
+
+            self.assertFalse(removed_lf & set(lf.keys()), f"Legacy lf keys in {name}: {removed_lf & set(lf.keys())}")
+            self.assertFalse(removed_mux & set(mux.keys()), f"Legacy mux keys in {name}: {removed_mux & set(mux.keys())}")
+
+    def test_yaml_and_schema_keys_exist_in_cpp_and_python_declarations(self):
         lf_cpp = (
             REPO_ROOT / "src" / "line_follow_ws" / "src" / "line_follower" / "src" / "line_follower_node.cpp"
         ).read_text(encoding="utf-8")
         mux_cpp = (
             REPO_ROOT / "src" / "line_follow_ws" / "src" / "line_follower" / "src" / "cmd_mux_node.cpp"
         ).read_text(encoding="utf-8")
+        cam_py = (REPO_ROOT / "src" / "camera" / "camera.py").read_text(encoding="utf-8")
+        yolo_py = (REPO_ROOT / "src" / "yolov8" / "bpu_yolov8_node.py").read_text(encoding="utf-8")
 
         lf_declared = set(re.findall(r'declare_parameter(?:<[^>]+>)?\(\s*"([^"]+)"', lf_cpp))
-        # Also include segN_<key> generated dynamically in loop
-        seg_base = set(re.findall(r'decl_[db]\(\s*"([^"]+)"', lf_cpp))
-        for i in range(1, 5):
-            for k in seg_base:
-                lf_declared.add(f"seg{i}_{k}")
         mux_declared = set(re.findall(r'declare_parameter(?:<[^>]+>)?\(\s*"([^"]+)"', mux_cpp))
+        cam_declared = set(re.findall(r"declare_parameter\(\s*'([^']+)'", cam_py))
+        yolo_declared = set(re.findall(r"declare_parameter\(\s*'([^']+)'", yolo_py))
 
         for grp in params_schema.SCHEMA:
             sec = grp["section"]
@@ -103,6 +131,17 @@ class TestYamlAndSchemaParity(unittest.TestCase):
             elif sec == "cmd_mux_node":
                 for item in grp["items"]:
                     self.assertIn(item[0], mux_declared, f"Schema key '{item[0]}' not declared in cmd_mux_node.cpp")
+
+        for name in ("finals_fork.yaml", "finals_roundabout.yaml"):
+            data = yaml.safe_load((REPO_ROOT / "tools" / "config" / name).read_text(encoding="utf-8"))
+            for key in data["line_follower_node"]["ros__parameters"]:
+                self.assertIn(key, lf_declared, f"YAML key '{key}' in {name} not declared in line_follower_node.cpp")
+            for key in data["cmd_mux_node"]["ros__parameters"]:
+                self.assertIn(key, mux_declared, f"YAML key '{key}' in {name} not declared in cmd_mux_node.cpp")
+            for key in data["camera_publisher_node"]["ros__parameters"]:
+                self.assertIn(key, cam_declared, f"YAML key '{key}' in {name} not declared in camera.py")
+            for key in data["bpu_yolov8_digit_node"]["ros__parameters"]:
+                self.assertIn(key, yolo_declared, f"YAML key '{key}' in {name} not declared in bpu_yolov8_node.py")
 
 
 class TestHomographyCalibration(unittest.TestCase):
@@ -347,16 +386,25 @@ class TestCVComparisonTool(unittest.TestCase):
 
 
 class TestPanelAndTelemetry(unittest.TestCase):
-    def test_load_params_all_four_maps(self):
+    def test_load_params_finals_maps_only(self):
+        self.assertEqual(panel_server.MAP_FILES, ("finals_fork", "finals_roundabout"))
+        self.assertEqual(panel_server.DEFAULT_MAP, "finals_fork")
+        with self.assertRaises(FileNotFoundError):
+            panel_server.load_params("fork")
+
         required_keys = {
-            "planner_mode", "lane_seg_mode", "yellow_detect_mode",
+            "lane_seg_mode", "yellow_detect_mode",
             "enable_semantic_hole_fill", "enable_obstacle_memory",
-            "enable_cv_red_fallback",
-            "allow_dual_digit_cover", "yellow_h_low", "yellow_h_high",
-            "yellow_s_min", "yellow_v_min", "red_h_low_1", "red_s_min",
-            "enable_detection_override",
+            "enable_cv_red_fallback", "allow_dual_digit_cover",
+            "yellow_roi_bottom_ratio", "rear_axle_to_bumper_m",
+            "obstacle_steer_horizon_m", "obstacle_curve_min_horizon_m",
+            "obstacle_stagger_gap_m",
+            "yellow_h_low", "yellow_h_high", "yellow_s_min", "yellow_v_min",
+            "red_h_low_1", "red_h_high_1", "red_h_low_2", "red_h_high_2",
+            "red_s_min", "red_v_min", "red_cone_area_ratio_threshold",
+            "stop_timeout", "low_timeout", "watchdog_rate_hz",
         }
-        for map_name in ("fork", "roundabout", "finals_fork", "finals_roundabout"):
+        for map_name in ("finals_fork", "finals_roundabout"):
             payload = panel_server.load_params(map_name)
             self.assertEqual(payload["map"], map_name)
             found = {it["key"] for g in payload["groups"] for it in g["items"]}
@@ -385,7 +433,7 @@ class TestPanelAndTelemetry(unittest.TestCase):
             finally:
                 panel_server.CONFIG_DIR = orig_dir
 
-    def test_panel_html_has_voltage_and_finals_maps(self):
+    def test_panel_html_has_voltage_and_finals_only_ui(self):
         html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
         self.assertIn("voltBadge", html)
         self.assertIn("11.6", html)
@@ -394,37 +442,89 @@ class TestPanelAndTelemetry(unittest.TestCase):
         self.assertIn("it.type==='enum'", html)
         self.assertIn('data-tier="finals_core"', html)
         self.assertIn('data-tier="calibration"', html)
-        self.assertIn('data-tier="legacy"', html)
+        self.assertIn("已停 0 次", html)
+        self.assertIn("v=- kp=-", html)
+        self.assertNotIn('data-tier="legacy"', html)
+        self.assertNotIn("segSel", html)
+        self.assertNotIn("0 / 4", html)
+        self.assertNotIn('<option value="fork">', html)
 
-    def test_panel_tiers_strictly_isolate_legacy_from_finals_core(self):
+    def test_panel_two_tiers_and_b10_grouping(self):
         payload = panel_server.load_params("finals_fork")
-        self.assertEqual(payload["planner_mode"], "finals_corridor")
-        self.assertEqual([t["id"] for t in payload["tiers"]], ["finals_core", "calibration", "legacy"])
+        self.assertEqual([t["id"] for t in payload["tiers"]], ["finals_core", "calibration"])
 
-        by_tier = {"finals_core": set(), "calibration": set(), "legacy": set()}
+        by_tier = {"finals_core": set(), "calibration": set()}
         for g in payload["groups"]:
             self.assertIn(g["tier"], by_tier)
             for it in g["items"]:
                 by_tier[g["tier"]].add(it["key"])
 
-        # Finals core should stay lean and orthogonal (no segN_*, no legacy yellow/red/white hacks)
-        self.assertLessEqual(len(by_tier["finals_core"]), 22)
+        self.assertLessEqual(len(by_tier["finals_core"]), 20)
         for core_key in ("target_speed", "speed_gain_damping", "corridor_kp_y",
                          "yellow_bumper_margin_m", "yellow_creep_speed_mps",
                          "obstacle_speed_mps", "no_entry_speed_mps",
                          "cone_margin_m", "no_entry_margin_m"):
             self.assertIn(core_key, by_tier["finals_core"])
 
-        legacy_only = {
-            "seg1_target_speed", "seg1_kp", "seg2_start_count",
-            "yellow_area_ratio_threshold", "yellow_permanent_count",
-            "white_s_max", "enable_soft_red_avoidance", "red_soft_yaw",
-            "turn_duration",
-        }
-        for k in legacy_only:
-            self.assertIn(k, by_tier["legacy"], f"Legacy key '{k}' missing from legacy tier")
-            self.assertNotIn(k, by_tier["finals_core"], f"Legacy key '{k}' leaked into finals_core!")
-            self.assertNotIn(k, by_tier["calibration"], f"Legacy key '{k}' leaked into calibration!")
+        for b_key in ("yellow_roi_bottom_ratio", "rear_axle_to_bumper_m",
+                      "obstacle_steer_horizon_m", "obstacle_curve_min_horizon_m",
+                      "obstacle_stagger_gap_m"):
+            self.assertIn(b_key, by_tier["calibration"])
+
+        lane_seg_spec = params_schema.find("line_follower_node", "lane_seg_mode")
+        self.assertEqual(lane_seg_spec[3], ["relative_border", "hybrid", "legacy_hsv"])
+
+        # B10: 6 red HSV params + red_cone_area_ratio_threshold directly follow enable_cv_red_fallback
+        switch_grp = next(
+            g for g in payload["groups"]
+            if any(it["key"] == "enable_cv_red_fallback" for it in g["items"])
+        )
+        keys = [it["key"] for it in switch_grp["items"]]
+        idx = keys.index("enable_cv_red_fallback")
+        self.assertEqual(
+            keys[idx + 1:idx + 8],
+            ["red_h_low_1", "red_h_high_1", "red_h_low_2", "red_h_high_2",
+             "red_s_min", "red_v_min", "red_cone_area_ratio_threshold"],
+        )
+
+        # No deleted legacy keys remain in schema
+        all_keys = by_tier["finals_core"] | by_tier["calibration"]
+        for removed in ("seg1_target_speed", "seg2_start_count", "planner_mode",
+                        "enable_red_filter", "enable_soft_red_avoidance",
+                        "enable_detection_override", "turn_duration",
+                        "yellow_area_ratio_threshold", "yellow_permanent_count"):
+            self.assertNotIn(removed, all_keys)
+
+    def test_b6_explicit_final_stop_ignores_long_temp_yellow_stop(self):
+        self.assertFalse(hasattr(panel_server.PanelNode, "_tick"))
+        with panel_server.SH.lock:
+            panel_server.reset_round_locked()
+
+        # Pre-start final=1 must be ignored
+        panel_server.apply_segment_message("mode=finals s=0.00 count=0 branch=0 final=1", now=90.0)
+        with panel_server.SH.lock:
+            self.assertFalse(panel_server.SH.final_stopped)
+            self.assertIsNone(panel_server.SH.timer_stop)
+
+            # Start run at t=100.0
+            panel_server.SH.timer_start = 100.0
+            panel_server.SH.started = True
+            panel_server.SH.track_state = "yellow_line_detected"
+            panel_server.SH.yellow_count = 1
+            panel_server.SH.last_yellow_ts = 101.0
+
+        # Even if temporary yellow stop lasts > 2.5s (t=104.0), final=0 must NOT stop timer
+        panel_server.apply_segment_message("mode=finals s=3.20 count=1 branch=0 final=0", now=104.0)
+        with panel_server.SH.lock:
+            self.assertFalse(panel_server.SH.final_stopped)
+            self.assertIsNone(panel_server.SH.timer_stop)
+
+        # Explicit final=1 stops the timer cleanly
+        panel_server.apply_segment_message("mode=finals s=10.80 count=3 branch=0 final=1", now=122.5)
+        with panel_server.SH.lock:
+            self.assertTrue(panel_server.SH.final_stopped)
+            self.assertEqual(panel_server.SH.timer_stop, 122.5)
+            panel_server.reset_round_locked()
 
     def test_raw_video_recorder_and_keyframe_extractor_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmp:

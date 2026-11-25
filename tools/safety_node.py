@@ -10,7 +10,7 @@
      但 /cmd_vel 已无人转发 → 车同样直冲！
 
 策略：
-  - 监听三个上游速度话题（/cmd_vel_follower, /cmd_vel_detection, /cmd_vel_stop）
+  - 监听两个上游速度话题（/cmd_vel_follower, /cmd_vel_stop）
   - 同时监听 cmd_mux_node 的 20Hz 心跳话题（/cmd_mux/heartbeat）与外部 /cmd_vel 活动
   - 只要上游全部静默超过 silence_timeout，OR mux 心跳超时超过 mux_timeout_sec
     （或上游已活跃超过 mux_startup_grace_sec 却始终未收到 mux 心跳），
@@ -34,7 +34,6 @@ except ImportError:
 
 UPSTREAM_TOPICS = [
     '/cmd_vel_follower',
-    '/cmd_vel_detection',
     '/cmd_vel_stop',
 ]
 
