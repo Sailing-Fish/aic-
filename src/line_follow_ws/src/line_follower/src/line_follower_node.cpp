@@ -1401,7 +1401,9 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     yellow_brake_start_arc_m_ = finish_guard_.total_arc_m();
     yellow_brake_measure_pending_ = true;
 
-    yellow_brake_active_ = yellow_brake_speed_ > 0.0;
+    const bool entry_fast_enough_for_brake =
+      !sm_state.odom_seen || (sm_state.odom_linear_x > yellow_brake_release_speed_);
+    yellow_brake_active_ = (yellow_brake_speed_ > 0.0) && entry_fast_enough_for_brake;
     yellow_brake_start_ = now;
     last_brake_cmd_time_ = now;
     if (yellow_brake_active_) {
@@ -1511,19 +1513,24 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
     if (yellow_brake_active_) {
       const double brake_elapsed = (now - yellow_brake_start_).seconds();
+      // Signed velocity zero-reverse guard: release immediately if car reaches zero or begins reversing!
+      const bool reverse_guard =
+        sm_state.odom_seen && sm_state.odom_linear_x <= 0.01;
       const bool slow_enough =
         yellow_brake_release_speed_ > 0.0 &&
-        brake_elapsed >= 0.1 &&
-        sm_state.odom_speed <= yellow_brake_release_speed_;
+        brake_elapsed >= 0.04 &&
+        sm_state.odom_seen &&
+        sm_state.odom_linear_x <= yellow_brake_release_speed_;
       const bool timeout =
         yellow_brake_max_time_s_ > 0.0 && brake_elapsed >= yellow_brake_max_time_s_;
 
-      if (slow_enough || timeout) {
+      if (reverse_guard || slow_enough || timeout) {
         yellow_brake_active_ = false;
+        const char * why = timeout ? "timeout" : (reverse_guard ? "reverse_guard" : "slow");
         RCLCPP_INFO(
           this->get_logger(),
           "[DEC] yellow brake_end dur=%.2f v=%.3f why=%s",
-          brake_elapsed, sm_state.odom_speed, timeout ? "timeout" : "slow");
+          brake_elapsed, sm_state.odom_linear_x, why);
       } else {
         publish_stop_cmd = false;
         linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed_ : 0.0;
@@ -1587,7 +1594,16 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       }
     }
 
-    const double eff_curve_lvl = std::max(obs.curvature_proxy, curve_assist_.curve_level);
+    double eff_curve_lvl = std::max(obs.curvature_proxy, curve_assist_.curve_level);
+    // Inside a wide/low-confidence junction (e.g. fork merge where w=1.0), tighten obstacle
+    // steering horizon so a far red sign past the exit slows the car cleanly without shoving
+    // it sideways into the wrong Y-branch before exit alignment completes.
+    if (obs.lane_width_ratio >= 0.85 ||
+      (motion_controller_.config().low_confidence_threshold > 0.0 &&
+      obs.confidence < motion_controller_.config().low_confidence_threshold))
+    {
+      eff_curve_lvl = std::max(eff_curve_lvl, 0.85);
+    }
     const CorridorPlan plan = corridor_planner_.plan(
       y_lane_left_m,
       y_lane_right_m,

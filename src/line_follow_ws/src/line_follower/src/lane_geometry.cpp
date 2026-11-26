@@ -485,7 +485,9 @@ LaneObservation LaneGeometry::observe(
         far_obs.left_clipped && far_obs.right_clipped &&
         !(near_obs.left_clipped && near_obs.right_clipped))
     {
-      raw_heading = near_obs.center_norm;
+      // Wide junction/Y-merge where far band spans full image: hold decaying prior heading
+      // instead of setting raw_heading = near_obs.center_norm (which flips turn sign at exits!).
+      raw_heading = curve_state.filter_initialized ? (0.75 * curve_state.filtered_heading) : 0.0;
     } else {
       raw_heading = clamp_value(far_obs.center_norm - near_obs.center_norm, -1.0, 1.0);
     }

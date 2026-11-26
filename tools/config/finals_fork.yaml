@@ -125,12 +125,12 @@ line_follower_node:
     odom_max_age_sec: 0.20
     yellow_require_odom_still: true
     yellow_max_hold_sec: 3.0
-    # 反拖急停（上车前请先用 brake_probe.py 确认固件）
-    yellow_brake_speed: 0.45
+    # 反拖急停（两段预减速入线仅 0.18~0.24 m/s，轻反拖 + 有符号零速撤刹避免倒退）
+    yellow_brake_speed: 0.25
     yellow_brake_period_s: 0.0
     yellow_brake_pulse_s: 0.0
     yellow_brake_release_speed: 0.10
-    yellow_brake_max_time_s: 0.8
+    yellow_brake_max_time_s: 0.35
 
     # FinishGuard & 两段式刹车距离律
     odom_scale_factor: 1.0

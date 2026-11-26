@@ -37,6 +37,7 @@ const TrackStateConfig & TrackStateMachine::config() const
 void TrackStateMachine::reset(double now_sec)
 {
   const double prev_odom_speed = state_.odom_speed;
+  const double prev_odom_linear_x = state_.odom_linear_x;
   const bool prev_odom_still_valid = state_.odom_still_valid;
   const bool prev_odom_seen = state_.odom_seen;
   const double prev_odom_still_since = state_.odom_still_since_sec;
@@ -48,6 +49,7 @@ void TrackStateMachine::reset(double now_sec)
   state_.last_state = TrackState::LOST;
 
   state_.odom_speed = prev_odom_speed;
+  state_.odom_linear_x = prev_odom_linear_x;
   state_.odom_still_valid = prev_odom_still_valid;
   state_.odom_seen = prev_odom_seen;
   state_.odom_still_since_sec = prev_odom_still_since;
@@ -65,6 +67,7 @@ bool TrackStateMachine::on_start_command(bool old_enabled, bool new_enabled, dou
 
 void TrackStateMachine::update_odom(double linear_x, double now_sec)
 {
+  state_.odom_linear_x = linear_x;
   state_.odom_speed = std::abs(linear_x);
   state_.odom_seen = true;
   state_.last_odom_time_sec = now_sec;

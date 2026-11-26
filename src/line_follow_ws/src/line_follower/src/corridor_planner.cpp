@@ -42,6 +42,10 @@ void CorridorPlanner::reset()
   reset_fork_votes();
   clear_fork_commit();
   digit_tracks_.clear();
+  locked_digit_ = 0;
+  locked_digit_y_m_ = 0.0;
+  locked_digit_d_m_ = 1e9;
+  locked_digit_time_sec_ = -1e9;
 }
 
 void CorridorPlanner::reset_fork_votes()
@@ -669,7 +673,23 @@ CorridorPlan CorridorPlanner::plan(
           });
       }
 
+      const bool has_close_digit_lock =
+        (locked_digit_ > 0) &&
+        ((now_sec - locked_digit_time_sec_) <= 0.60) &&
+        (locked_digit_d_m_ <= 0.35);
+
       for (const auto * cand : confirmed) {
+        // Prevent last-second swerve into a smaller sibling after the committed larger digit
+        // leaves the bottom of the FOV (still allows upgrading to a strictly larger digit
+        // or engaging a fresh distant pair ahead >= 0.45m).
+        if (has_close_digit_lock &&
+          cand->d_bumper_m < 0.45 &&
+          cand->digit <= locked_digit_ &&
+          std::abs(cand->y_lat_m - locked_digit_y_m_) >= 0.08)
+        {
+          continue;
+        }
+
         // Check if any obstacle conflicts near this digit longitudinally
         bool blocked_near_digit = false;
         for (const auto * obs : active_obs) {
@@ -732,6 +752,10 @@ CorridorPlan CorridorPlanner::plan(
         out.speed_cap_mps = std::min(out.speed_cap_mps, config_.digit_approach_speed_mps);
         out.digit_target_active = true;
         out.target_digit = cand->digit;
+        locked_digit_ = cand->digit;
+        locked_digit_y_m_ = cand->y_lat_m;
+        locked_digit_d_m_ = cand->d_bumper_m;
+        locked_digit_time_sec_ = now_sec;
         if (active_obs.empty()) {
           out.active_mode_tag = "digit_bonus";
         }

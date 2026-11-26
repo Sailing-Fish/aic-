@@ -125,11 +125,11 @@ line_follower_node:
     odom_max_age_sec: 0.20
     yellow_require_odom_still: true
     yellow_max_hold_sec: 3.0
-    yellow_brake_speed: 0.40
+    yellow_brake_speed: 0.25
     yellow_brake_period_s: 0.0
     yellow_brake_pulse_s: 0.0
-    yellow_brake_release_speed: 0.08
-    yellow_brake_max_time_s: 0.8
+    yellow_brake_release_speed: 0.10
+    yellow_brake_max_time_s: 0.35
 
     odom_scale_factor: 1.0
     finish_min_dist_m: 9.0

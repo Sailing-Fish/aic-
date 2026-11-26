@@ -35,6 +35,7 @@ struct TrackRuntimeState
   double yellow_line_detection_time_sec{0.0};
 
   double odom_speed{0.0};
+  double odom_linear_x{0.0};
   bool odom_still_valid{false};
   bool odom_seen{false};
   double odom_still_since_sec{0.0};

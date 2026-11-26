@@ -49,13 +49,13 @@ struct CorridorPlannerConfig
   // Straight dual-digit Bonus targeting
   double digit_min_conf{0.55};
   int digit_min_frames{2};
-  double digit_lookahead_min_m{0.05};
+  double digit_lookahead_min_m{0.12};
   double digit_lookahead_max_m{1.15};
   double max_digit_lateral_shift_m{0.12};
   double digit_approach_speed_mps{0.30};
   bool allow_dual_digit_cover{false};
   double digit_sibling_avoid_offset_m{0.025};
-  double digit_track_ttl_sec{0.45};
+  double digit_track_ttl_sec{0.25};
   double digit_obstacle_longitudinal_buffer_m{0.35};
   bool enable_risk_aware_decision{true};
 };
@@ -158,6 +158,13 @@ private:
   double commit_start_s_m_{-1e9};
 
   std::vector<DigitTrack> digit_tracks_{};
+
+  // Short-lived commitment lock when passing a dual-digit pair so the car never swerves
+  // into the rejected smaller sibling after the larger digit leaves the bottom of the FOV.
+  int locked_digit_{0};
+  double locked_digit_y_m_{0.0};
+  double locked_digit_d_m_{1e9};
+  double locked_digit_time_sec_{-1e9};
 };
 
 }  // namespace line_follower

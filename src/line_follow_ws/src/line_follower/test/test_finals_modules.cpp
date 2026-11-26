@@ -539,6 +539,84 @@ void test_motion_controller_edge_heading_guard_and_curve_preservation()
       -0.097, 0.0, +0.05, 0.05, 0.97, 0.22, c, motion);
     CHECK(cmd.yaw_rate < -0.40);
   }
+
+  // 6. Fork Y-merge wide junction (#153: w=0.89, near=-0.26, far=0.0, decaying right hdg=+0.35, y_ref=+0.056)
+  //    MUST preserve right-turn exit continuity (yaw < 0) instead of reversing left into outer branch!
+  {
+    CurveAssistState c{};
+    c.near_valid = true;
+    c.far_valid = true;
+    c.near_error = -0.26;
+    c.far_error = 0.0;
+    c.last_lane_width_ratio = 0.89;
+    c.reverse_curve_active = false;
+    const MotionCommand cmd = ctrl.compute_corridor_command(
+      +0.056, 0.0, +0.35, 0.35, 0.66, 0.44, c, motion);
+    CHECK(cmd.yaw_rate < -0.05);
+  }
+}
+
+void test_fork_signed_odom_and_dual_digit_no_late_swerve()
+{
+  // 1. TrackStateMachine preserves signed odom_linear_x for reverse-brake zero-crossing guard
+  {
+    TrackStateConfig tcfg{};
+    tcfg.odom_still_threshold = 0.02;
+    TrackStateMachine sm(tcfg);
+    sm.update_odom(-0.15, 1.0);
+    CHECK(sm.state().odom_linear_x < -0.14);
+    CHECK(std::abs(sm.state().odom_speed - 0.15) < 1e-9);
+    CHECK(!sm.state().odom_still_valid);
+    sm.update_odom(+0.005, 1.1);
+    CHECK(std::abs(sm.state().odom_linear_x - 0.005) < 1e-9);
+    CHECK(sm.state().odom_still_valid);
+  }
+
+  // 2. Exact fork #86-#91 dual-digit wobble reproduction (5 on left, 2 on right):
+  //    Once car commits to 5 and 5 exits FOV, planner MUST NOT swerve right into smaller sibling 2 (or 3)!
+  {
+    CorridorPlannerConfig cfg{};
+    cfg.digit_min_conf = 0.55;
+    cfg.digit_min_frames = 2;
+    cfg.max_digit_lateral_shift_m = 0.12;
+    CorridorPlanner planner(cfg);
+
+    GroundDetection d5{SemanticObjectType::BONUS_DIGIT, 5, 0.75, 0.22, +0.07, 0.04, 0.04, 1, 10.0};
+    GroundDetection d2{SemanticObjectType::BONUS_DIGIT, 2, 0.79, 0.21, -0.12, 0.04, 0.04, 2, 10.0};
+    planner.plan(+0.215, -0.215, 0.0, {}, {d5, d2}, false, 1.80, 10.00);
+    const CorridorPlan p_pick5 = planner.plan(+0.215, -0.215, 0.0, {}, {d5, d2}, false, 1.86, 10.07);
+    CHECK(p_pick5.digit_target_active && p_pick5.target_digit == 5);
+    CHECK(p_pick5.target_y_m > +0.05);
+
+    // 5 leaves FOV at t=10.14 while 2 stays visible at d=0.14m:
+    //   - At t=10.14 (5 still within 0.25s TTL): keeps holding 5, never jumps to 2
+    //   - At t=10.35 (5 TTL expired, 2 still alive from t=10.14): sibling lock MUST reject 2!
+    d2.d_bumper_m = 0.14;
+    const CorridorPlan p_hold5 = planner.plan(+0.215, -0.215, 0.0, {}, {d2}, false, 1.94, 10.14);
+    CHECK(p_hold5.digit_target_active && p_hold5.target_digit == 5);
+    CHECK(p_hold5.target_y_m > +0.05);
+
+    const CorridorPlan p_after = planner.plan(+0.215, -0.215, 0.0, {}, {}, false, 2.00, 10.35);
+    CHECK(!p_after.digit_target_active);
+    CHECK(std::abs(p_after.target_y_m) < 0.01);
+
+    GroundDetection d3_close{SemanticObjectType::BONUS_DIGIT, 3, 0.81, 0.08, -0.10, 0.04, 0.04, 3, 10.36};
+    const CorridorPlan p_close = planner.plan(+0.215, -0.215, 0.0, {}, {d3_close}, false, 2.01, 10.36);
+    CHECK(!p_close.digit_target_active);
+    CHECK(std::abs(p_close.target_y_m) < 0.01);
+
+    // Anti-regression: upgrading UP to a strictly larger digit (e.g. 1 -> 7 at d=0.28m) MUST still work!
+    planner.reset();
+    GroundDetection d1{SemanticObjectType::BONUS_DIGIT, 1, 0.78, 0.32, -0.05, 0.04, 0.04, 10, 20.0};
+    GroundDetection d7{SemanticObjectType::BONUS_DIGIT, 7, 0.88, 0.28, +0.08, 0.04, 0.04, 11, 20.1};
+    planner.plan(+0.215, -0.215, 0.0, {}, {d1}, false, 2.00, 20.00);
+    const CorridorPlan p_pick1 = planner.plan(+0.215, -0.215, 0.0, {}, {d1}, false, 2.05, 20.07);
+    CHECK(p_pick1.digit_target_active && p_pick1.target_digit == 1);
+    planner.plan(+0.215, -0.215, 0.0, {}, {d1, d7}, false, 2.10, 20.14);
+    const CorridorPlan p_upgrade7 = planner.plan(+0.215, -0.215, 0.0, {}, {d1, d7}, false, 2.15, 20.21);
+    CHECK(p_upgrade7.digit_target_active && p_upgrade7.target_digit == 7);
+    CHECK(p_upgrade7.target_y_m > +0.05);
+  }
 }
 
 void test_red_obstacle_or_fusion_and_attribution()
@@ -1087,6 +1165,7 @@ int main()
   test_track_state_machine_odom_freshness_and_finals_mode();
   test_motion_controller_corridor_and_safe_lost();
   test_motion_controller_edge_heading_guard_and_curve_preservation();
+  test_fork_signed_odom_and_dual_digit_no_late_swerve();
   test_red_obstacle_or_fusion_and_attribution();
   test_corridor_two_zone_staggered_and_curve_horizon();
   test_b3_rear_axle_rotation_pivot();

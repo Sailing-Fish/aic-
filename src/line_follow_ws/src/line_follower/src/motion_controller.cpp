@@ -54,7 +54,7 @@ MotionCommand MotionController::compute_corridor_command(
   // displaced toward an edge and the corridor target is NOT pushing toward that edge
   // (e.g. recovering from obstacle dodge or hugging an inner corner), prevent heading_proxy
   // (= far - near) from overpowering lateral recovery and pushing the car off-track.
-  if (curve_state.near_valid) {
+  if (curve_state.near_valid && curve_state.last_lane_width_ratio < 0.80) {
     const double abs_near = std::abs(curve_state.near_error);
     const bool pushing_close_edge = (hdg_term * curve_state.near_error) > 0.0;
     const bool corridor_not_pushing_edge = (lat_term * curve_state.near_error) <= 0.0;
