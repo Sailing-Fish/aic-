@@ -23,10 +23,11 @@ from typing import List, Optional, Sequence
 import cv2
 import numpy as np
 
-# 硬编码安全超参数（严禁开启任何翻转增强）
+# 硬编码安全超参数（严禁开启翻转与随机擦除，避免破坏 2/5/6/8 数字语义）
 FORCED_TRAIN_AUG_KWARGS = {
     "fliplr": 0.0,
     "flipud": 0.0,
+    "erasing": 0.0,
     "degrees": 10.0,
     "close_mosaic": 15,
     "hsv_h": 0.015,

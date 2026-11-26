@@ -337,16 +337,13 @@ def _render_mnist_glyph_mask(
     else:
         crop = up
 
-    # 模拟白油漆马克笔粗细变化（膨胀/腐蚀）
-    morph_op = rng.choice(["none", "erode_thin", "dilate_med", "dilate_thick"])
+    # 模拟白油漆马克笔粗细变化（避免过粗膨胀把 5/3/6 开口闭合变成 8）
+    morph_op = rng.choice(["none", "none", "erode_thin", "dilate_light"])
     if morph_op == "erode_thin":
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         crop = cv2.erode(crop, k, iterations=1)
-    elif morph_op == "dilate_med":
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        crop = cv2.dilate(crop, k, iterations=1)
-    elif morph_op == "dilate_thick":
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (4, 4))
+    elif morph_op == "dilate_light":
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
         crop = cv2.dilate(crop, k, iterations=1)
 
     ch, cw = crop.shape[:2]
@@ -490,10 +487,17 @@ def make_official_sticker_bgra(
     bgr = np.zeros((s, s, 3), dtype=np.uint8)
     alpha = np.zeros((s, s), dtype=np.uint8)
 
-    # 官方宝蓝 BGR ≈ (165, 48, 20) ± 实拍色温抖动
-    b = rng.randint(140, 195)
-    g = rng.randint(32, 68)
-    r = rng.randint(10, 38)
+    # 同时覆盖两种实拍圆底色调：
+    #   1) 55% 官方亮宝蓝（近距/PVC 实拍）: BGR ≈ (140..195, 32..68, 10..38)
+    #   2) 45% 暗藏青/低饱和灰蓝（RDK X5 赛场镜头下实拍色）: BGR ≈ (72..145, 52..108, 42..96)
+    if rng.random() < 0.55:
+        b = rng.randint(140, 195)
+        g = rng.randint(32, 68)
+        r = rng.randint(10, 38)
+    else:
+        b = rng.randint(72, 145)
+        g = rng.randint(min(52, b - 8), min(108, b - 4))
+        r = rng.randint(min(42, g - 6), min(96, g))
     bgr[:, :] = (b, g, r)
 
     # 轻微渐变底色模拟斜照光影
@@ -611,14 +615,14 @@ def make_digit_sticker_by_mix(
     rng: random.Random,
     mnist_bank: Optional[Dict[str, np.ndarray]] = None,
 ) -> np.ndarray:
-    """按决赛真实分布混合生成数字贴纸：~40% 宝蓝干净贴纸、~30% 宝蓝 PVC 反光贴纸、~30% 干扰底纹卡片/圆片。"""
+    """按决赛真实分布混合生成数字贴纸：~45% 干净宝蓝/暗藏青圆贴纸、~35% PVC 反光圆贴纸、~20% 干扰底纹卡片。"""
     p = rng.random()
     handwritten = rng.random() < 0.55
-    if p < 0.40:
+    if p < 0.45:
         return make_official_sticker_bgra(
             digit, rng, handwritten=handwritten, glossy_pvc=False, mnist_bank=mnist_bank, size=160
         )
-    if p < 0.70:
+    if p < 0.80:
         return make_official_sticker_bgra(
             digit, rng, handwritten=handwritten, glossy_pvc=True, mnist_bank=mnist_bank, size=160
         )
@@ -1090,11 +1094,26 @@ def _generate_digits8_sample(
 ) -> Tuple[np.ndarray, List[str]]:
     """生成 8 类（1..8）真实 3D 地面单应透视样本，并将红锥/红禁行区/黄线作为无标签干扰背景绘制。"""
     max_d = resolve_max_digit_dist_m(8, max_digit_dist_m)
+    using_real_bg = False
     if bg_paths:
         raw_bg = cv2.imdecode(np.fromfile(str(rng.choice(bg_paths)), dtype=np.uint8), cv2.IMREAD_COLOR)
-        img = cv2.resize(raw_bg, (width, height)) if raw_bg is not None else make_synthetic_track_bg(rng, width, height)
+        if raw_bg is not None:
+            img = cv2.resize(raw_bg, (width, height))
+            using_real_bg = True
+        else:
+            img = make_synthetic_track_bg(rng, width, height)
     else:
         img = make_synthetic_track_bg(rng, width, height)
+
+    # 真实背景上自动提取白道区域掩码，确保贴纸落在真实白道而非蓝垫/红锥上
+    real_white_mask: Optional[np.ndarray] = None
+    if using_real_bg:
+        hsv_bg = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        real_white_mask = ((hsv_bg[:, :, 1] < 78) & (hsv_bg[:, :, 2] > 105)).astype(np.uint8)
+        real_white_mask[: int(height * 0.32), :] = 0
+        # 轻度腐蚀避免紧贴黑边/蓝区外沿
+        k_er = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 5))
+        real_white_mask = cv2.erode(real_white_mask, k_er, iterations=1)
 
     # 相机参数微扰（围绕 h=0.11m, pitch=12.5°, f=325px）
     cam_h_mm = rng.uniform(104.0, 118.0)
@@ -1114,8 +1133,8 @@ def _generate_digits8_sample(
             return make_red_no_entry_bgra(rng)
         return make_yellow_stop_line_bgra(rng)
 
-    # 1) 无标签背景干扰物（先于或伴随地面层绘制）：黄色停车线 & 空心红色禁行区（绝不写入 labels）
-    if rng.random() < 0.45:
+    # 1) 无标签背景干扰物：真实背景自带红锥/红禁行区/黄线，仅在合成背景上高频绘制
+    if not using_real_bg and rng.random() < 0.45:
         d_y = rng.uniform(0.30, 1.05)
         y_lat = rng.uniform(-0.08, 0.08)
         y_prop = get_prop("yellow_stop_line")
@@ -1125,7 +1144,7 @@ def _generate_digits8_sample(
             cam_h_mm=cam_h_mm, pitch_deg=pitch_deg, f_px=f_px, allow_flip=False, min_box_w=12, min_box_h=2,
         )
 
-    if rng.random() < 0.45:
+    if not using_real_bg and rng.random() < 0.45:
         d_n = rng.uniform(0.35, 1.15)
         y_n = rng.uniform(-0.14, 0.14)
         n_prop = get_prop("red_no_entry")
@@ -1201,9 +1220,29 @@ def _generate_digits8_sample(
                 placements.append((dg, dm, rng.uniform(-0.18, 0.18), rand_diam(dm), curl))
 
         # 按由远到近顺序绘制（正确遮挡关系），并对每张贴纸距离强制封顶 <= max_d
+        min_bw_eff = 10 if max_d <= 0.85 else 6
+        min_bh_eff = 10 if max_d <= 0.85 else 4
         placements.sort(key=lambda item: item[1], reverse=True)
         for digit, d_m, y_m, diam_m, curl_deg in placements:
             d_m = min(d_m, max_d)
+            # 若使用真实背景，校验中心投影落在真实白道上；若落在弯道蓝区则自动微调 y_m 到白道中心附近
+            if real_white_mask is not None:
+                u0, v0 = project_3d_to_uv(-y_m * 1000.0, d_m * 1000.0, 0.0, cam_h_mm, pitch_deg, f_px, width, height)
+                ui, vi = int(round(u0)), int(round(v0))
+                on_white = (0 <= ui < width and 0 <= vi < height and real_white_mask[vi, ui] > 0)
+                if not on_white:
+                    if 0 <= vi < height:
+                        xs_w = np.nonzero(real_white_mask[vi, :] > 0)[0]
+                        if len(xs_w) >= 24:
+                            # 在该行白道内随机重采样安全落点并反算对应 y_m
+                            u_new = float(xs_w[rng.randint(int(len(xs_w) * 0.15), int(len(xs_w) * 0.85))])
+                            scale_w = width / 640.0
+                            denom = max(1.0, d_m * 1000.0 + cam_h_mm * math.tan(math.radians(pitch_deg)))
+                            w_mm_new = (u_new - width * 0.5) * denom / max(1.0, f_px * scale_w)
+                            y_m = clamp(-w_mm_new / 1000.0, -0.35, 0.35)
+                            on_white = True
+                if not on_white:
+                    continue
             prop = get_prop(digit)
             ph_p, pw_p = prop.shape[:2]
             aspect = pw_p / max(1.0, float(ph_p))
@@ -1213,7 +1252,7 @@ def _generate_digits8_sample(
             box = project_ground_prop_bgra(
                 img, prop, d_m=d_m, y_m=y_m, phys_w_m=phys_w, phys_h_m=phys_h,
                 rot_deg=rot, curl_deg=curl_deg, cam_h_mm=cam_h_mm, pitch_deg=pitch_deg,
-                f_px=f_px, allow_flip=False, min_box_w=6, min_box_h=4,
+                f_px=f_px, allow_flip=False, min_box_w=min_bw_eff, min_box_h=min_bh_eff,
             )
             if box is None:
                 continue
@@ -1225,8 +1264,8 @@ def _generate_digits8_sample(
                 placed_boxes.append(box)
                 labels.append(ln)
 
-    # 3) 站立红锥作为无标签背景干扰物（约 50% 概率，尽量不遮挡已放置的数字）
-    if rng.random() < 0.50:
+    # 3) 站立红锥作为无标签背景干扰物（仅在合成背景上绘制；真实背景已自带真实红锥，避免无意义叠假锥遮挡数字）
+    if not using_real_bg and rng.random() < 0.50:
         for _ in range(rng.randint(1, 2)):
             d_c = rng.uniform(0.45, 1.45)
             y_c = rng.uniform(-0.22, 0.22)
