@@ -256,6 +256,32 @@ cv::Mat DebugRenderer::render(
         1);
       hud_y -= 18;
     }
+    if (finals_overlay.cbf_enabled) {
+      char cbf_line[128];
+      if (finals_overlay.cbf_intervened) {
+        std::snprintf(
+          cbf_line,
+          sizeof(cbf_line),
+          "CBF INTERVENE src=%s clr=%+.3fm",
+          finals_overlay.cbf_limiting_source.c_str(),
+          finals_overlay.cbf_min_clearance_m);
+      } else {
+        std::snprintf(
+          cbf_line,
+          sizeof(cbf_line),
+          "CBF OK clr=%+.3fm",
+          finals_overlay.cbf_min_clearance_m);
+      }
+      cv::putText(
+        overlay,
+        cbf_line,
+        cv::Point(10, hud_y),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.46,
+        finals_overlay.cbf_intervened ? cv::Scalar(0, 80, 255) : cv::Scalar(160, 255, 160),
+        finals_overlay.cbf_intervened ? 2 : 1);
+      hud_y -= 18;
+    }
 
     char hud_line[256];
     std::snprintf(

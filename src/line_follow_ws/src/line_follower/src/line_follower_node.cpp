@@ -136,6 +136,7 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("detection_topic", "hobot_dnn_detection");
   this->declare_parameter("detection_timeout_sec", 0.35);
   this->declare_parameter("segment_topic", "line_follower/segment");
+  this->declare_parameter("voltage_topic", "/PowerVoltage");
 
   // ============================================================
   // Finals mode switches (lane_seg_mode supports relative_border | hybrid | legacy_hsv)
@@ -147,6 +148,9 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("enable_obstacle_memory", true);
   this->declare_parameter("enable_cv_red_fallback", true);
   this->declare_parameter("allow_dual_digit_cover", false);
+  this->declare_parameter("enable_cbf_shield", false);
+  this->declare_parameter("enable_risk_aware_decision", true);
+  this->declare_parameter("enable_brake_adaptation", true);
 
   // ============================================================
   // Orthogonal motion & ROI parameters
@@ -325,6 +329,18 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("corridor_heading_gain", 0.85);
 
   // ============================================================
+  // Tier 1: Ackermann 3-disc DCBF shield & CRC bottom-edge padding
+  // ============================================================
+  this->declare_parameter("cbf_wheelbase_m", 0.142);
+  this->declare_parameter("cbf_max_steer_deg", 35.0);
+  this->declare_parameter("cbf_horizon_steps", 6);
+  this->declare_parameter("cbf_step_dt_sec", 0.06);
+  this->declare_parameter("cbf_gamma", 0.60);
+  this->declare_parameter("crc_no_entry_pad_y_px", 0.0);
+  this->declare_parameter("crc_cone_pad_y_px", 0.0);
+  this->declare_parameter("crc_yellow_pad_y_px", 0.0);
+
+  // ============================================================
   // FinishGuard & two-stage yellow stop parameters
   // ============================================================
   this->declare_parameter("odom_scale_factor", 1.0);
@@ -333,7 +349,10 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("finish_min_cum_yaw_rad", 0.0);
   this->declare_parameter("yellow_pre_brake_dist_m", 0.70);
   this->declare_parameter("yellow_creep_speed_mps", 0.24);
+  this->declare_parameter("yellow_final_ramp_dist_m", 0.35);
+  this->declare_parameter("yellow_final_creep_speed_mps", 0.18);
   this->declare_parameter("yellow_brake_decel_mps2", 1.8);
+  this->declare_parameter("voltage_decel_slope", 0.0);
   this->declare_parameter("yellow_control_latency_s", 0.10);
   this->declare_parameter("yellow_bumper_margin_m", 0.08);
   this->declare_parameter("yellow_rearm_dist_m", 0.35);
@@ -348,6 +367,7 @@ void LineFollowerNode::declare_parameters()
   ekf_odom_topic_ = this->get_parameter("ekf_odom_topic").as_string();
   detection_topic_ = this->get_parameter("detection_topic").as_string();
   segment_topic_ = this->get_parameter("segment_topic").as_string();
+  voltage_topic_ = this->get_parameter("voltage_topic").as_string();
 }
 
 void LineFollowerNode::sync_runtime_parameters()
@@ -367,6 +387,11 @@ void LineFollowerNode::sync_runtime_parameters()
   enable_obstacle_memory_ = this->get_parameter("enable_obstacle_memory").as_bool();
   enable_cv_red_fallback_ = this->get_parameter("enable_cv_red_fallback").as_bool();
   allow_dual_digit_cover_ = this->get_parameter("allow_dual_digit_cover").as_bool();
+  enable_cbf_shield_ = this->get_parameter("enable_cbf_shield").as_bool();
+  enable_risk_aware_decision_ = this->get_parameter("enable_risk_aware_decision").as_bool();
+  crc_no_entry_pad_y_px_ = std::max(0.0, this->get_parameter("crc_no_entry_pad_y_px").as_double());
+  crc_cone_pad_y_px_ = std::max(0.0, this->get_parameter("crc_cone_pad_y_px").as_double());
+  crc_yellow_pad_y_px_ = std::max(0.0, this->get_parameter("crc_yellow_pad_y_px").as_double());
   detection_timeout_sec_ = std::max(0.05, this->get_parameter("detection_timeout_sec").as_double());
 
   target_speed_ = std::max(0.0, this->get_parameter("target_speed").as_double());
@@ -674,7 +699,25 @@ void LineFollowerNode::sync_runtime_parameters()
   cor_cfg.digit_approach_speed_mps =
     this->get_parameter("digit_approach_speed_mps").as_double();
   cor_cfg.allow_dual_digit_cover = allow_dual_digit_cover_;
+  cor_cfg.enable_risk_aware_decision = enable_risk_aware_decision_;
   corridor_planner_.set_config(cor_cfg);
+
+  // Sync AckermannCbfShield (Tier 1 3-disc multi-step DCBF safety shield)
+  AckermannCbfConfig cbf_cfg{};
+  cbf_cfg.car_length_m = mem_cfg.car_length_m;
+  cbf_cfg.car_width_m = cor_cfg.car_width_m;
+  cbf_cfg.rear_axle_to_bumper_m = mem_cfg.rear_axle_to_bumper_m;
+  cbf_cfg.wheelbase_m = this->get_parameter("cbf_wheelbase_m").as_double();
+  cbf_cfg.max_steer_rad = this->get_parameter("cbf_max_steer_deg").as_double() * (kPi / 180.0);
+  cbf_cfg.max_yaw_rate = max_yaw_rate_;
+  cbf_cfg.default_lane_width_m = cor_cfg.default_lane_width_m;
+  cbf_cfg.border_margin_m = cor_cfg.border_margin_m;
+  cbf_cfg.cone_margin_m = cor_cfg.cone_margin_m;
+  cbf_cfg.no_entry_margin_m = cor_cfg.no_entry_margin_m;
+  cbf_cfg.horizon_steps = static_cast<int>(this->get_parameter("cbf_horizon_steps").as_int());
+  cbf_cfg.step_dt_sec = this->get_parameter("cbf_step_dt_sec").as_double();
+  cbf_cfg.cbf_gamma = this->get_parameter("cbf_gamma").as_double();
+  cbf_shield_.set_config(cbf_cfg);
 
   // Sync FinishGuard
   FinishGuardConfig fg_cfg{};
@@ -684,7 +727,12 @@ void LineFollowerNode::sync_runtime_parameters()
   fg_cfg.min_cumulative_abs_yaw_rad = this->get_parameter("finish_min_cum_yaw_rad").as_double();
   fg_cfg.pre_brake_dist_m = this->get_parameter("yellow_pre_brake_dist_m").as_double();
   fg_cfg.creep_speed_mps = this->get_parameter("yellow_creep_speed_mps").as_double();
+  fg_cfg.yellow_final_ramp_dist_m = this->get_parameter("yellow_final_ramp_dist_m").as_double();
+  fg_cfg.yellow_final_creep_speed_mps =
+    this->get_parameter("yellow_final_creep_speed_mps").as_double();
   fg_cfg.brake_decel_mps2 = this->get_parameter("yellow_brake_decel_mps2").as_double();
+  fg_cfg.voltage_decel_slope = this->get_parameter("voltage_decel_slope").as_double();
+  fg_cfg.enable_brake_adaptation = this->get_parameter("enable_brake_adaptation").as_bool();
   fg_cfg.control_latency_s = this->get_parameter("yellow_control_latency_s").as_double();
   fg_cfg.bumper_margin_m = this->get_parameter("yellow_bumper_margin_m").as_double();
   fg_cfg.rearm_travel_dist_m = this->get_parameter("yellow_rearm_dist_m").as_double();
@@ -697,6 +745,7 @@ void LineFollowerNode::log_effective_parameters() const
   const auto & ccfg = corridor_planner_.config();
   const auto & fcfg = finish_guard_.config();
   const auto & ocfg = obstacle_memory_.config();
+  const auto & bcfg = cbf_shield_.config();
 
   RCLCPP_INFO(
     this->get_logger(),
@@ -729,7 +778,11 @@ void LineFollowerNode::log_effective_parameters() const
     "digit_min_conf=%.3f max_digit_lateral_shift_m=%.3f "
     "finish_min_dist_m=%.3f finish_force_dist_m=%.3f odom_scale_factor=%.3f "
     "use_homography=%d yellow_require_odom_still=%d lost_line_safe_mode=%d "
-    "enable_cv_red_fallback=%d red_cone_area_ratio_threshold=%.5f red_hsv=[%d..%d,%d..%d,s>=%d,v>=%d]",
+    "enable_cv_red_fallback=%d red_cone_area_ratio_threshold=%.5f red_hsv=[%d..%d,%d..%d,s>=%d,v>=%d] "
+    "enable_cbf_shield=%d cbf_wb=%.3f cbf_h=%d cbf_dt=%.3f cbf_gamma=%.2f "
+    "yellow_final_ramp_dist_m=%.3f yellow_final_creep_speed_mps=%.3f "
+    "voltage_decel_slope=%.3f enable_brake_adaptation=%d enable_risk_aware_decision=%d "
+    "crc_pad_px=[no_entry=%.1f,cone=%.1f,yellow=%.1f]",
     mcfg.corridor_kp_y, mcfg.corridor_heading_gain,
     mcfg.speed_gain_damping, mcfg.max_yaw_rate,
     yellow_roi_bottom_ratio_, ocfg.rear_axle_to_bumper_m,
@@ -745,7 +798,14 @@ void LineFollowerNode::log_effective_parameters() const
     mcfg.lost_line_safe_mode ? 1 : 0,
     enable_cv_red_fallback_ ? 1 : 0,
     red_cone_area_ratio_threshold_,
-    red_h_low_1_, red_h_high_1_, red_h_low_2_, red_h_high_2_, red_s_min_, red_v_min_);
+    red_h_low_1_, red_h_high_1_, red_h_low_2_, red_h_high_2_, red_s_min_, red_v_min_,
+    enable_cbf_shield_ ? 1 : 0,
+    bcfg.wheelbase_m, bcfg.horizon_steps, bcfg.step_dt_sec, bcfg.cbf_gamma,
+    fcfg.yellow_final_ramp_dist_m, fcfg.yellow_final_creep_speed_mps,
+    fcfg.voltage_decel_slope,
+    fcfg.enable_brake_adaptation ? 1 : 0,
+    ccfg.enable_risk_aware_decision ? 1 : 0,
+    crc_no_entry_pad_y_px_, crc_cone_pad_y_px_, crc_yellow_pad_y_px_);
 }
 
 bool LineFollowerNode::brake_pulse_on(double elapsed_s) const
@@ -815,6 +875,12 @@ void LineFollowerNode::setup_interfaces()
     detection_sub_ = this->create_subscription<ai_msgs::msg::PerceptionTargets>(
       detection_topic_, rclcpp::QoS(10).best_effort(),
       std::bind(&LineFollowerNode::detection_callback, this, std::placeholders::_1));
+  }
+
+  if (!voltage_topic_.empty()) {
+    voltage_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+      voltage_topic_, 10,
+      std::bind(&LineFollowerNode::voltage_callback, this, std::placeholders::_1));
   }
 
   if (publish_debug_image_) {
@@ -956,6 +1022,15 @@ void LineFollowerNode::detection_callback(
   latest_det_stamp_sec_ = this->now().seconds();
 }
 
+void LineFollowerNode::voltage_callback(const std_msgs::msg::Float32::SharedPtr msg)
+{
+  if (!msg) {
+    return;
+  }
+  finish_guard_.update_battery_voltage(
+    static_cast<double>(msg->data), this->now().seconds());
+}
+
 void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
 {
   const bool new_state = msg->data;
@@ -984,6 +1059,10 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
     last_ctrl_mode_tag_.clear();
     last_ctrl_branch_ = 0;
     last_ctrl_log_sec_ = -1e9;
+    last_cbf_log_sec_ = -1e9;
+    yellow_brake_measure_pending_ = false;
+    yellow_brake_entry_speed_mps_ = 0.0;
+    yellow_brake_start_arc_m_ = 0.0;
 
     RCLCPP_INFO(
       this->get_logger(),
@@ -1050,8 +1129,19 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
       const double u_bot =
         static_cast<double>(box.bbox_img.x) + 0.5 * static_cast<double>(box.bbox_img.width);
-      const double v_bot =
-        static_cast<double>(box.bbox_img.y + box.bbox_img.height);
+      double crc_pad_y = 0.0;
+      if (box.type == SemanticObjectType::RED_NO_ENTRY) {
+        crc_pad_y = crc_no_entry_pad_y_px_;
+      } else if (box.type == SemanticObjectType::RED_CONE) {
+        crc_pad_y = crc_cone_pad_y_px_;
+      } else if (box.type == SemanticObjectType::YELLOW_STOP_LINE) {
+        crc_pad_y = crc_yellow_pad_y_px_;
+      }
+      const double max_v_px = static_cast<double>(std::max(0, frame_bgr.rows - 1));
+      const double v_bot = std::clamp(
+        static_cast<double>(box.bbox_img.y + box.bbox_img.height) + crc_pad_y,
+        0.0,
+        max_v_px);
       double d_m = 0.0;
       double y_m = 0.0;
       if (ground_projector_.pixel_to_ground(u_bot, v_bot, d_m, y_m)) {
@@ -1259,9 +1349,14 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     double yellow_y_lat_m = 0.0;
 
     if (raw_yellow_detected && result_opt && result_opt->yellow_is_geometric) {
+      const double max_v_px = static_cast<double>(std::max(0, frame_bgr.rows - 1));
+      const double v_yellow_bot = std::clamp(
+        result_opt->yellow_bottom_y_full + crc_yellow_pad_y_px_,
+        0.0,
+        max_v_px);
       has_metric_dist = ground_projector_.pixel_to_ground(
         result_opt->yellow_center_x_full,
-        result_opt->yellow_bottom_y_full,
+        v_yellow_bot,
         yellow_d_bumper_m,
         yellow_y_lat_m);
     }
@@ -1275,7 +1370,8 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       has_metric_dist,
       yellow_d_bumper_m,
       cur_v,
-      dead_end);
+      dead_end,
+      now_sec);
 
     finals_overlay.yellow_dist_valid = has_metric_dist;
     finals_overlay.yellow_d_bumper_m = yellow_d_bumper_m;
@@ -1299,6 +1395,11 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     finish_guard_.mark_yellow_stop_triggered();
     corridor_planner_.reset_fork_votes();
 
+    yellow_brake_entry_speed_mps_ = sm_state.odom_seen ?
+      sm_state.odom_speed : std::abs(motion_state_.last_linear);
+    yellow_brake_start_arc_m_ = finish_guard_.total_arc_m();
+    yellow_brake_measure_pending_ = true;
+
     yellow_brake_active_ = yellow_brake_speed_ > 0.0;
     yellow_brake_start_ = now;
     last_brake_cmd_time_ = now;
@@ -1308,6 +1409,28 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         "[DEC] yellow brake_begin v=%.2f period=%.2f pulse=%.2f rel=%.2f max=%.2f",
         yellow_brake_speed_, yellow_brake_period_s_, yellow_brake_pulse_s_,
         yellow_brake_release_speed_, yellow_brake_max_time_s_);
+    }
+  } else if (yellow_brake_measure_pending_) {
+    if (step_events.odom_still_ok) {
+      yellow_brake_measure_pending_ = false;
+      const double stop_travel_m =
+        finish_guard_.total_arc_m() - yellow_brake_start_arc_m_;
+      const double prev_scale = finish_guard_.friction_scale();
+      if (finish_guard_.update_measured_yellow_stop(
+          yellow_brake_entry_speed_mps_, stop_travel_m, now_sec))
+      {
+        RCLCPP_INFO(
+          this->get_logger(),
+          "[DEC] brake_adapt v_in=%.3f travel=%.4f scale=%.3f->%.3f a_eff=%.3f vbat=%.2f",
+          yellow_brake_entry_speed_mps_,
+          stop_travel_m,
+          prev_scale,
+          finish_guard_.friction_scale(),
+          finish_guard_.effective_brake_decel_mps2(now_sec),
+          finish_guard_.active_battery_voltage(now_sec));
+      }
+    } else if (!step_events.yellow_hold_stop) {
+      yellow_brake_measure_pending_ = false;
     }
   }
 
@@ -1480,6 +1603,36 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     linear_speed = cmd.linear_speed;
     yaw_rate = cmd.yaw_rate;
     publish_stop_cmd = cmd.publish_stop;
+
+    if (enable_cbf_shield_) {
+      const CbfShieldResult cbf = cbf_shield_.filter(
+        linear_speed,
+        yaw_rate,
+        y_lane_left_m,
+        y_lane_right_m,
+        local_obstacles);
+      finals_overlay.cbf_enabled = true;
+      finals_overlay.cbf_intervened = cbf.intervened;
+      finals_overlay.cbf_min_clearance_m = cbf.min_clearance_m;
+      finals_overlay.cbf_limiting_source = cbf.limiting_source;
+      if (cbf.intervened) {
+        if ((now_sec - last_cbf_log_sec_) >= 0.25) {
+          RCLCPP_INFO(
+            this->get_logger(),
+            "[DEC] cbf intervene src=%s v=%.2f->%.2f yaw=%+.2f->%+.2f clr=%.3f",
+            cbf.limiting_source.c_str(),
+            linear_speed, cbf.linear_speed,
+            yaw_rate, cbf.yaw_rate,
+            cbf.min_clearance_m);
+          last_cbf_log_sec_ = now_sec;
+        }
+        linear_speed = cbf.linear_speed;
+        yaw_rate = cbf.yaw_rate;
+        if (linear_speed <= 1e-6 && std::abs(yaw_rate) <= 1e-6) {
+          publish_stop_cmd = true;
+        }
+      }
+    }
 
     const bool ctrl_changed =
       (plan.active_mode_tag != last_ctrl_mode_tag_) ||
@@ -1713,21 +1866,20 @@ void LineFollowerNode::detect_cv_red_in_lane(
 
     const cv::Rect r_img(r_roi.x, r_roi.y + roi_top, r_roi.width, r_roi.height);
     const double u_bot = static_cast<double>(r_img.x) + 0.5 * static_cast<double>(r_img.width);
-    const double v_bot = static_cast<double>(r_img.y + r_img.height);
+    const double max_v_px = static_cast<double>(std::max(0, frame_bgr.rows - 1));
+    const double v_raw = std::clamp(
+      static_cast<double>(r_img.y + r_img.height), 0.0, max_v_px);
     double d_m = 0.0;
     double y_m = 0.0;
-    if (!ground_projector_.pixel_to_ground(u_bot, v_bot, d_m, y_m)) {
-      continue;
-    }
-    if (d_m < 0.02 || d_m > 1.45 || std::abs(y_m) > 0.35) {
+    if (!ground_projector_.pixel_to_ground(u_bot, v_raw, d_m, y_m)) {
       continue;
     }
 
     double dl = 0.0, yl = 0.0, dr = 0.0, yr = 0.0;
     double est_width_m = 0.135;
-    if (ground_projector_.pixel_to_ground(static_cast<double>(r_img.x), v_bot, dl, yl) &&
+    if (ground_projector_.pixel_to_ground(static_cast<double>(r_img.x), v_raw, dl, yl) &&
       ground_projector_.pixel_to_ground(
-        static_cast<double>(r_img.x + r_img.width), v_bot, dr, yr))
+        static_cast<double>(r_img.x + r_img.width), v_raw, dr, yr))
     {
       est_width_m = std::clamp(std::abs(yl - yr), 0.10, 0.26);
     }
@@ -1736,6 +1888,24 @@ void LineFollowerNode::detect_cv_red_in_lane(
     const double fill_ratio =
       static_cast<double>(raw_red_px) / std::max(1.0, static_cast<double>(r_roi.area()));
     const bool looks_no_entry = (fill_ratio < 0.42 && r_roi.width >= 18) || (est_width_m > 0.155);
+
+    const double crc_pad_y = looks_no_entry ? crc_no_entry_pad_y_px_ : crc_cone_pad_y_px_;
+    const double v_bot = std::clamp(
+      static_cast<double>(r_img.y + r_img.height) + crc_pad_y, 0.0, max_v_px);
+    if (std::abs(v_bot - v_raw) > 1e-6) {
+      if (!ground_projector_.pixel_to_ground(u_bot, v_bot, d_m, y_m)) {
+        continue;
+      }
+      if (ground_projector_.pixel_to_ground(static_cast<double>(r_img.x), v_bot, dl, yl) &&
+        ground_projector_.pixel_to_ground(
+          static_cast<double>(r_img.x + r_img.width), v_bot, dr, yr))
+      {
+        est_width_m = std::clamp(std::abs(yl - yr), 0.10, 0.26);
+      }
+    }
+    if (d_m < 0.02 || d_m > 1.45 || std::abs(y_m) > 0.35) {
+      continue;
+    }
 
     GroundDetection gd{};
     gd.type = looks_no_entry ? SemanticObjectType::RED_NO_ENTRY : SemanticObjectType::RED_CONE;

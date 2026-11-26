@@ -1,3 +1,4 @@
+#include "line_follower/ackermann_cbf_shield.hpp"
 #include "line_follower/corridor_planner.hpp"
 #include "line_follower/finals_types.hpp"
 #include "line_follower/finish_guard.hpp"
@@ -8,6 +9,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,6 +25,9 @@
 namespace
 {
 
+using line_follower::AckermannCbfConfig;
+using line_follower::AckermannCbfShield;
+using line_follower::CbfShieldResult;
 using line_follower::CorridorPlan;
 using line_follower::CorridorPlanner;
 using line_follower::CorridorPlannerConfig;
@@ -687,6 +692,306 @@ void test_b9_same_digit_vector_tracks_and_horizon_clamping()
   CHECK(std::abs(spatial_plan.target_y_m) < 0.015);
 }
 
+void test_tier1_obb_yaw_and_ackermann_cbf_shield()
+{
+  constexpr double kHalfPi = 1.5707963267948966;
+
+  // 1. ObstacleMemory OBB yaw recording & relative rotation
+  {
+    ObstacleMemoryConfig mcfg{};
+    mcfg.rear_axle_to_bumper_m = 0.18;
+    mcfg.car_length_m = 0.28;
+    mcfg.rear_keep_margin_m = 0.15;
+    ObstacleMemory mem(mcfg);
+
+    const VehiclePose2D pose0{true, 0.0, 0.0, 0.25, 0.3, 0.0, 1.0};
+    GroundDetection det{};
+    det.type = SemanticObjectType::RED_NO_ENTRY;
+    det.confidence = 0.92;
+    det.d_bumper_m = 0.40;
+    det.y_lat_m = 0.10;
+    det.half_len_m = 0.12;
+    det.half_wid_m = 0.065;
+    mem.update({det}, pose0, 1.0);
+    CHECK(mem.size() == 1);
+    CHECK(std::abs(mem.entries()[0].obs_yaw_rad - 0.25) < 1e-6);
+
+    // Car turns +90 deg CCW -> relative OBB yaw must be -pi/2
+    const VehiclePose2D pose1{true, 0.0, 0.0, 0.25 + kHalfPi, 0.3, 0.5, 1.2};
+    const auto locs = mem.get_local_obstacles(pose1, 1.2);
+    CHECK(locs.size() == 1);
+    CHECK(std::abs(locs[0].rel_yaw_rad - (-kHalfPi)) < 1e-6);
+
+    // Re-observing the same obstacle at rotated pose preserves original obs_yaw_rad
+    GroundDetection det_rot = det;
+    det_rot.d_bumper_m = locs[0].d_bumper_m;
+    det_rot.y_lat_m = locs[0].y_lat_m;
+    mem.update({det_rot}, pose1, 1.25);
+    CHECK(mem.size() == 1);
+    CHECK(std::abs(mem.entries()[0].obs_yaw_rad - 0.25) < 1e-6);
+  }
+
+  // 2. Analytical OBB SDF & 3-disc geometry check
+  {
+    // Unrotated 24x13cm box: hl=0.12, hw=0.065
+    CHECK(std::abs(AckermannCbfShield::point_to_obb_sdf(0.22, 0.0, 0.0, 0.0, 0.12, 0.065, 0.0) - 0.10) < 1e-6);
+    CHECK(std::abs(AckermannCbfShield::point_to_obb_sdf(0.0, 0.165, 0.0, 0.0, 0.12, 0.065, 0.0) - 0.10) < 1e-6);
+    // Rotated 90 deg: hl=0.12 now aligns with Y, hw=0.065 aligns with X
+    CHECK(std::abs(AckermannCbfShield::point_to_obb_sdf(0.165, 0.0, 0.0, 0.0, 0.12, 0.065, kHalfPi) - 0.10) < 1e-6);
+    CHECK(std::abs(AckermannCbfShield::point_to_obb_sdf(0.0, 0.22, 0.0, 0.0, 0.12, 0.065, kHalfPi) - 0.10) < 1e-6);
+    // Inside center
+    CHECK(std::abs(AckermannCbfShield::point_to_obb_sdf(0.0, 0.0, 0.0, 0.0, 0.12, 0.065, kHalfPi) - (-0.065)) < 1e-6);
+
+    AckermannCbfConfig cfg{};
+    const auto offsets = AckermannCbfShield::compute_disc_offsets(cfg);
+    const double r = 0.5 * cfg.car_width_m;
+    // Rear disc rear edge = rear_axle_to_bumper - car_length = -0.10; front disc front edge = +0.18
+    CHECK(std::abs((offsets[0] - r) - (cfg.rear_axle_to_bumper_m - cfg.car_length_m)) < 1e-6);
+    CHECK(std::abs((offsets[2] + r) - cfg.rear_axle_to_bumper_m) < 1e-6);
+  }
+
+  // 3. 3-disc DCBF: clean cruise, rear-wheel cut-in protection, lane border hard limit, speed ladder
+  {
+    AckermannCbfConfig cfg{};
+    cfg.car_length_m = 0.280;
+    cfg.car_width_m = 0.191;
+    cfg.rear_axle_to_bumper_m = 0.180;
+    cfg.wheelbase_m = 0.142;
+    cfg.max_steer_rad = 35.0 * (3.14159265358979323846 / 180.0);
+    cfg.max_yaw_rate = 1.6;
+    cfg.border_margin_m = 0.025;
+    cfg.cone_margin_m = 0.025;
+    cfg.no_entry_margin_m = 0.030;
+    cfg.horizon_steps = 6;
+    cfg.step_dt_sec = 0.06;
+    cfg.cbf_gamma = 0.60;
+    AckermannCbfShield shield(cfg);
+
+    // 3a) Clean lane, straight nominal -> no intervention
+    const CbfShieldResult clean = shield.filter(0.44, 0.0, +0.215, -0.215, {});
+    CHECK(!clean.intervened);
+    CHECK(std::abs(clean.linear_speed - 0.44) < 1e-6);
+    CHECK(std::abs(clean.yaw_rate) < 1e-6);
+    CHECK(clean.min_clearance_m > 0.08);
+
+    // 3b) Red no-entry (24x13cm) beside LEFT rear/mid chassis; nominal turns LEFT (+1.0) into it!
+    LocalObstacle rear_left_ne{};
+    rear_left_ne.type = SemanticObjectType::RED_NO_ENTRY;
+    rear_left_ne.d_bumper_m = -0.05;
+    rear_left_ne.d_min_m = -0.17;
+    rear_left_ne.d_max_m = +0.07;
+    rear_left_ne.y_lat_m = +0.205;
+    rear_left_ne.y_min_m = +0.140;
+    rear_left_ne.y_max_m = +0.270;
+    rear_left_ne.rel_yaw_rad = 0.0;
+
+    const CbfShieldResult guard_rear =
+      shield.filter(0.24, +1.0, +0.215, -0.215, {rear_left_ne});
+    CHECK(guard_rear.intervened);
+    CHECK(guard_rear.yaw_rate < +0.6);  // stops cutting left into rear-side no-entry
+    CHECK(guard_rear.min_clearance_m >= -1e-6);
+
+    // 3c) Lane boundary hard constraint: aggressive left turn near left white border must NOT push car out
+    const CbfShieldResult guard_lane =
+      shield.filter(0.30, +1.4, +0.150, -0.280, {});
+    CHECK(guard_lane.intervened);
+    CHECK(guard_lane.limiting_source == "lane_left");
+    CHECK(guard_lane.yaw_rate < 1.0);
+    CHECK(guard_lane.min_clearance_m >= -1e-6);
+
+    // 3d) Rotated OBB (90 deg): 24cm long axis protrudes laterally into path ahead-left
+    LocalObstacle rot_ne{};
+    rot_ne.type = SemanticObjectType::RED_NO_ENTRY;
+    rot_ne.d_bumper_m = 0.14;
+    rot_ne.d_min_m = 0.02;   // half_len = 0.12
+    rot_ne.d_max_m = 0.26;
+    rot_ne.y_lat_m = +0.19;
+    rot_ne.y_min_m = +0.125; // half_wid = 0.065
+    rot_ne.y_max_m = +0.255;
+    rot_ne.rel_yaw_rad = 0.0;
+    const CbfShieldResult unrot_res = shield.filter(0.26, 0.0, +0.215, -0.215, {rot_ne});
+    rot_ne.rel_yaw_rad = kHalfPi;  // now extends laterally down to y = +0.19 - 0.12 = +0.07!
+    const CbfShieldResult rot_res = shield.filter(0.26, 0.0, +0.215, -0.215, {rot_ne});
+    // Unrotated is clear at y=0 (gap = 0.125 - 0.0955 - 0.030 ~ 0); rotated protrudes 5.5cm deeper into lane!
+    CHECK(rot_res.intervened);
+    CHECK(rot_res.limiting_source == "red_no_entry");
+    CHECK(rot_res.yaw_rate < unrot_res.yaw_rate - 0.05 || rot_res.linear_speed < unrot_res.linear_speed);
+
+    // 3e) Completely blocked corridor dead ahead -> speed ladder drops safely to 0.0
+    LocalObstacle wall_ne{};
+    wall_ne.type = SemanticObjectType::RED_NO_ENTRY;
+    wall_ne.d_bumper_m = 0.07;
+    wall_ne.d_min_m = 0.01;
+    wall_ne.d_max_m = 0.13;
+    wall_ne.y_lat_m = 0.0;
+    wall_ne.y_min_m = -0.22;
+    wall_ne.y_max_m = +0.22;
+    wall_ne.rel_yaw_rad = 0.0;
+
+    const CbfShieldResult blocked = shield.filter(0.30, 0.0, +0.215, -0.215, {wall_ne});
+    CHECK(blocked.intervened);
+    CHECK(std::abs(blocked.linear_speed) < 1e-6);
+    CHECK(std::abs(blocked.yaw_rate) < 1e-6);
+    CHECK(blocked.limiting_source == "red_no_entry");
+
+    // 3f) Non-finite (NaN) command and lane bounds fail-safe check
+    const double qnan = std::numeric_limits<double>::quiet_NaN();
+    const CbfShieldResult nan_cmd = shield.filter(qnan, 0.2, qnan, qnan, {});
+    CHECK(nan_cmd.intervened);
+    CHECK(std::abs(nan_cmd.linear_speed) < 1e-9 && std::abs(nan_cmd.yaw_rate) < 1e-9);
+    CHECK(nan_cmd.limiting_source == "invalid_cmd");
+    const CbfShieldResult nan_lane = shield.filter(0.30, 0.0, qnan, qnan, {});
+    CHECK(!nan_lane.intervened && nan_lane.min_clearance_m > 0.08);
+  }
+}
+
+void test_tier1_finish_guard_ramp_voltage_and_adaptation()
+{
+  FinishGuardConfig cfg{};
+  cfg.pre_brake_dist_m = 0.70;
+  cfg.creep_speed_mps = 0.24;
+  cfg.yellow_final_ramp_dist_m = 0.35;
+  cfg.yellow_final_creep_speed_mps = 0.18;
+  cfg.brake_decel_mps2 = 1.8;
+  cfg.control_latency_s = 0.10;
+  cfg.bumper_margin_m = 0.08;
+  cfg.voltage_decel_slope = 0.25;
+  cfg.voltage_timeout_sec = 3.0;
+  cfg.enable_brake_adaptation = true;
+  cfg.brake_adapt_ema_alpha = 0.35;
+  cfg.friction_scale_min = 0.65;
+  cfg.friction_scale_max = 1.25;
+  FinishGuard guard(cfg);
+
+  // 1. Near-line ramp pre-deceleration: 0.24 down to 0.18 inside 0.35m
+  const YellowStopAdvice adv_outer = guard.evaluate_yellow_stop(true, true, 0.50, 0.24, false, 1.0);
+  const YellowStopAdvice adv_ramp1 = guard.evaluate_yellow_stop(true, true, 0.28, 0.24, false, 1.0);
+  const YellowStopAdvice adv_ramp2 = guard.evaluate_yellow_stop(true, true, 0.18, 0.20, false, 1.0);
+  CHECK(adv_outer.pre_brake && !adv_outer.trigger_stop);
+  CHECK(std::abs(adv_outer.speed_cap_mps - 0.24) < 1e-6);
+  CHECK(adv_ramp1.pre_brake && !adv_ramp1.trigger_stop);
+  CHECK(adv_ramp1.speed_cap_mps < 0.24 && adv_ramp1.speed_cap_mps > 0.18);
+  CHECK(adv_ramp2.pre_brake && !adv_ramp2.trigger_stop);
+  CHECK(adv_ramp2.speed_cap_mps < adv_ramp1.speed_cap_mps && adv_ramp2.speed_cap_mps >= 0.18);
+
+  // 2. Battery voltage feedforward + [9.0, 15.0]V rejection + 3.0s timeout fallback to 12.0V
+  guard.update_battery_voltage(5.0, 2.0);   // invalid low -> ignored
+  guard.update_battery_voltage(18.5, 2.1);  // invalid high -> ignored
+  CHECK(!guard.battery_voltage_valid());
+  CHECK(std::abs(guard.effective_brake_decel_mps2(2.2) - 1.8) < 1e-6);
+
+  guard.update_battery_voltage(10.8, 10.0);  // -1.2V -> 1.8 - 0.3 = 1.5 m/s^2
+  CHECK(guard.battery_voltage_valid());
+  CHECK(std::abs(guard.effective_brake_decel_mps2(10.5) - 1.5) < 1e-6);
+  const double d_low_v = guard.compute_stop_trigger_dist(0.30, 10.5);
+
+  guard.update_battery_voltage(12.8, 11.0);  // +0.8V -> 1.8 + 0.2 = 2.0 m/s^2
+  CHECK(std::abs(guard.effective_brake_decel_mps2(11.5) - 2.0) < 1e-6);
+  const double d_high_v = guard.compute_stop_trigger_dist(0.30, 11.5);
+  CHECK(d_low_v > d_high_v + 0.005);  // lower battery -> earlier stop trigger!
+
+  // Timeout (> 3.0s since t=11.0 -> at t=14.5 falls back to 12.0V -> 1.8 m/s^2)
+  CHECK(std::abs(guard.active_battery_voltage(14.5) - 12.0) < 1e-6);
+  CHECK(std::abs(guard.effective_brake_decel_mps2(14.5) - 1.8) < 1e-6);
+
+  // 3. 1-param clamped friction EMA adaptation (never diverges)
+  CHECK(!guard.update_measured_yellow_stop(0.08, 0.02, 15.0));   // v_entry < 0.12 rejected
+  CHECK(!guard.update_measured_yellow_stop(0.24, 0.002, 15.0));  // stop_travel <= 0.005 rejected
+  CHECK(std::abs(guard.friction_scale() - 1.0) < 1e-9);
+
+  // Slippery floor (measured decel ~ 0.45 m/s^2) -> converges smoothly & clamps at 0.65
+  for (int i = 0; i < 40; ++i) {
+    CHECK(guard.update_measured_yellow_stop(0.24, 0.064, 15.0 + i));
+    CHECK(guard.friction_scale() >= 0.65 - 1e-9 && guard.friction_scale() <= 1.25 + 1e-9);
+  }
+  CHECK(std::abs(guard.friction_scale() - 0.65) < 1e-4);
+  CHECK(guard.effective_brake_decel_mps2(60.0) < 1.20);
+
+  // Ultra-grippy floor (measured decel ~ 5.0 m/s^2) -> converges smoothly & clamps at 1.25
+  for (int i = 0; i < 40; ++i) {
+    CHECK(guard.update_measured_yellow_stop(0.30, 0.009, 65.0 + i));
+    CHECK(guard.friction_scale() >= 0.65 - 1e-9 && guard.friction_scale() <= 1.25 + 1e-9);
+  }
+  CHECK(std::abs(guard.friction_scale() - 1.25) < 1e-4);
+  CHECK(std::abs(guard.effective_brake_decel_mps2(120.0) - 2.25) < 1e-3);
+
+  // Disabling adaptation locks effective decel back to nominal
+  cfg.enable_brake_adaptation = false;
+  guard.set_config(cfg);
+  CHECK(!guard.update_measured_yellow_stop(0.24, 0.05, 130.0));
+  CHECK(std::abs(guard.effective_brake_decel_mps2(130.0) - 1.8) < 1e-6);
+}
+
+void test_tier1_corridor_risk_aware_fork_and_straight_digits()
+{
+  // 1. Fork voting: noisy flickering high digit discounted by confidence & consistency
+  CorridorPlannerConfig cfg{};
+  cfg.track_mode = "fork";
+  cfg.fork_outer_branch = -1;
+  cfg.fork_outer_time_penalty_s = 3.0;
+  cfg.bonus_score_weight_s = 5.0;
+  cfg.fork_min_votes = 3;
+  cfg.digit_min_conf = 0.55;
+  cfg.digit_min_frames = 2;
+  cfg.max_digit_lateral_shift_m = 0.12;
+  cfg.enable_risk_aware_decision = true;
+
+  CorridorPlanner risk_planner(cfg);
+
+  // Left outer flickers between 6 (3 votes @ 0.60) and 3 (3 votes @ 0.57) -> p_conf_eff = 0.30
+  // Right inner is rock-solid 5 (6 votes @ 0.92) -> p_conf_eff = 0.92
+  GroundDetection l6{SemanticObjectType::BONUS_DIGIT, 6, 0.60, 0.80, +0.10, 0.05, 0.05, 1, 1.0};
+  GroundDetection l3{SemanticObjectType::BONUS_DIGIT, 3, 0.57, 0.80, +0.10, 0.05, 0.05, 1, 1.0};
+  GroundDetection r5{SemanticObjectType::BONUS_DIGIT, 5, 0.92, 0.80, -0.10, 0.05, 0.05, 2, 1.0};
+  for (int i = 0; i < 3; ++i) {
+    risk_planner.update_fork_static_votes({l6, r5}, 1.0 + i * 0.05);
+    risk_planner.update_fork_static_votes({l3, r5}, 1.2 + i * 0.05);
+  }
+  const auto fsum = risk_planner.fork_summary();
+  CHECK(fsum.left_digit == 6 && fsum.right_digit == 5);
+  CHECK(fsum.left_conf_eff < 0.35 && fsum.right_conf_eff > 0.85);
+  CHECK(risk_planner.finalize_fork_decision(2.0) == +1);  // Picks confident inner right (+1)
+
+  // With legacy switch disabled, mechanical -5*d picks noisy outer left (-1)
+  cfg.enable_risk_aware_decision = false;
+  CorridorPlanner legacy_planner(cfg);
+  for (int i = 0; i < 3; ++i) {
+    legacy_planner.update_fork_static_votes({l6, r5}, 1.0 + i * 0.05);
+    legacy_planner.update_fork_static_votes({l3, r5}, 1.2 + i * 0.05);
+  }
+  CHECK(legacy_planner.finalize_fork_decision(2.0) == -1);
+
+  // 2. Straight multi-digit scoring: safe centered 5 beats edge-hugging low-conf 7
+  cfg.enable_risk_aware_decision = true;
+  CorridorPlanner straight_risk(cfg);
+  // Safe corridor for lane [-0.215, +0.215] is [-0.0945, +0.0945].
+  // Digit 7 sits at +0.090 (edge_clear = 0.0045m < 0.04m, large shift, conf=0.58)
+  // Digit 5 sits at -0.010 (edge_clear = 0.0845m >= 0.04m, centered, conf=0.94)
+  GroundDetection edge7{SemanticObjectType::BONUS_DIGIT, 7, 0.58, 0.65, +0.090, 0.04, 0.04, 31, 5.0};
+  GroundDetection safe5{SemanticObjectType::BONUS_DIGIT, 5, 0.94, 0.65, -0.010, 0.04, 0.04, 32, 5.0};
+  straight_risk.plan(+0.215, -0.215, 0.0, {}, {edge7, safe5}, false, 1.0, 5.0);
+  const CorridorPlan rplan =
+    straight_risk.plan(+0.215, -0.215, 0.0, {}, {edge7, safe5}, false, 1.0, 5.05);
+  CHECK(rplan.digit_target_active && rplan.target_digit == 5);
+  CHECK(rplan.target_y_m >= rplan.safe_y_min_m && rplan.target_y_m <= rplan.safe_y_max_m);
+
+  // Legacy planner mechanically chases digit 7
+  cfg.enable_risk_aware_decision = false;
+  CorridorPlanner straight_legacy(cfg);
+  straight_legacy.plan(+0.215, -0.215, 0.0, {}, {edge7, safe5}, false, 1.0, 5.0);
+  const CorridorPlan lplan =
+    straight_legacy.plan(+0.215, -0.215, 0.0, {}, {edge7, safe5}, false, 1.0, 5.05);
+  CHECK(lplan.digit_target_active && lplan.target_digit == 7);
+
+  // Hard corridor rule still rejects any digit outside safe corridor
+  GroundDetection out8{SemanticObjectType::BONUS_DIGIT, 8, 0.99, 0.65, +0.160, 0.04, 0.04, 33, 6.0};
+  straight_risk.reset();
+  straight_risk.plan(+0.215, -0.215, 0.0, {}, {out8}, false, 1.5, 6.0);
+  const CorridorPlan oplan =
+    straight_risk.plan(+0.215, -0.215, 0.0, {}, {out8}, false, 1.5, 6.05);
+  CHECK(!oplan.digit_target_active);
+}
+
 }  // namespace
 
 int main()
@@ -703,6 +1008,9 @@ int main()
   test_b3_rear_axle_rotation_pivot();
   test_b7_reverse_motion_never_adds_arc_length();
   test_b9_same_digit_vector_tracks_and_horizon_clamping();
+  test_tier1_obb_yaw_and_ackermann_cbf_shield();
+  test_tier1_finish_guard_ramp_voltage_and_adaptation();
+  test_tier1_corridor_risk_aware_fork_and_straight_digits();
   std::cout << "ALL_FINALS_CPP_TESTS_PASSED" << std::endl;
   return 0;
 }

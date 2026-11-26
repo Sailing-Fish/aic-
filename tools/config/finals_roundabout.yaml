@@ -13,6 +13,7 @@ line_follower_node:
     detection_topic: hobot_dnn_detection
     detection_timeout_sec: 0.35
     segment_topic: line_follower/segment
+    voltage_topic: /PowerVoltage
 
     # ================================
     # 决赛核心解耦开关
@@ -24,6 +25,10 @@ line_follower_node:
     enable_semantic_hole_fill: true
     enable_obstacle_memory: true
     allow_dual_digit_cover: false
+    # Tier 1 开关（DCBF 安全盾默认 false 供实车 A/B 对比测试）
+    enable_cbf_shield: false
+    enable_brake_adaptation: true
+    enable_risk_aware_decision: true
 
     # B10：白道 CV 红障兜底（YOLO || CV，8类直替阶段主要靠它实时检测红锥与红禁行区）
     enable_cv_red_fallback: true
@@ -132,7 +137,10 @@ line_follower_node:
     finish_min_cum_yaw_rad: 0.0
     yellow_pre_brake_dist_m: 0.70
     yellow_creep_speed_mps: 0.24
+    yellow_final_ramp_dist_m: 0.35
+    yellow_final_creep_speed_mps: 0.18
     yellow_brake_decel_mps2: 1.8
+    voltage_decel_slope: 0.0
     yellow_control_latency_s: 0.10
     yellow_bumper_margin_m: 0.08
     yellow_rearm_dist_m: 0.35
@@ -181,6 +189,18 @@ line_follower_node:
     digit_approach_speed_mps: 0.30
     corridor_kp_y: 3.8
     corridor_heading_gain: 0.85
+
+    # ================================
+    # Tier 1: Ackermann 3-圆盘 DCBF 安全盾 & CRC 框底像素外扩（默认安全中性值）
+    # ================================
+    cbf_wheelbase_m: 0.142
+    cbf_max_steer_deg: 35.0
+    cbf_horizon_steps: 6
+    cbf_step_dt_sec: 0.06
+    cbf_gamma: 0.60
+    crc_no_entry_pad_y_px: 0.0
+    crc_cone_pad_y_px: 0.0
+    crc_yellow_pad_y_px: 0.0
 
     # 丢线安全减速
     lost_line_safe_mode: true

@@ -139,11 +139,13 @@ ForkVoteSummary CorridorPlanner::fork_summary() const
 {
   ForkVoteSummary s{};
 
+  int total_l_votes = 0;
   int best_l_votes = 0;
   double best_l_conf = -1.0;
   for (int d = 1; d <= 8; ++d) {
     const int v = left_digit_votes_[static_cast<std::size_t>(d)];
     const double c = left_digit_conf_sum_[static_cast<std::size_t>(d)];
+    total_l_votes += v;
     if (v > best_l_votes || (v == best_l_votes && v > 0 && c > best_l_conf)) {
       best_l_votes = v;
       best_l_conf = c;
@@ -151,12 +153,20 @@ ForkVoteSummary CorridorPlanner::fork_summary() const
     }
   }
   s.left_votes = best_l_votes;
+  if (best_l_votes > 0 && total_l_votes > 0) {
+    const double mean_c = best_l_conf / static_cast<double>(best_l_votes);
+    const double consistency =
+      static_cast<double>(best_l_votes) / static_cast<double>(total_l_votes);
+    s.left_conf_eff = std::clamp(mean_c, 0.2, 1.0) * consistency;
+  }
 
+  int total_r_votes = 0;
   int best_r_votes = 0;
   double best_r_conf = -1.0;
   for (int d = 1; d <= 8; ++d) {
     const int v = right_digit_votes_[static_cast<std::size_t>(d)];
     const double c = right_digit_conf_sum_[static_cast<std::size_t>(d)];
+    total_r_votes += v;
     if (v > best_r_votes || (v == best_r_votes && v > 0 && c > best_r_conf)) {
       best_r_votes = v;
       best_r_conf = c;
@@ -164,6 +174,12 @@ ForkVoteSummary CorridorPlanner::fork_summary() const
     }
   }
   s.right_votes = best_r_votes;
+  if (best_r_votes > 0 && total_r_votes > 0) {
+    const double mean_c = best_r_conf / static_cast<double>(best_r_votes);
+    const double consistency =
+      static_cast<double>(best_r_votes) / static_cast<double>(total_r_votes);
+    s.right_conf_eff = std::clamp(mean_c, 0.2, 1.0) * consistency;
+  }
 
   s.left_has_no_entry = (left_no_entry_votes_ >= config_.fork_min_votes);
   s.right_has_no_entry = (right_no_entry_votes_ >= config_.fork_min_votes);
@@ -217,9 +233,13 @@ int CorridorPlanner::finalize_fork_decision(double current_arc_s_m)
     (s.right_has_no_entry ? config_.fork_no_entry_penalty_s : 0.0) +
     (s.right_has_cone ? config_.fork_cone_penalty_s : 0.0);
 
-  // J = T_branch + P_obs - 5 * digit (lower score is better!)
-  const double j_left = t_left + p_left - config_.bonus_score_weight_s * static_cast<double>(d_left);
-  const double j_right = t_right + p_right - config_.bonus_score_weight_s * static_cast<double>(d_right);
+  // J = T_branch + P_obs - 5 * digit * p_conf_eff (lower score is better!)
+  const double eff_left = config_.enable_risk_aware_decision ? s.left_conf_eff : 1.0;
+  const double eff_right = config_.enable_risk_aware_decision ? s.right_conf_eff : 1.0;
+  const double j_left =
+    t_left + p_left - config_.bonus_score_weight_s * static_cast<double>(d_left) * eff_left;
+  const double j_right =
+    t_right + p_right - config_.bonus_score_weight_s * static_cast<double>(d_right) * eff_right;
 
   if (j_left < j_right - 1e-6) {
     committed_branch_ = -1;
@@ -602,16 +622,52 @@ CorridorPlan CorridorPlanner::plan(
     }
 
     if (!confirmed.empty()) {
-      // Sort descending by digit value (-5 * digit -> target the LARGER digit!)
-      std::sort(
-        confirmed.begin(),
-        confirmed.end(),
-        [](const DigitTrack * a, const DigitTrack * b) {
-          if (a->digit != b->digit) {
-            return a->digit > b->digit;
+      auto risk_aware_score = [&](const DigitTrack * t) {
+          const double shift = std::abs(t->y_lat_m - current_y_m);
+          const double r_shift = (config_.max_digit_lateral_shift_m > 1e-6) ?
+            std::clamp(shift / config_.max_digit_lateral_shift_m, 0.0, 1.0) : 0.0;
+          const double p_shift = 1.0 - 0.35 * r_shift * r_shift;
+          const double edge_clear = std::min(
+            t->y_lat_m - chosen_gap.y_min,
+            chosen_gap.y_max - t->y_lat_m);
+          double p_edge = 1.0;
+          if (edge_clear < 0.0) {
+            p_edge = 0.0;
+          } else if (edge_clear < 0.04) {
+            p_edge = 0.35 + 0.65 * (edge_clear / 0.04);
           }
-          return a->mean_conf > b->mean_conf;
-        });
+          const double p_cov = p_shift * p_edge;
+          const double eff_conf = std::clamp(t->mean_conf, 0.2, 1.0);
+          return config_.bonus_score_weight_s * static_cast<double>(t->digit) * eff_conf * p_cov;
+        };
+
+      if (config_.enable_risk_aware_decision) {
+        std::sort(
+          confirmed.begin(),
+          confirmed.end(),
+          [&](const DigitTrack * a, const DigitTrack * b) {
+            const double sa = risk_aware_score(a);
+            const double sb = risk_aware_score(b);
+            if (std::abs(sa - sb) > 1e-9) {
+              return sa > sb;
+            }
+            if (a->digit != b->digit) {
+              return a->digit > b->digit;
+            }
+            return a->mean_conf > b->mean_conf;
+          });
+      } else {
+        // Legacy: sort descending by digit value (-5 * digit -> target the LARGER digit!)
+        std::sort(
+          confirmed.begin(),
+          confirmed.end(),
+          [](const DigitTrack * a, const DigitTrack * b) {
+            if (a->digit != b->digit) {
+              return a->digit > b->digit;
+            }
+            return a->mean_conf > b->mean_conf;
+          });
+      }
 
       for (const auto * cand : confirmed) {
         // Check if any obstacle conflicts near this digit longitudinally

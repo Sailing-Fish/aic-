@@ -57,6 +57,7 @@ struct CorridorPlannerConfig
   double digit_sibling_avoid_offset_m{0.025};
   double digit_track_ttl_sec{0.45};
   double digit_obstacle_longitudinal_buffer_m{0.35};
+  bool enable_risk_aware_decision{true};
 };
 
 struct ForkVoteSummary
@@ -65,6 +66,8 @@ struct ForkVoteSummary
   int right_digit{0};
   int left_votes{0};
   int right_votes{0};
+  double left_conf_eff{0.0};
+  double right_conf_eff{0.0};
   bool left_has_no_entry{false};
   bool right_has_no_entry{false};
   bool left_has_cone{false};

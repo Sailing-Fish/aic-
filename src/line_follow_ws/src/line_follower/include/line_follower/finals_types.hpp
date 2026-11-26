@@ -78,6 +78,7 @@ struct TrackedObstacle
   double wy{0.0};
   double half_len_m{0.0675};
   double half_wid_m{0.0675};
+  double obs_yaw_rad{0.0};
   double confidence{0.0};
   int hit_count{1};
   double first_seen_sec{0.0};
@@ -94,6 +95,7 @@ struct LocalObstacle
   double y_lat_m{0.0};
   double y_min_m{0.0};   // right edge (+y is left)
   double y_max_m{0.0};   // left edge
+  double rel_yaw_rad{0.0};
   double confidence{0.0};
   double age_sec{0.0};
 };

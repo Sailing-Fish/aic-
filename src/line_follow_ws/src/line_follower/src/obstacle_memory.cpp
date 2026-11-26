@@ -6,6 +6,16 @@
 namespace line_follower
 {
 
+namespace
+{
+
+double wrap_angle(double angle_rad)
+{
+  return std::atan2(std::sin(angle_rad), std::cos(angle_rad));
+}
+
+}  // namespace
+
 ObstacleMemory::ObstacleMemory(const ObstacleMemoryConfig & config)
 {
   set_config(config);
@@ -134,6 +144,7 @@ void ObstacleMemory::update(
       entry.wy = wy;
       entry.half_len_m = std::max(0.02, det.half_len_m);
       entry.half_wid_m = std::max(0.02, det.half_wid_m);
+      entry.obs_yaw_rad = wrap_angle(ref_pose.yaw);
       entry.confidence = det.confidence;
       entry.hit_count = 1;
       entry.first_seen_sec = now_sec;
@@ -226,6 +237,7 @@ std::vector<LocalObstacle> ObstacleMemory::get_local_obstacles(
     loc.y_lat_m = y_lat;
     loc.y_min_m = y_lat - e.half_wid_m;
     loc.y_max_m = y_lat + e.half_wid_m;
+    loc.rel_yaw_rad = wrap_angle(e.obs_yaw_rad - ref_pose.yaw);
     loc.confidence = e.confidence;
     loc.age_sec = std::max(0.0, age);
     out.push_back(loc);

@@ -48,6 +48,11 @@ struct FinalsDebugOverlay
   std::string fork_vote_status{};
   std::string finish_guard_status{};
 
+  bool cbf_enabled{false};
+  bool cbf_intervened{false};
+  double cbf_min_clearance_m{0.0};
+  std::string cbf_limiting_source{};
+
   std::vector<DebugDetectionBox> detections{};
 };
 

@@ -15,14 +15,25 @@ struct FinishGuardConfig
   double finish_force_dist_m{11.5};
   double min_cumulative_abs_yaw_rad{0.0};
 
-  // Two-stage zero-touch yellow line stopping law
+  // Two-stage zero-touch yellow line stopping law + near-line ramp
   double pre_brake_dist_m{0.70};
   double creep_speed_mps{0.24};
+  double yellow_final_ramp_dist_m{0.35};
+  double yellow_final_creep_speed_mps{0.18};
   double brake_decel_mps2{1.8};
   double control_latency_s{0.10};
   double bumper_margin_m{0.08};
   double min_stop_trigger_dist_m{0.10};
   double max_stop_trigger_dist_m{0.55};
+
+  // Static battery voltage feedforward + 1-param clamped friction EMA adaptation
+  double voltage_decel_slope{0.0};
+  double voltage_nominal_v{12.0};
+  double voltage_timeout_sec{3.0};
+  bool enable_brake_adaptation{true};
+  double brake_adapt_ema_alpha{0.35};
+  double friction_scale_min{0.65};
+  double friction_scale_max{1.25};
 
   // Distance traveled after a yellow stop before re-arming (prevents double-counting)
   double rearm_travel_dist_m{0.35};
@@ -51,6 +62,11 @@ public:
   void reset();
 
   void update_motion(double ds_fwd_m, double dyaw_rad);
+  void update_battery_voltage(double voltage_v, double now_sec);
+  bool update_measured_yellow_stop(
+    double v_entry_mps,
+    double stop_travel_m,
+    double now_sec = -1.0);
   void mark_fork_passed();
   void mark_yellow_stop_triggered();
 
@@ -58,19 +74,26 @@ public:
   bool is_finish_armed() const;
   bool evaluate_is_finish(bool visual_dead_end_ahead) const;
 
-  double compute_stop_trigger_dist(double current_speed_mps) const;
+  double active_battery_voltage(double now_sec = -1.0) const;
+  double effective_brake_decel_mps2(double now_sec = -1.0) const;
+  double compute_stop_trigger_dist(double current_speed_mps, double now_sec = -1.0) const;
 
   YellowStopAdvice evaluate_yellow_stop(
     bool yellow_detected,
     bool has_metric_distance,
     double d_bumper_m,
     double current_speed_mps,
-    bool visual_dead_end_ahead) const;
+    bool visual_dead_end_ahead,
+    double now_sec = -1.0) const;
 
   double total_arc_m() const {return s_total_m_;}
   double cumulative_abs_yaw_rad() const {return cum_abs_yaw_rad_;}
   double dist_since_last_yellow_m() const {return dist_since_last_yellow_m_;}
   bool fork_passed() const {return fork_passed_;}
+  double friction_scale() const {return friction_scale_;}
+  double battery_voltage_v() const {return battery_voltage_v_;}
+  bool battery_voltage_valid() const {return voltage_valid_;}
+  int brake_adapt_updates() const {return brake_adapt_updates_;}
 
 private:
   FinishGuardConfig config_{};
@@ -78,6 +101,11 @@ private:
   double cum_abs_yaw_rad_{0.0};
   double dist_since_last_yellow_m_{1e6};
   bool fork_passed_{false};
+  double battery_voltage_v_{12.0};
+  double last_voltage_sec_{-1e9};
+  bool voltage_valid_{false};
+  double friction_scale_{1.0};
+  int brake_adapt_updates_{0};
 };
 
 }  // namespace line_follower

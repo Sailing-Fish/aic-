@@ -15,8 +15,10 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/string.hpp>
 
+#include "line_follower/ackermann_cbf_shield.hpp"
 #include "line_follower/corridor_planner.hpp"
 #include "line_follower/debug_renderer.hpp"
 #include "line_follower/finals_types.hpp"
@@ -58,6 +60,7 @@ private:
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void ekf_odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void detection_callback(const ai_msgs::msg::PerceptionTargets::SharedPtr msg);
+  void voltage_callback(const std_msgs::msg::Float32::SharedPtr msg);
 
   static SemanticObjectType classify_detection_label(const std::string & label, int & digit_out);
   static double quat_to_yaw(double qx, double qy, double qz, double qw);
@@ -111,6 +114,7 @@ private:
   std::string ekf_odom_topic_;
   std::string detection_topic_;
   std::string segment_topic_;
+  std::string voltage_topic_;
 
   // ============================================================
   // Finals Mode Switches
@@ -122,6 +126,11 @@ private:
   bool enable_obstacle_memory_{true};
   bool enable_cv_red_fallback_{true};
   bool allow_dual_digit_cover_{false};
+  bool enable_cbf_shield_{false};
+  bool enable_risk_aware_decision_{true};
+  double crc_no_entry_pad_y_px_{0.0};
+  double crc_cone_pad_y_px_{0.0};
+  double crc_yellow_pad_y_px_{0.0};
   double detection_timeout_sec_{0.35};
 
   // ============================================================
@@ -223,6 +232,7 @@ private:
 
   GroundProjector ground_projector_;
   ObstacleMemory obstacle_memory_;
+  AckermannCbfShield cbf_shield_;
   CorridorPlanner corridor_planner_;
   FinishGuard finish_guard_;
 
@@ -253,6 +263,12 @@ private:
   std::string last_ctrl_mode_tag_{};
   int last_ctrl_branch_{0};
   double last_ctrl_log_sec_{-1e9};
+  double last_cbf_log_sec_{-1e9};
+
+  // Tier 1 yellow-stop measured braking state for 1-param friction adaptation
+  bool yellow_brake_measure_pending_{false};
+  double yellow_brake_entry_speed_mps_{0.0};
+  double yellow_brake_start_arc_m_{0.0};
 
   bool start_enabled_{false};
   bool waiting_log_initialized_{false};
@@ -279,6 +295,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ekf_odom_sub_;
   rclcpp::Subscription<ai_msgs::msg::PerceptionTargets>::SharedPtr detection_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr voltage_sub_;
 
   image_transport::Publisher debug_pub_;
   bool debug_enabled_{false};

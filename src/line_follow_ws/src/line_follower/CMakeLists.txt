@@ -10,6 +10,7 @@ add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 set(LINE_FOLLOWER_PURE_SOURCES
   src/ground_projector.cpp
   src/obstacle_memory.cpp
+  src/ackermann_cbf_shield.cpp
   src/corridor_planner.cpp
   src/finish_guard.cpp
   src/track_state_machine.cpp

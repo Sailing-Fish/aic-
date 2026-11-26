@@ -58,6 +58,22 @@ MAX_ROTATION_DEG = 15.0
 ALLOW_HFLIP = False
 ALLOW_VFLIP = False
 
+# Tier 1-④-b 默认数字贴纸最远投影距离（m）：
+# 8 类数字直替模式封顶 1.15m（消除 1.45~1.55m 处 4~6px 不可读超远贴纸拖累 Recall），
+# 11 类全目标模式维持 1.55m 保持旧行为与单测兼容。
+DEFAULT_MAX_DIGIT_DIST_8CLS_M = 1.15
+DEFAULT_MAX_DIGIT_DIST_11CLS_M = 1.55
+
+
+def resolve_max_digit_dist_m(num_classes: int, max_digit_dist_m: Optional[float] = None) -> float:
+    """解析并校验数字贴纸最远投影距离（m）。"""
+    if max_digit_dist_m is None:
+        return DEFAULT_MAX_DIGIT_DIST_8CLS_M if num_classes == 8 else DEFAULT_MAX_DIGIT_DIST_11CLS_M
+    val = float(max_digit_dist_m)
+    if not (0.25 <= val <= 2.50):
+        raise ValueError(f"max_digit_dist_m={val} 超出合理范围 [0.25, 2.50] m")
+    return val
+
 MNIST_MIRRORS: Tuple[str, ...] = (
     "https://storage.googleapis.com/cvdf-datasets/mnist/",
     "https://ossci-datasets.s3.amazonaws.com/mnist/",
@@ -876,8 +892,89 @@ def composite_bgra(
     return ix1, iy1, ix2, iy2
 
 
+def apply_finals_venue_degradation(
+    img: np.ndarray,
+    rng: random.Random,
+    enable_specular: bool = True,
+    enable_yellowing: bool = True,
+    enable_led_temp: bool = True,
+    allow_flip: bool = False,
+) -> np.ndarray:
+    """Tier 1-④-b 决赛赛场退化增强：局部镜面反光高光斑 + 赛垫泛黄/老化色偏 + 冷暖 LED 色温漂移。
+
+    严格禁止翻转或几何镜像操作（仅作用于光度/色度域）。
+    """
+    if allow_flip:
+        raise ValueError("严格禁止水平/垂直翻转（会破坏数字 1-8 类别语义）！")
+
+    out = img.astype(np.float32)
+    h, w = out.shape[:2]
+
+    # 1) 赛垫泛黄 / 老化色偏（衰减蓝色通道并略升红绿，伴随地面不均匀老化渐变）
+    if enable_yellowing:
+        yellow_strength = rng.uniform(0.10, 0.28)
+        yy_norm = np.linspace(0.0, 1.0, h, dtype=np.float32)[:, None]
+        # 地面区域（图像下半部）泛黄更明显
+        ground_mask = np.clip((yy_norm - 0.20) / 0.55, 0.25, 1.0)
+        b_scale = 1.0 - yellow_strength * ground_mask
+        g_scale = 1.0 - 0.12 * yellow_strength * ground_mask
+        r_scale = 1.0 + 0.18 * yellow_strength * ground_mask
+        out[:, :, 0] *= b_scale
+        out[:, :, 1] *= g_scale
+        out[:, :, 2] *= r_scale
+
+    # 2) 冷暖 LED 色温漂移（暖灯 ~3200K 增红降蓝 / 冷灯 ~7000K 增蓝降红 + 轻微荧光绿偏移）
+    if enable_led_temp:
+        # temp_shift > 0 偏暖，< 0 偏冷；避开 0 附近保证有效漂移
+        sign = -1.0 if rng.random() < 0.5 else 1.0
+        mag = rng.uniform(0.06, 0.16)
+        shift = sign * mag
+        g_tint = rng.uniform(-0.04, 0.04)
+        out[:, :, 0] *= (1.0 - shift)
+        out[:, :, 1] *= (1.0 + g_tint)
+        out[:, :, 2] *= (1.0 + shift)
+
+    # 3) 局部镜面反光高光斑（模拟顶灯/聚光灯在光滑赛垫与 PVC 贴纸上的各向异性亮斑）
+    if enable_specular:
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+        n_spots = rng.randint(1, 2)
+        for _ in range(n_spots):
+            gx = rng.uniform(0.15, 0.85) * w
+            gy = rng.uniform(0.32, 0.88) * h
+            rx = rng.uniform(0.06, 0.22) * w
+            ry = rng.uniform(0.03, 0.11) * h
+            theta = math.radians(rng.uniform(-35.0, 35.0))
+            cos_t, sin_t = math.cos(theta), math.sin(theta)
+            dx = xx - gx
+            dy = yy - gy
+            xr = dx * cos_t + dy * sin_t
+            yr = -dx * sin_t + dy * cos_t
+            spot = np.exp(-0.5 * ((xr / max(1.0, rx)) ** 2 + (yr / max(1.0, ry)) ** 2))
+            intensity = rng.uniform(55.0, 135.0)
+            tint = np.array(
+                [rng.uniform(0.92, 1.0), rng.uniform(0.96, 1.0), 1.0], dtype=np.float32
+            )[None, None, :]
+            out += (intensity * spot)[:, :, None] * tint
+
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 def apply_photometric_augmentation(img: np.ndarray, rng: random.Random) -> np.ndarray:
-    """光照与镜头域随机化：色温偏置、亮度增益、定向眩光梯度、轻微运动模糊、噪声。"""
+    """光照与镜头域随机化：色温偏置、亮度增益、决赛赛场退化增强、定向眩光、轻微运动模糊、噪声。"""
+    # 随机触发决赛赛场退化增强（镜面高光斑 / 赛垫泛黄 / 冷暖 LED 色温漂移）
+    p_spec = rng.random() < 0.45
+    p_yell = rng.random() < 0.45
+    p_led = rng.random() < 0.50
+    if p_spec or p_yell or p_led:
+        img = apply_finals_venue_degradation(
+            img,
+            rng,
+            enable_specular=p_spec,
+            enable_yellowing=p_yell,
+            enable_led_temp=p_led,
+            allow_flip=False,
+        )
+
     out = img.astype(np.float32)
     h, w = out.shape[:2]
 
@@ -989,8 +1086,10 @@ def _generate_digits8_sample(
     width: int,
     height: int,
     max_rot_deg: float,
+    max_digit_dist_m: float = DEFAULT_MAX_DIGIT_DIST_8CLS_M,
 ) -> Tuple[np.ndarray, List[str]]:
     """生成 8 类（1..8）真实 3D 地面单应透视样本，并将红锥/红禁行区/黄线作为无标签干扰背景绘制。"""
+    max_d = resolve_max_digit_dist_m(8, max_digit_dist_m)
     if bg_paths:
         raw_bg = cv2.imdecode(np.fromfile(str(rng.choice(bg_paths)), dtype=np.uint8), cv2.IMREAD_COLOR)
         img = cv2.resize(raw_bg, (width, height)) if raw_bg is not None else make_synthetic_track_bg(rng, width, height)
@@ -1036,11 +1135,16 @@ def _generate_digits8_sample(
             cam_h_mm=cam_h_mm, pitch_deg=pitch_deg, f_px=f_px, allow_flip=False, min_box_w=10, min_box_h=3,
         )
 
-    # 2) 地面数字贴纸布局（直道并排 / 岔道双支路 / 单弯道 / 近处边缘截断）
+    # 2) 地面数字贴纸布局（直道并排 / 岔道双支路 / 单弯道 / 近处边缘截断），所有距离严格 <= max_d
     #    约 8% 样本为纯无数字负样本（仅包含赛道/红锥/黄线/红禁行框，强化抗误检）
     labels: List[str] = []
     placed_boxes: List[Tuple[int, int, int, int]] = []
     placements: List[Tuple[str, float, float, float, float]] = []  # (digit, d_m, y_m, diam_m, curl_deg)
+
+    def _u_dist(lo: float, hi: float) -> float:
+        hi_c = min(hi, max_d)
+        lo_c = min(lo, hi_c)
+        return rng.uniform(lo_c, hi_c)
 
     if rng.random() >= 0.08:
         scene_mode = rng.choices(
@@ -1049,52 +1153,57 @@ def _generate_digits8_sample(
         )[0]
 
         def rand_diam(d_m: float) -> float:
-            # 远距离适度偏向 0.13-0.21m，保证地面扁椭圆在 640x480 中仍有 >=4px 清晰可辨高度
+            # 远距离适度偏向 0.13-0.21m，保证地面扁椭圆在 640x480 中仍有清晰可辨高度
             if d_m > 0.90:
                 return rng.uniform(0.14, 0.22)
             return rng.uniform(0.11, 0.16)
 
         if scene_mode == "straight_dual":
             d1, d2 = rng.sample(DIGITS8_CLASSES, 2)
-            d_base = rng.uniform(0.24, 0.85)
+            d_base = _u_dist(0.24, 0.85)
             sep = rng.uniform(0.10, 0.17)
             y_mid = rng.uniform(-0.08, 0.08)
-            placements.append((d1, d_base + rng.uniform(-0.02, 0.02), clamp(y_mid + sep * 0.5, -0.20, 0.20), rand_diam(d_base), 0.0))
-            placements.append((d2, d_base + rng.uniform(-0.02, 0.02), clamp(y_mid - sep * 0.5, -0.20, 0.20), rand_diam(d_base), 0.0))
+            placements.append((d1, clamp(d_base + rng.uniform(-0.02, 0.02), 0.15, max_d), clamp(y_mid + sep * 0.5, -0.20, 0.20), rand_diam(d_base), 0.0))
+            placements.append((d2, clamp(d_base + rng.uniform(-0.02, 0.02), 0.15, max_d), clamp(y_mid - sep * 0.5, -0.20, 0.20), rand_diam(d_base), 0.0))
         elif scene_mode == "fork_branches":
             d1, d2 = rng.sample(DIGITS8_CLASSES, 2)
-            da = rng.uniform(0.32, 1.15)
-            db = clamp(da + rng.uniform(-0.18, 0.18), 0.28, 1.35)
+            da = _u_dist(0.32, 1.15)
+            db = clamp(da + rng.uniform(-0.18, 0.18), min(0.28, max_d), min(1.35, max_d))
             placements.append((d1, da, rng.uniform(0.08, 0.20), rand_diam(da), rng.uniform(0.0, 14.0) if rng.random() < 0.25 else 0.0))
             placements.append((d2, db, rng.uniform(-0.20, -0.08), rand_diam(db), rng.uniform(0.0, 14.0) if rng.random() < 0.25 else 0.0))
         elif scene_mode == "single_curve":
             d1 = rng.choice(DIGITS8_CLASSES)
-            da = rng.uniform(0.26, 1.30)
+            da = _u_dist(0.26, 1.30)
             placements.append((d1, da, rng.uniform(-0.19, 0.19), rand_diam(da), rng.uniform(0.0, 22.0) if rng.random() < 0.22 else 0.0))
             if rng.random() < 0.45:
                 d2 = rng.choice([c for c in DIGITS8_CLASSES if c != d1])
-                db = rng.uniform(0.55, 1.50)
+                db = _u_dist(0.55, 1.50)
                 placements.append((d2, db, rng.uniform(-0.18, 0.18), rand_diam(db), rng.uniform(0.0, 20.0) if rng.random() < 0.30 else 0.0))
         elif scene_mode == "near_clipped":
             d1 = rng.choice(DIGITS8_CLASSES)
             # 近处边缘截断（d ≈ 0.15..0.24m 或横向接近 ±0.20m）
-            da = rng.uniform(0.15, 0.24)
+            da = _u_dist(0.15, 0.24)
             ya = rng.choice([rng.uniform(-0.20, -0.11), rng.uniform(0.11, 0.20), rng.uniform(-0.08, 0.08)])
             placements.append((d1, da, ya, rng.uniform(0.12, 0.17), 0.0))
             if rng.random() < 0.5:
                 d2 = rng.choice([c for c in DIGITS8_CLASSES if c != d1])
-                db = rng.uniform(0.45, 1.10)
+                db = _u_dist(0.45, 1.10)
                 placements.append((d2, db, rng.uniform(-0.14, 0.14), rand_diam(db), 0.0))
         else:  # multi_depth
             chosen = rng.sample(DIGITS8_CLASSES, rng.randint(2, 3))
-            depths = sorted([rng.uniform(0.22, 0.45), rng.uniform(0.55, 0.95), rng.uniform(1.05, 1.52)][:len(chosen)])
+            depths = sorted([
+                _u_dist(0.22, 0.45),
+                _u_dist(0.48, min(0.85, max_d)),
+                _u_dist(0.80, 1.52),
+            ][:len(chosen)])
             for dg, dm in zip(chosen, depths):
-                curl = rng.uniform(6.0, 25.0) if (dm > 0.95 and rng.random() < 0.5) else 0.0
+                curl = rng.uniform(6.0, 25.0) if (dm > 0.90 and rng.random() < 0.5) else 0.0
                 placements.append((dg, dm, rng.uniform(-0.18, 0.18), rand_diam(dm), curl))
 
-        # 按由远到近顺序绘制（正确遮挡关系）
+        # 按由远到近顺序绘制（正确遮挡关系），并对每张贴纸距离强制封顶 <= max_d
         placements.sort(key=lambda item: item[1], reverse=True)
         for digit, d_m, y_m, diam_m, curl_deg in placements:
+            d_m = min(d_m, max_d)
             prop = get_prop(digit)
             ph_p, pw_p = prop.shape[:2]
             aspect = pw_p / max(1.0, float(ph_p))
@@ -1147,14 +1256,17 @@ def generate_one_sample(
     max_rot_deg: float = MAX_ROTATION_DEG,
     num_classes: int = 11,
     mnist_bank: Optional[Dict[str, np.ndarray]] = None,
+    max_digit_dist_m: Optional[float] = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """生成单张 640x480 训练样本及其 8 类或 11 类 YOLO 标注行。"""
     if num_classes not in (8, 11):
         raise ValueError(f"num_classes 仅支持 8 或 11，收到: {num_classes}")
+    eff_max_dist_m = resolve_max_digit_dist_m(num_classes, max_digit_dist_m)
     if num_classes == 8:
         return _generate_digits8_sample(
             rng=rng, bg_paths=bg_paths, prop_bank=prop_bank, mnist_bank=mnist_bank,
             width=width, height=height, max_rot_deg=max_rot_deg,
+            max_digit_dist_m=eff_max_dist_m,
         )
 
     if bg_paths:
@@ -1320,12 +1432,14 @@ def generate_dataset(
     num_classes: int = 11,
     mnist_dir: Optional[str] = None,
     allow_mnist_download: bool = True,
+    max_digit_dist_m: Optional[float] = None,
 ) -> Dict[str, object]:
     """生成完整 Ultralytics 8 类或 11 类 YOLO 数据集与 Horizon OE PTQ 校准列表。"""
     if abs(max_rot_deg) > MAX_ROTATION_DEG:
         raise ValueError(f"max_rot_deg={max_rot_deg} 超过允许上限 ±{MAX_ROTATION_DEG}°")
     if num_classes not in (8, 11):
         raise ValueError(f"num_classes 仅支持 8 或 11，收到: {num_classes}")
+    eff_max_digit_dist_m = resolve_max_digit_dist_m(num_classes, max_digit_dist_m)
 
     active_classes = DIGITS8_CLASSES if num_classes == 8 else CLASSES
     root = Path(out_dir).resolve()
@@ -1354,6 +1468,7 @@ def generate_dataset(
                 max_rot_deg=max_rot_deg,
                 num_classes=num_classes,
                 mnist_bank=mnist_bank,
+                max_digit_dist_m=eff_max_digit_dist_m,
             )
             stem = f"{split}_{i:05d}"
             img_path = root / "images" / split / f"{stem}.jpg"
@@ -1368,7 +1483,7 @@ def generate_dataset(
     names_yaml = "\n".join(f"  {i}: '{name}'" for i, name in enumerate(active_classes))
     dataset_yaml = root / "dataset.yaml"
     dataset_yaml.write_text(
-        f"# AIC 2026 Finals {num_classes}-class YOLO dataset\n"
+        f"# AIC 2026 Finals {num_classes}-class YOLO dataset (max_digit_dist_m={eff_max_digit_dist_m:.2f})\n"
         f"# CRITICAL training hyperparameters: fliplr=0.0, flipud=0.0, degrees={min(max_rot_deg, MAX_ROTATION_DEG):.1f}\n"
         f"path: {root.as_posix()}\n"
         f"train: images/train\n"
@@ -1400,6 +1515,7 @@ def generate_dataset(
         "allow_hflip": ALLOW_HFLIP,
         "allow_vflip": ALLOW_VFLIP,
         "max_rot_deg": min(abs(max_rot_deg), MAX_ROTATION_DEG),
+        "max_digit_dist_m": eff_max_digit_dist_m,
     }
 
 
@@ -1419,6 +1535,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     ap.add_argument("--preview-out", default=None, help="可选：保存 3x3 标注预览拼图路径")
     ap.add_argument("--seed", type=int, default=2026, help="随机种子")
     ap.add_argument("--max-rot-deg", type=float, default=15.0, help="最大旋转角（上限 15°）")
+    ap.add_argument(
+        "--max-digit-dist-m",
+        type=float,
+        default=None,
+        help="数字贴纸最远投影距离（m）；未指定时 --classes 8 默认 1.15m，--classes 11 默认 1.55m",
+    )
     ap.add_argument("--calib-count", type=int, default=100, help="INT8 PTQ 校准集图片数量")
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=480)
@@ -1441,6 +1563,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         height=args.height,
         num_classes=args.classes,
         mnist_dir=use_mnist_dir,
+        max_digit_dist_m=args.max_digit_dist_m,
     )
     if args.preview_out:
         cnames = DIGITS8_CLASSES if args.classes == 8 else CLASSES
@@ -1449,7 +1572,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(
         f"[DONE] classes={info['num_classes']} train={info['num_train']} val={info['num_val']} "
         f"boxes={info['total_boxes']} mnist={info['mnist_samples']} calib={info['calib_count']} "
-        f"(hflip={info['allow_hflip']}, vflip={info['allow_vflip']}, max_rot=±{info['max_rot_deg']}°)"
+        f"(max_digit_dist={info['max_digit_dist_m']:.2f}m, hflip={info['allow_hflip']}, "
+        f"vflip={info['allow_vflip']}, max_rot=±{info['max_rot_deg']}°)"
     )
     print(f"  dataset.yaml : {info['dataset_yaml']}")
     print(f"  calib_list   : {info['calib_list']}")
