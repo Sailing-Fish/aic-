@@ -852,25 +852,37 @@ def _parse_metric_num(raw, as_int=False):
 
 
 def read_diagnostics(scan_lines=400, milestone_limit=40):
-    """从 events.csv 剥离高频性能心跳与冗余帧状态，提取结构化健康指标与关键里程碑/故障。"""
+    """从 events.csv 剥离高频性能心跳与冗余帧状态，提取结构化健康指标、Tier 1 状态与关键里程碑/故障。"""
     perf = {
         'cam_fps': None, 'cam_read_p95': None, 'cam_fails': None,
         'yolo_fps': None, 'yolo_dropped': None, 'yolo_e2e_p95': None,
     }
     red_hint = {'active': False, 'src': '', 'd': None, 't': ''}
+    tier1 = {
+        'cbf_count': 0,
+        'cbf_last_src': '',
+        'cbf_last_clr': None,
+        'cbf_last_t': '',
+        'cbf_hard_stop': False,
+        'brake_updates': 0,
+        'brake_scale': None,
+        'brake_a_eff': None,
+        'brake_vbat': None,
+        'brake_last_t': '',
+    }
     milestones = []
 
     rd = run_dir()
     if not rd:
-        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint}
+        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint, 'tier1': tier1}
     path = os.path.join(rd, 'events.csv')
     if not os.path.isfile(path):
-        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint}
+        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint, 'tier1': tier1}
     try:
         with open(path, 'r', encoding='utf-8') as f:
             rows = f.readlines()
     except OSError:
-        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint}
+        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint, 'tier1': tier1}
 
     for line in rows[1:][-scan_lines:]:
         parts = line.rstrip('\r\n').split(',', 5)
@@ -912,6 +924,42 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
                 red_hint = {'active': False, 'src': '', 'd': None, 't': t_str}
             continue
 
+        if area == 'cbf':
+            kv_map = _parse_kv_tokens(kv)
+            prev_src = tier1['cbf_last_src']
+            src_val = kv_map.get('src', '')
+            v_tok = kv_map.get('v', '')
+            v_after = _parse_metric_num(v_tok.split('->', 1)[1]) if '->' in v_tok else None
+            hard_stop = bool(src_val == 'invalid_cmd' or (v_after is not None and v_after <= 0.01))
+            tier1['cbf_count'] += 1
+            tier1['cbf_last_src'] = src_val
+            tier1['cbf_last_clr'] = _parse_metric_num(kv_map.get('clr'))
+            tier1['cbf_last_t'] = t_str
+            tier1['cbf_hard_stop'] = hard_stop
+            # 只在首次介入、来源变化或紧急降零速时写入里程碑，防止 2Hz 日志刷满队列
+            if tier1['cbf_count'] == 1 or src_val != prev_src or hard_stop:
+                milestones.append({
+                    't': t_str, 'source': source, 'area': area, 'event': event, 'kv': kv,
+                })
+            continue
+
+        if area == 'brake_adapt':
+            kv_map = _parse_kv_tokens(kv)
+            scale_tok = kv_map.get('scale', '')
+            scale_after = _parse_metric_num(
+                scale_tok.split('->', 1)[1] if '->' in scale_tok else scale_tok
+            )
+            tier1['brake_updates'] += 1
+            if scale_after is not None:
+                tier1['brake_scale'] = scale_after
+            tier1['brake_a_eff'] = _parse_metric_num(kv_map.get('a_eff'))
+            tier1['brake_vbat'] = _parse_metric_num(kv_map.get('vbat'))
+            tier1['brake_last_t'] = t_str
+            milestones.append({
+                't': t_str, 'source': source, 'area': area, 'event': event, 'kv': kv,
+            })
+            continue
+
         if area == 'ctrl':
             continue
         if area == 'state' and event == 'change' and 'to=lost' not in kv:
@@ -927,6 +975,7 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
         'perf': perf,
         'milestones': milestones[-milestone_limit:],
         'red_hint': red_hint,
+        'tier1': tier1,
     }
 
 
@@ -1323,6 +1372,7 @@ class Handler(BaseHTTPRequestHandler):
             'perf': diag['perf'],
             'milestones': diag['milestones'],
             'red_hint': diag['red_hint'],
+            'tier1': diag['tier1'],
             'frames': frames_ok,
             'frame_age': frame_age,
             'voltage': {

@@ -1280,6 +1280,16 @@ function renderMilestoneStrip(d, milestones){
     const kv = parseKv(lastDigit.kv);
     if(kv.best) pills.push(`<span class="mile-pill gem">🔢 数字 ${escHtml(kv.best)}</span>`);
   }
+  const t1 = d.tier1 || {};
+  const cbfOn = Number(lastEff.enable_cbf_shield) === 1;
+  if(t1.cbf_count > 0){
+    pills.push(`<span class="mile-pill ${t1.cbf_hard_stop ? 'gold' : 'lit'}">🛡️ 安全盾已介入 ${t1.cbf_count} 次</span>`);
+  } else if(cbfOn){
+    pills.push(`<span class="mile-pill">🛡️ DCBF 护航已开</span>`);
+  }
+  if(t1.brake_updates > 0 && typeof t1.brake_scale === 'number'){
+    pills.push(`<span class="mile-pill">🛞 摩擦×${t1.brake_scale.toFixed(2)}</span>`);
+  }
   strip.innerHTML = pills.join('');
 }
 
@@ -1336,6 +1346,36 @@ function translateMilestoneOrIssue(e){
     const dirTxt = br < 0 ? '向左前方支路行驶' : (br > 0 ? '向右前方支路行驶' : '保持直行');
     return { kind:'milestone', tone:'ok', time:tStr, raw:rawTxt,
       title:'🔀 完成岔道方向投票', desc:`综合判断后选择：${dirTxt}。` };
+  }
+  if(e.area === 'cbf'){
+    const srcCnMap = {no_entry:'红禁行区 (+30s)', cone:'红锥桶 (+10s)', lane_border:'白道黑边 (+15s/s)', invalid_cmd:'异常指令兜底'};
+    const srcCn = srcCnMap[kv.src] || (kv.src || '障碍安全边界');
+    const vTok = kv.v || '';
+    const vAfter = vTok.includes('->') ? Number(vTok.split('->')[1]) : NaN;
+    const hardStop = (kv.src === 'invalid_cmd') || (Number.isFinite(vAfter) && vAfter <= 0.01);
+    return {
+      kind: hardStop ? 'issue' : 'milestone',
+      tone: hardStop ? 'warn' : 'ok',
+      time: tStr, raw: rawTxt, node: 'follow',
+      title: hardStop ? `🛡️ DCBF 安全盾紧急制动 (${srcCn})` : `🛡️ DCBF 安全盾介入护航`,
+      desc: hardStop
+        ? `防碰撞/出界前滚无可行速度，安全盾已临时刹零保护（目标：${srcCn}），建议查看复盘或略降速。`
+        : `为防后轮扫入${srcCn}，安全盾已微调转向与车速（最小净空 ${kv.clr || '-'}m）。`
+    };
+  }
+  if(e.area === 'brake_adapt'){
+    const scTok = kv.scale || '';
+    const scAfter = Number(scTok.includes('->') ? scTok.split('->')[1] : scTok);
+    const clampedWarn = Number.isFinite(scAfter) && (scAfter <= 0.68 || scAfter >= 1.22);
+    return {
+      kind: clampedWarn ? 'issue' : 'milestone',
+      tone: clampedWarn ? 'warn' : 'ok',
+      time: tStr, raw: rawTxt, node: 'follow',
+      title: clampedWarn ? `🛞 刹车摩擦自适应逼近限幅 (×${scAfter.toFixed(2)})` : `🛞 刹车摩擦自适应校准完成`,
+      desc: clampedWarn
+        ? `实测黄线刹停减速度明显偏离标称值（a_eff=${kv.a_eff || '-'} m/s²，电压 ${kv.vbat || '-'}V），建议检查场地打滑或电池电量。`
+        : `按实测黄线刹停自动微调场地摩擦：倍率 ${scTok || '-'}，生效减速度 ${kv.a_eff || '-'} m/s²（电压 ${kv.vbat || '-'}V）。`
+    };
   }
   if(e.area === 'panel' && (e.event === 'estop' || e.event === 'param_write')){
     return { kind:'milestone', tone:'', time:tStr, raw:rawTxt,
@@ -1499,12 +1539,16 @@ function updateCompanions(d){
   gemMsg.textContent = gText;
 
   let dsCls = 'ds', dsMoodTxt = '待命', dsText = '系统安静待命，空格即可发车';
+  const t1 = d.tier1 || {};
+  const cbfRecent = t1.cbf_count > 0 && t1.cbf_last_t !== '' && (d.timer.elapsed - Number(t1.cbf_last_t || -99) < 4);
   if(lastSafety && (d.timer.elapsed - Number(lastSafety.t || 0) < 6)){
     dsCls = 'ds alert'; dsMoodTxt = '兜底接管'; dsText = '上游静默了，我已自动刹车保安全！';
   } else if(d.started && d.track_state === 'lost'){
     dsCls = 'ds alert'; dsMoodTxt = '注意丢线'; dsText = '刚才有点丢线，请在诊室看定位提示';
   } else if(d.timer && d.timer.final){
     dsCls = 'ds ok'; dsMoodTxt = '完美完赛'; dsText = `到达终点停稳啦！总用时 ${fmt(d.timer.elapsed)}`;
+  } else if(d.started && cbfRecent){
+    dsCls = 'ds warn'; dsMoodTxt = '安全盾护航'; dsText = `DCBF 刚拦住一次风险（累计 ${t1.cbf_count} 次），已拉回安全走廊！`;
   } else if(d.started){
     dsCls = 'ds ok'; dsMoodTxt = '领航中'; dsText = `稳步巡线中（${STATE_CN[d.track_state] || d.track_state}）`;
   } else if(restarting){
@@ -1963,7 +2007,12 @@ function undoParams(){
 
 function markPending(){
   effMismatch = false;
-  const alias = {yellow_stop_duration:'yellow_stop_dur', red_near_ratio:'red_near', red_very_close_ratio:'red_close', line_lost_forward_speed:'lost_speed'};
+  const alias = {
+    yellow_stop_duration:'yellow_stop_dur',
+    cbf_wheelbase_m:'cbf_wb',
+    cbf_horizon_steps:'cbf_h',
+    cbf_step_dt_sec:'cbf_dt',
+  };
   document.querySelectorAll('#params .row').forEach(row=>{
     const key = row.dataset.key;
     const effKey = (lastEff[key] !== undefined) ? key : alias[key];

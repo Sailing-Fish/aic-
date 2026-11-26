@@ -400,6 +400,43 @@ class TestTier1ConfigAndSchemaParity(unittest.TestCase):
             missing_panel = self.TIER1_PANEL_KEYS - cal_keys
             self.assertFalse(missing_panel, f"{map_name} panel missing Tier 1 calibration keys: {missing_panel}")
 
+    def test_panel_tier1_diagnostics_and_html_integration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ev_path = Path(tmp) / "events.csv"
+            ev_path.write_text(
+                "ts_iso,t_rel,source,area,event,kv\n"
+                "2026-11-26T20:00:01,1.20,follow,cbf,intervene,src=no_entry v=0.44->0.26 yaw=+0.10->-0.85 clr=0.012\n"
+                "2026-11-26T20:00:02,1.70,follow,cbf,intervene,src=no_entry v=0.40->0.24 yaw=+0.05->-0.75 clr=0.015\n"
+                "2026-11-26T20:00:03,2.30,follow,cbf,intervene,src=lane_border v=0.30->0.00 yaw=+0.00->+0.40 clr=0.000\n"
+                "2026-11-26T20:00:06,5.80,follow,brake_adapt,state,v_in=0.220 travel=0.0310 scale=1.000->0.946 a_eff=1.701 vbat=12.10\n",
+                encoding="utf-8",
+            )
+            orig_run_dir = panel_server.run_dir
+            try:
+                panel_server.run_dir = lambda: tmp
+                diag = panel_server.read_diagnostics()
+            finally:
+                panel_server.run_dir = orig_run_dir
+
+            t1 = diag["tier1"]
+            self.assertEqual(t1["cbf_count"], 3)
+            self.assertEqual(t1["cbf_last_src"], "lane_border")
+            self.assertTrue(t1["cbf_hard_stop"])
+            self.assertEqual(t1["brake_updates"], 1)
+            self.assertAlmostEqual(t1["brake_scale"], 0.95, places=2)
+            self.assertAlmostEqual(t1["brake_a_eff"], 1.70, places=2)
+            self.assertAlmostEqual(t1["brake_vbat"], 12.10, places=2)
+            # 第 2 条重复 no_entry 介入被折叠，不刷满里程碑；第 1/3 条 cbf + 1 条 brake_adapt 保留
+            cbf_ms = [m for m in diag["milestones"] if m["area"] == "cbf"]
+            br_ms = [m for m in diag["milestones"] if m["area"] == "brake_adapt"]
+            self.assertEqual(len(cbf_ms), 2)
+            self.assertEqual(len(br_ms), 1)
+
+        html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("e.area === 'cbf'", html)
+        self.assertIn("e.area === 'brake_adapt'", html)
+        self.assertIn("d.tier1", html)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
