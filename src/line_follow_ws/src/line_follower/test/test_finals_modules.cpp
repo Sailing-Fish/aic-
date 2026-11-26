@@ -458,6 +458,89 @@ void test_motion_controller_corridor_and_safe_lost()
   CHECK(std::abs(lost_stop.linear_speed) < 1e-9);
 }
 
+void test_motion_controller_edge_heading_guard_and_curve_preservation()
+{
+  MotionControllerConfig cfg{};
+  cfg.target_speed = 0.42;
+  cfg.max_speed = 0.80;
+  cfg.min_speed = 0.0;
+  cfg.max_yaw_rate = 2.0;
+  cfg.speed_gain_damping = 0.55;
+  cfg.corridor_kp_y = 3.8;
+  cfg.corridor_heading_gain = 0.85;
+  MotionController ctrl(cfg);
+  MotionState motion{};
+
+  // 1. Exact roundabout crash frame #141: car hugging right border (near=-0.90, far=-0.18 -> hdg=+0.72),
+  //    corridor wants LEFT recovery (y_ref=+0.082). Guard MUST suppress edge-pushing hdg and steer LEFT!
+  {
+    CurveAssistState c{};
+    c.near_valid = true;
+    c.far_valid = true;
+    c.near_error = -0.90;
+    c.far_error = -0.18;
+    c.reverse_curve_active = false;
+    const MotionCommand cmd = ctrl.compute_corridor_command(
+      +0.082, 0.0, +0.72, 0.72, 0.90, 0.22, c, motion);
+    CHECK(cmd.yaw_rate > 0.25);  // Previously -0.32 (drove off right edge!)
+  }
+
+  // 2. Exact crash onset frame #136: car near right edge (near=-0.53) while far just crosses right (+0.04),
+  //    corridor wants gentle LEFT recovery (y_ref=+0.019). Guard MUST NOT flip recovery into diving right!
+  {
+    CurveAssistState c{};
+    c.near_valid = true;
+    c.far_valid = true;
+    c.near_error = -0.53;
+    c.far_error = +0.04;
+    c.reverse_curve_active = false;
+    const MotionCommand cmd = ctrl.compute_corridor_command(
+      +0.019, 0.0, +0.57, 0.57, 0.92, 0.22, c, motion);
+    CHECK(cmd.yaw_rate > 0.0);  // Previously -0.38!
+  }
+
+  // 3. Mirror case: car hugging LEFT border (near=+0.80, far=+0.15, hdg=-0.65), corridor wants RIGHT (-0.08)
+  {
+    CurveAssistState c{};
+    c.near_valid = true;
+    c.far_valid = true;
+    c.near_error = +0.80;
+    c.far_error = +0.15;
+    c.reverse_curve_active = false;
+    const MotionCommand cmd = ctrl.compute_corridor_command(
+      -0.080, 0.0, -0.65, 0.65, 0.90, 0.22, c, motion);
+    CHECK(cmd.yaw_rate < -0.25);
+  }
+
+  // 4. Anti-regression: normal centered sharp right curve (#69: near=0.0, far=+0.60, hdg=+0.60, y_ref=-0.152)
+  //    MUST keep full aggressive right steering (~ -1.09 rad/s)!
+  {
+    CurveAssistState c{};
+    c.near_valid = true;
+    c.far_valid = true;
+    c.near_error = 0.0;
+    c.far_error = +0.60;
+    c.reverse_curve_active = false;
+    const MotionCommand cmd = ctrl.compute_corridor_command(
+      -0.152, 0.0, +0.60, 0.60, 0.63, 0.42, c, motion);
+    CHECK(cmd.yaw_rate < -1.05);
+  }
+
+  // 5. Anti-regression: active right dodge around left obstacle (#125: near=-0.28, far=-0.23, y_ref=-0.097)
+  //    corridor actively asks to go RIGHT -> guard MUST NOT fight obstacle dodge!
+  {
+    CurveAssistState c{};
+    c.near_valid = true;
+    c.far_valid = true;
+    c.near_error = -0.28;
+    c.far_error = -0.23;
+    c.reverse_curve_active = false;
+    const MotionCommand cmd = ctrl.compute_corridor_command(
+      -0.097, 0.0, +0.05, 0.05, 0.97, 0.22, c, motion);
+    CHECK(cmd.yaw_rate < -0.40);
+  }
+}
+
 void test_red_obstacle_or_fusion_and_attribution()
 {
   GroundDetection y_cone{};
@@ -1003,6 +1086,7 @@ int main()
   test_finish_guard_random_yellow_rejection_and_two_stage_stop();
   test_track_state_machine_odom_freshness_and_finals_mode();
   test_motion_controller_corridor_and_safe_lost();
+  test_motion_controller_edge_heading_guard_and_curve_preservation();
   test_red_obstacle_or_fusion_and_attribution();
   test_corridor_two_zone_staggered_and_curve_horizon();
   test_b3_rear_axle_rotation_pivot();

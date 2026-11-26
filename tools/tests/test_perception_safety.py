@@ -113,9 +113,40 @@ class TestCameraV4L2Policy(unittest.TestCase):
         joined = [' '.join(c) for c in calls]
         self.assertTrue(any('power_line_frequency=1' in s for s in joined))
         self.assertTrue(any('backlight_compensation=0' in s for s in joined))
+        self.assertTrue(any('exposure_dynamic_framerate=0' in s for s in joined))
         self.assertTrue(any('auto_exposure=3' in s for s in joined))
         self.assertTrue(any('white_balance_automatic=1' in s for s in joined))
         self.assertTrue(any('[DEC] camera v4l2 startup' in m for m in logs))
+
+    def test_camera_30fps_buffer_and_dynamic_framerate_alias_fallback(self):
+        calls = []
+
+        def alias_runner(cmd, **_kwargs):
+            calls.append(cmd)
+            if '--set-ctrl' in cmd:
+                val = cmd[cmd.index('--set-ctrl') + 1]
+                if val.startswith('exposure_dynamic_framerate='):
+                    return FakeCompletedProcess(1, '', 'unknown control')
+            return FakeCompletedProcess(0, '', '')
+
+        policy = camera_mod.CameraV4L2Policy(
+            device='/dev/video0',
+            ae_awb_mode='lock_on_start',
+            exposure_dynamic_framerate=0,
+            runner=alias_runner,
+        )
+        summary = policy.apply_startup()
+        self.assertEqual(summary['exposure_dynamic_framerate'], 0)
+        joined = [' '.join(c) for c in calls]
+        self.assertTrue(any('exposure_auto_priority=0' in s for s in joined))
+
+        cam_src = (WS_ROOT / 'src' / 'camera' / 'camera.py').read_text(encoding='utf-8')
+        self.assertIn("declare_parameter('v4l2_buffer_size', 2)", cam_src)
+        self.assertIn("declare_parameter('exposure_dynamic_framerate', 0)", cam_src)
+        self.assertLess(
+            cam_src.index('CAP_PROP_FOURCC'),
+            cam_src.index('CAP_PROP_BUFFERSIZE'),
+        )
 
     def test_manual_fixed_mode_locks_configured_values(self):
         calls = []

@@ -45,8 +45,38 @@ MotionCommand MotionController::compute_corridor_command(
     (0.45 * config_.corridor_heading_gain) :
     config_.corridor_heading_gain;
 
+  const double lat_term = config_.corridor_kp_y * lateral_err_m;
+  double hdg_term = -eff_heading_gain * heading_proxy;
+
+  // Anti-off-track heading guard:
+  // near_error < 0 means near lane is on LEFT (car is close to RIGHT border), while
+  // hdg_term < 0 steers RIGHT (further off that close border). When the car is already
+  // displaced toward an edge and the corridor target is NOT pushing toward that edge
+  // (e.g. recovering from obstacle dodge or hugging an inner corner), prevent heading_proxy
+  // (= far - near) from overpowering lateral recovery and pushing the car off-track.
+  if (curve_state.near_valid) {
+    const double abs_near = std::abs(curve_state.near_error);
+    const bool pushing_close_edge = (hdg_term * curve_state.near_error) > 0.0;
+    const bool corridor_not_pushing_edge = (lat_term * curve_state.near_error) <= 0.0;
+    if (abs_near > 0.20 && pushing_close_edge && corridor_not_pushing_edge) {
+      const bool genuine_opposite_far =
+        curve_state.far_valid && ((curve_state.near_error * curve_state.far_error) < 0.0);
+      if (!genuine_opposite_far) {
+        const double scale = clamp_value((0.35 - abs_near) / 0.15, 0.0, 1.0);
+        hdg_term *= scale;
+      } else {
+        const double scale = clamp_value((0.55 - abs_near) / 0.35, 0.0, 1.0);
+        hdg_term *= scale;
+        if (abs_near >= 0.35 && std::abs(lat_term) > 1e-6) {
+          const double max_opp = 0.50 * std::abs(lat_term);
+          hdg_term = clamp_value(hdg_term, -max_opp, max_opp);
+        }
+      }
+    }
+  }
+
   double yaw_cmd = clamp_value(
-    config_.corridor_kp_y * lateral_err_m - eff_heading_gain * heading_proxy,
+    lat_term + hdg_term,
     -config_.max_yaw_rate,
     config_.max_yaw_rate);
 

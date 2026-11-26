@@ -118,7 +118,7 @@ line_follower_node:
     yellow_dead_end_blue_ratio: 0.35
     yellow_dead_end_dark_ratio: 0.20
     yellow_dead_end_combined_ratio: 0.50
-    yellow_stop_min_time: 0.35
+    yellow_stop_min_time: 0.55
     yellow_clear_frames: 10
     odom_still_threshold: 0.02
     odom_still_hold: 0.18
@@ -173,7 +173,7 @@ line_follower_node:
     cone_margin_m: 0.025
     no_entry_margin_m: 0.030
     obstacle_lookahead_m: 1.10
-    obstacle_rear_keep_m: 0.28
+    obstacle_rear_keep_m: 0.20
     obstacle_steer_horizon_m: 0.65
     obstacle_curve_min_horizon_m: 0.45
     obstacle_stagger_gap_m: 0.25

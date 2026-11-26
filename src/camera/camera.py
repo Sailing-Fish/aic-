@@ -55,6 +55,7 @@ class CameraV4L2Policy:
         white_balance_temperature=0,
         gain=-1,
         backlight_compensation=0,
+        exposure_dynamic_framerate=0,
         unlock_on_stop=True,
         cmd_timeout_sec=0.5,
         runner=None,
@@ -70,6 +71,7 @@ class CameraV4L2Policy:
         self.white_balance_temperature = int(white_balance_temperature)
         self.gain = int(gain)
         self.backlight_compensation = int(backlight_compensation)
+        self.exposure_dynamic_framerate = int(exposure_dynamic_framerate)
         self.unlock_on_stop = bool(unlock_on_stop)
         self.cmd_timeout_sec = float(max(0.05, cmd_timeout_sec))
         self._runner = runner if runner is not None else subprocess.run
@@ -162,6 +164,12 @@ class CameraV4L2Policy:
 
     def _set_auto_ae_awb(self):
         ae_ok, _ = self.set_ctrl('auto_exposure', 3, aliases=('exposure_auto',))
+        if self.exposure_dynamic_framerate in (0, 1):
+            self.set_ctrl(
+                'exposure_dynamic_framerate',
+                self.exposure_dynamic_framerate,
+                aliases=('exposure_auto_priority',),
+            )
         awb_ok, _ = self.set_ctrl(
             'white_balance_automatic', 1, aliases=('white_balance_temperature_auto',)
         )
@@ -208,6 +216,16 @@ class CameraV4L2Policy:
         if self.backlight_compensation >= 0:
             ok, _ = self.set_ctrl('backlight_compensation', self.backlight_compensation)
             summary['backlight_compensation'] = self.backlight_compensation if ok else None
+
+        if self.exposure_dynamic_framerate in (0, 1):
+            ok, _ = self.set_ctrl(
+                'exposure_dynamic_framerate',
+                self.exposure_dynamic_framerate,
+                aliases=('exposure_auto_priority',),
+            )
+            summary['exposure_dynamic_framerate'] = (
+                self.exposure_dynamic_framerate if ok else None
+            )
 
         if self.ae_awb_mode == 'manual_fixed':
             applied = self._lock_manual_values(
@@ -295,7 +313,9 @@ class CameraPublisher(Node):
         self.declare_parameter('framerate', 30.0)
         self.declare_parameter('topic_name', '/image_raw')
         self.declare_parameter('qos_depth', 1)
-        self.declare_parameter('v4l2_buffer_size', 1)
+        # Double-buffering (2) prevents V4L2 single-buffer SOF starvation (which halves 30fps -> 15fps)
+        # while keeping capture latency to at most 1 frame.
+        self.declare_parameter('v4l2_buffer_size', 2)
         default_stats_sec = float(os.environ.get('CAMERA_STATS_LOG_INTERVAL_SEC', '5.0'))
         self.declare_parameter('stats_log_interval_sec', default_stats_sec)
 
@@ -306,6 +326,7 @@ class CameraPublisher(Node):
         self.declare_parameter('white_balance_temperature', 0)
         self.declare_parameter('gain', -1)
         self.declare_parameter('backlight_compensation', 0)
+        self.declare_parameter('exposure_dynamic_framerate', 0)
         self.declare_parameter('unlock_on_stop', True)
         self.declare_parameter('start_cmd_topic', 'line_follower/start_cmd')
 
@@ -326,6 +347,7 @@ class CameraPublisher(Node):
         white_balance_temperature = int(self.get_parameter('white_balance_temperature').value)
         gain = int(self.get_parameter('gain').value)
         backlight_compensation = int(self.get_parameter('backlight_compensation').value)
+        exposure_dynamic_framerate = int(self.get_parameter('exposure_dynamic_framerate').value)
         unlock_on_stop = bool(self.get_parameter('unlock_on_stop').value)
         start_cmd_topic = str(self.get_parameter('start_cmd_topic').value)
 
@@ -339,13 +361,12 @@ class CameraPublisher(Node):
             self.get_logger().error(f"无法打开设备 {device}，请检查连接及权限！")
             sys.exit(1)
 
-        # 减小 V4L2 底层缓冲深度，避免读取到滞后的旧帧
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, v4l2_buf_size)
-        # 设置摄像头编解码格式为 MJPEG (保证 640x480 / 1080P 30 帧)
+        # 先协商 MJPEG + 分辨率 + 帧率，再设置 V4L2 缓冲深度（2 帧双缓冲避免 30fps 腰斩到 15fps）
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.cap.set(cv2.CAP_PROP_FPS, framerate)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, v4l2_buf_size)
 
         # 应用 V4L2 抗频闪与 AE/AWB 策略（打开流后应用，避免被设备初始化重置）
         self.v4l2_policy = CameraV4L2Policy(
@@ -356,6 +377,7 @@ class CameraPublisher(Node):
             white_balance_temperature=white_balance_temperature,
             gain=gain,
             backlight_compensation=backlight_compensation,
+            exposure_dynamic_framerate=exposure_dynamic_framerate,
             unlock_on_stop=unlock_on_stop,
             logger=lambda m: self.get_logger().info(m),
         )
@@ -372,17 +394,19 @@ class CameraPublisher(Node):
         actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
         actual_buf = int(self.cap.get(cv2.CAP_PROP_BUFFERSIZE))
+        fourcc_int = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+        actual_fourcc = ''.join(chr((fourcc_int >> (8 * i)) & 0xFF) for i in range(4))
 
         self.get_logger().info("摄像头已成功启动!")
         self.get_logger().info(f"设备路径  : {device}")
-        self.get_logger().info(f"分辨率    : {actual_w}x{actual_h}")
+        self.get_logger().info(f"分辨率    : {actual_w}x{actual_h} ({actual_fourcc})")
         self.get_logger().info(f"目标帧率  : {actual_fps} FPS")
         self.get_logger().info(f"发布话题  : {topic_name} (qos_depth={qos_depth}, v4l2_buf={actual_buf})")
         self.get_logger().info(
             f"V4L2策略  : mode={self.v4l2_policy.ae_awb_mode} "
             f"plf={power_line_frequency} exp={exposure_time_absolute} "
             f"wb={white_balance_temperature} gain={gain} blc={backlight_compensation} "
-            f"start_topic={start_cmd_topic}"
+            f"dyn_fps={exposure_dynamic_framerate} start_topic={start_cmd_topic}"
         )
 
         # 帧率与耗时统计
@@ -393,8 +417,8 @@ class CameraPublisher(Node):
         self._read_ms_window = deque(maxlen=150)
         self._pub_ms_window = deque(maxlen=150)
 
-        # 创建定时器，循环采集并发布图像
-        timer_period = 1.0 / max(1.0, framerate)
+        # 创建定时器，循环采集并发布图像（略快于硬件帧间隔，由 V4L2 read() 硬件节拍精准同步）
+        timer_period = 0.85 / max(1.0, framerate)
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
     def _on_start_cmd(self, msg):

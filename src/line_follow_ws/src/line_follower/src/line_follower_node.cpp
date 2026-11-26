@@ -4,6 +4,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -1561,6 +1562,9 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     // B8: Only recover measured [y_l, y_r] on clean unsplit lanes of physical width [0.30, 0.52]m
     // (and during active fork steering, only when near-band center still agrees within 4cm);
     // otherwise keep anchored to y_center_m +/- half_w_def so far_band fork steering is preserved.
+    // When exactly one near-band edge is clipped off-screen (non-fork), enforce the visible edge
+    // strictly inward if it is more restrictive than the far-blended estimate so inner corners
+    // cannot mask an imminent lane departure while preserving full far-band curve anticipation.
     if (!obs.has_fork_split && left_proj_ok && right_proj_ok &&
       (y_l - y_r) >= 0.30 && (y_l - y_r) <= 0.52 &&
       (active_branch == 0 ||
@@ -1568,6 +1572,19 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     {
       y_lane_left_m = y_l;
       y_lane_right_m = y_r;
+    } else if (!obs.has_fork_split && active_branch == 0 && obs.near_band.valid) {
+      const double def_w = corridor_planner_.config().default_lane_width_m;
+      if (obs.near_band.left_clipped && !obs.near_band.right_clipped &&
+        right_proj_ok && y_r >= -0.45 && y_r <= 0.25 && y_r > y_lane_right_m)
+      {
+        y_lane_right_m = y_r;
+        y_lane_left_m = y_r + def_w;
+      } else if (obs.near_band.right_clipped && !obs.near_band.left_clipped &&
+        left_proj_ok && y_l >= -0.25 && y_l <= 0.45 && y_l < y_lane_left_m)
+      {
+        y_lane_left_m = y_l;
+        y_lane_right_m = y_l - def_w;
+      }
     }
 
     const double eff_curve_lvl = std::max(obs.curvature_proxy, curve_assist_.curve_level);
@@ -1788,7 +1805,7 @@ void LineFollowerNode::detect_cv_red_in_lane(
     return;
   }
 
-  // 1) Row-span fill of white lane interior (+8px border pad)
+  // 1) Row-span fill of white lane interior (+4px border pad)
   cv::Mat lane_span_mask = cv::Mat::zeros(roi_h, roi_w, CV_8UC1);
   for (int r = 0; r < roi_h; ++r) {
     const uint8_t * row_ptr = result.binary_mask.ptr<uint8_t>(r);
@@ -1810,8 +1827,8 @@ void LineFollowerNode::detect_cv_red_in_lane(
       }
     }
     if (x_right - x_left >= 16) {
-      const int p0 = std::max(0, x_left - 8);
-      const int p1 = std::min(roi_w - 1, x_right + 8);
+      const int p0 = std::max(0, x_left - 4);
+      const int p1 = std::min(roi_w - 1, x_right + 4);
       uint8_t * dst_ptr = lane_span_mask.ptr<uint8_t>(r);
       std::fill(dst_ptr + p0, dst_ptr + p1 + 1, static_cast<uint8_t>(255));
     }
@@ -1854,6 +1871,8 @@ void LineFollowerNode::detect_cv_red_in_lane(
   const double roi_area = static_cast<double>(roi_w) * static_cast<double>(roi_h);
   const double min_area_px = std::max(70.0, red_cone_area_ratio_threshold_ * roi_area);
 
+  // Merge fragmented contours from the same hollow red no-entry rectangle before projection
+  std::vector<cv::Rect> merged_rois;
   for (const auto & cnt : contours) {
     const double area = cv::contourArea(cnt);
     if (area < min_area_px) {
@@ -1861,6 +1880,44 @@ void LineFollowerNode::detect_cv_red_in_lane(
     }
     const cv::Rect r_roi = cv::boundingRect(cnt);
     if (r_roi.width < 6 || r_roi.height < 6) {
+      continue;
+    }
+    // Skip tiny clipped slivers grazing the left/right image border (already tracked in memory)
+    const bool touches_lr_border = (r_roi.x <= 1) || (r_roi.x + r_roi.width >= roi_w - 2);
+    if (touches_lr_border && r_roi.width < 16 && r_roi.height < 16) {
+      continue;
+    }
+    merged_rois.push_back(r_roi);
+  }
+
+  bool did_merge = true;
+  const int max_merged_w = static_cast<int>(0.55 * static_cast<double>(roi_w));
+  while (did_merge && merged_rois.size() >= 2) {
+    did_merge = false;
+    for (size_t i = 0; i < merged_rois.size() && !did_merge; ++i) {
+      for (size_t j = i + 1; j < merged_rois.size(); ++j) {
+        const cv::Rect & a = merged_rois[i];
+        const cv::Rect & b = merged_rois[j];
+        const int dx = std::max(0, std::max(a.x - (b.x + b.width), b.x - (a.x + a.width)));
+        const int dy = std::max(0, std::max(a.y - (b.y + b.height), b.y - (a.y + a.height)));
+        if (dx <= 24 && dy <= 16) {
+          const cv::Rect u = a | b;
+          if (u.width <= max_merged_w) {
+            merged_rois[i] = u;
+            merged_rois.erase(merged_rois.begin() + static_cast<std::ptrdiff_t>(j));
+            did_merge = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  for (const auto & r_roi : merged_rois) {
+    // Reject off-track red objects (e.g. cones on outer blue mat) whose base center lies outside lane span
+    const int u_base_roi = std::clamp(r_roi.x + r_roi.width / 2, 0, roi_w - 1);
+    const int v_base_roi = std::clamp(r_roi.y + r_roi.height - 1, 0, roi_h - 1);
+    if (lane_span_mask.at<uint8_t>(v_base_roi, u_base_roi) == 0) {
       continue;
     }
 
