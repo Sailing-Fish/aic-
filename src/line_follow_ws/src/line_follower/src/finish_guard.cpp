@@ -36,6 +36,7 @@ void FinishGuard::set_config(const FinishGuardConfig & config)
   config_.friction_scale_max = std::clamp(
     config_.friction_scale_max, config_.friction_scale_min, 2.0);
   config_.brake_damping_gain = std::clamp(config_.brake_damping_gain, 0.0, 5.0);
+  config_.brake_min_cmd_mps = std::clamp(config_.brake_min_cmd_mps, 0.0, 0.60);
   config_.brake_zero_cutoff_mps = std::clamp(config_.brake_zero_cutoff_mps, 0.0, 0.20);
   config_.rearm_travel_dist_m = std::max(0.05, config_.rearm_travel_dist_m);
   friction_scale_ = std::clamp(
@@ -193,7 +194,8 @@ double FinishGuard::compute_closed_loop_brake_cmd(
   if (odom_linear_x <= config_.brake_zero_cutoff_mps) {
     return 0.0;
   }
-  const double mag = std::clamp(config_.brake_damping_gain * odom_linear_x, 0.0, v_max);
+  const double raw_mag = std::max(config_.brake_min_cmd_mps, config_.brake_damping_gain * odom_linear_x);
+  const double mag = std::clamp(raw_mag, 0.0, v_max);
   return (mag > 1e-9) ? -mag : 0.0;
 }
 

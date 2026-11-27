@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "line_follower/ackermann_cbf_shield.hpp"
+#include "line_follower/bev_dwa_planner.hpp"
 #include "line_follower/corridor_planner.hpp"
 #include "line_follower/finals_types.hpp"
 #include "line_follower/finish_guard.hpp"
@@ -363,9 +364,23 @@ struct BrainInstance
   bool enable_sqrt_brake_envelope{true};
   bool enable_closed_loop_brake{true};
   double brake_damping_gain{0.85};
+  double brake_min_cmd_mps{0.0};
   double brake_zero_cutoff_mps{0.025};
 
-  // The 7 pure C++17 modules
+  // First-principles BEV DWA params
+  std::string bev_planner_mode{"bev_dwa"};
+  double bev_wheelbase_m{0.1395};
+  double bev_kappa_max_left{2.38};
+  double bev_kappa_max_right{2.80};
+  double bev_control_latency_s{0.09};
+  double bev_imu_yaw_kp{0.35};
+  double bev_steer_launch_v_floor{0.16};
+  double bev_max_lat_accel_mps2{0.42};
+  double bev_memory_ttl_sec{0.55};
+  double bev_rollout_horizon_m{0.85};
+  bool enable_anti_stall_escape{true};
+
+  // The 8 pure C++17 modules
   line_follower::GroundProjector ground_projector{};
   line_follower::ObstacleMemory obstacle_memory{};
   line_follower::CorridorPlanner corridor_planner{};
@@ -373,6 +388,7 @@ struct BrainInstance
   line_follower::TrackStateMachine track_state_machine{};
   line_follower::MotionController motion_controller{};
   line_follower::AckermannCbfShield cbf_shield{};
+  line_follower::BevDwaPlanner bev_dwa_planner{};
 
   // Runtime states matching LineFollowerNode
   line_follower::CurveAssistState curve_assist{};
@@ -561,8 +577,48 @@ struct BrainInstance
     fg_cfg.enable_sqrt_brake_envelope = enable_sqrt_brake_envelope;
     fg_cfg.enable_closed_loop_brake = enable_closed_loop_brake;
     fg_cfg.brake_damping_gain = brake_damping_gain;
+    fg_cfg.brake_min_cmd_mps = brake_min_cmd_mps;
     fg_cfg.brake_zero_cutoff_mps = brake_zero_cutoff_mps;
     finish_guard.set_config(fg_cfg);
+
+    // 8. BevDwaPlanner
+    line_follower::BevDwaConfig bev_cfg{};
+    bev_cfg.track_mode = track_mode;
+    bev_cfg.wheelbase_m = bev_wheelbase_m;
+    bev_cfg.car_width_m = car_width_m;
+    bev_cfg.car_length_m = car_length_m;
+    bev_cfg.rear_axle_to_bumper_m = rear_axle_to_bumper_m;
+    bev_cfg.kappa_max_left = bev_kappa_max_left;
+    bev_cfg.kappa_max_right = bev_kappa_max_right;
+    bev_cfg.max_yaw_rate = max_yaw_rate;
+    bev_cfg.control_latency_s = bev_control_latency_s;
+    bev_cfg.imu_yaw_kp = bev_imu_yaw_kp;
+    bev_cfg.steer_launch_v_floor = bev_steer_launch_v_floor;
+    bev_cfg.cruise_speed_mps = target_speed;
+    bev_cfg.clear_straight_speed_mps = clear_straight_speed;
+    bev_cfg.enable_clear_straight_boost = enable_clear_path_speed;
+    bev_cfg.min_speed_mps = min_speed;
+    bev_cfg.max_speed_mps = max_speed;
+    bev_cfg.max_lat_accel_mps2 = bev_max_lat_accel_mps2;
+    bev_cfg.max_accel_mps2 = max_accel_mps2;
+    bev_cfg.max_decel_mps2 = max_decel_mps2;
+    bev_cfg.obstacle_speed_mps = obstacle_speed_mps;
+    bev_cfg.no_entry_speed_mps = no_entry_speed_mps;
+    bev_cfg.bev_memory_ttl_sec = bev_memory_ttl_sec;
+    bev_cfg.rollout_horizon_m = bev_rollout_horizon_m;
+    bev_cfg.fork_outer_branch = fork_outer_branch;
+    bev_cfg.fork_outer_time_penalty_s = fork_outer_time_penalty_s;
+    bev_cfg.fork_min_votes = std::max(1, fork_min_votes);
+    bev_cfg.digit_min_conf = digit_min_conf;
+    bev_cfg.allow_dual_digit_cover = allow_dual_digit_cover;
+    bev_cfg.max_digit_lateral_shift_m = max_digit_lateral_shift_m;
+    bev_cfg.finish_min_cum_yaw_rad =
+      (finish_min_cum_yaw_rad > 0.1) ? finish_min_cum_yaw_rad : 2.2;
+    bev_cfg.finish_force_dist_m = finish_force_dist_m;
+    bev_cfg.yellow_rearm_dist_m = yellow_rearm_dist_m;
+    bev_cfg.enable_anti_stall_escape = enable_anti_stall_escape;
+    bev_cfg.nominal_lane_width_m = default_lane_width_m;
+    bev_dwa_planner.set_config(bev_cfg);
 
     params_dirty = false;
   }
@@ -1729,8 +1785,28 @@ BRAIN_API int32_t brain_set_param_double(void * handle, const char * name, doubl
     inst->yellow_rearm_dist_m = value;
   } else if (k == "brake_damping_gain") {
     inst->brake_damping_gain = value;
+  } else if (k == "brake_min_cmd_mps") {
+    inst->brake_min_cmd_mps = value;
   } else if (k == "brake_zero_cutoff_mps") {
     inst->brake_zero_cutoff_mps = value;
+  } else if (k == "bev_wheelbase_m") {
+    inst->bev_wheelbase_m = value;
+  } else if (k == "bev_kappa_max_left") {
+    inst->bev_kappa_max_left = value;
+  } else if (k == "bev_kappa_max_right") {
+    inst->bev_kappa_max_right = value;
+  } else if (k == "bev_control_latency_s") {
+    inst->bev_control_latency_s = value;
+  } else if (k == "bev_imu_yaw_kp") {
+    inst->bev_imu_yaw_kp = value;
+  } else if (k == "bev_steer_launch_v_floor") {
+    inst->bev_steer_launch_v_floor = value;
+  } else if (k == "bev_max_lat_accel_mps2") {
+    inst->bev_max_lat_accel_mps2 = value;
+  } else if (k == "bev_memory_ttl_sec") {
+    inst->bev_memory_ttl_sec = value;
+  } else if (k == "bev_rollout_horizon_m") {
+    inst->bev_rollout_horizon_m = value;
   } else if (k == "clear_straight_speed") {
     inst->clear_straight_speed = value;
   } else if (k == "clear_preview_dist_m") {
@@ -1821,6 +1897,8 @@ BRAIN_API int32_t brain_set_param_bool(void * handle, const char * name, int32_t
     inst->enable_closed_loop_brake = b;
   } else if (k == "enable_clear_path_speed") {
     inst->enable_clear_path_speed = b;
+  } else if (k == "enable_anti_stall_escape") {
+    inst->enable_anti_stall_escape = b;
   } else {
     return 0;
   }
@@ -1838,7 +1916,9 @@ BRAIN_API int32_t brain_set_param_string(void * handle, const char * name, const
   const std::string k(name);
   const std::string v(value);
 
-  if (k == "track_mode") {
+  if (k == "bev_planner_mode") {
+    inst->bev_planner_mode = v;
+  } else if (k == "track_mode") {
     inst->track_mode = v;
   } else if (k == "lane_seg_mode") {
     inst->lane_seg_mode = v;
@@ -1912,6 +1992,148 @@ BRAIN_API int32_t brain_pixel_to_ground(
   *d_bumper_m_out = d;
   *y_lat_m_out = y;
   return 1;
+}
+
+struct BevDwaStepOutC
+{
+  double linear_speed_mps;
+  double yaw_rate_rps;
+  double chosen_kappa;
+  double chosen_safe_len_m;
+  double min_wall_clearance_m;
+  double min_obs_clearance_m;
+  double rel_yaw_rad;
+  double goal_yaw_rad;
+  double measured_lane_width_m;
+  int32_t phase;
+  int32_t committed_branch;
+  int32_t has_feasible_arc;
+  int32_t has_near_obstacle;
+  int32_t is_finish_line;
+  int32_t yellow_rearmed;
+  int32_t goal_yaw_active;
+  char mode_tag[32];
+};
+
+BRAIN_API int32_t bev_dwa_reset_c(
+  void * handle,
+  double now_sec,
+  double x,
+  double y,
+  double yaw)
+{
+  auto * inst = static_cast<BrainInstance *>(handle);
+  if (inst == nullptr) {
+    return -1;
+  }
+  if (inst->params_dirty) {
+    inst->sync_configs();
+  }
+  line_follower::VehiclePose2D p{true, x, y, yaw, 0.0, 0.0, now_sec};
+  inst->bev_dwa_planner.reset(now_sec, p);
+  return 0;
+}
+
+BRAIN_API int32_t bev_dwa_finalize_fork_c(void * handle)
+{
+  auto * inst = static_cast<BrainInstance *>(handle);
+  if (inst == nullptr) {
+    return 0;
+  }
+  return inst->bev_dwa_planner.finalize_fork_decision();
+}
+
+BRAIN_API int32_t bev_dwa_notify_yellow_stop_c(void * handle)
+{
+  auto * inst = static_cast<BrainInstance *>(handle);
+  if (inst == nullptr) {
+    return -1;
+  }
+  inst->bev_dwa_planner.notify_yellow_stop_triggered();
+  inst->bev_dwa_planner.clear_fork_votes();
+  return 0;
+}
+
+BRAIN_API int32_t bev_dwa_step_c(
+  void * handle,
+  const uint8_t * live_grid_160x160,
+  double odom_x,
+  double odom_y,
+  double odom_yaw,
+  double odom_v,
+  double odom_w,
+  int32_t has_odom,
+  const double * digits_d_y_val_conf,
+  int32_t num_digits,
+  int32_t yellow_ahead,
+  int32_t yellow_dist_valid,
+  double yellow_d_bumper_m,
+  double yellow_speed_cap_mps,
+  int32_t is_holding_yellow_stop,
+  double now_sec,
+  BevDwaStepOutC * out,
+  uint8_t * fused_grid_out)
+{
+  auto * inst = static_cast<BrainInstance *>(handle);
+  if (inst == nullptr || live_grid_160x160 == nullptr || out == nullptr) {
+    return -1;
+  }
+  if (inst->params_dirty) {
+    inst->sync_configs();
+  }
+  std::array<uint8_t, line_follower::kBevCells> grid{};
+  std::memcpy(grid.data(), live_grid_160x160, line_follower::kBevCells);
+
+  line_follower::VehiclePose2D pose{};
+  pose.valid = (has_odom != 0);
+  pose.x = odom_x;
+  pose.y = odom_y;
+  pose.yaw = odom_yaw;
+  pose.linear_v = odom_v;
+  pose.angular_w = odom_w;
+  pose.stamp_sec = now_sec;
+
+  std::vector<line_follower::GroundDetection> digits;
+  if (digits_d_y_val_conf != nullptr && num_digits > 0) {
+    digits.reserve(static_cast<size_t>(num_digits));
+    for (int32_t i = 0; i < num_digits; ++i) {
+      line_follower::GroundDetection gd{};
+      gd.type = line_follower::SemanticObjectType::BONUS_DIGIT;
+      gd.d_bumper_m = digits_d_y_val_conf[i * 4 + 0];
+      gd.y_lat_m = digits_d_y_val_conf[i * 4 + 1];
+      gd.digit = static_cast<int>(std::lround(digits_d_y_val_conf[i * 4 + 2]));
+      gd.confidence = digits_d_y_val_conf[i * 4 + 3];
+      digits.push_back(gd);
+    }
+  }
+
+  const auto r = inst->bev_dwa_planner.step(
+    grid, pose, digits,
+    yellow_ahead != 0, yellow_dist_valid != 0, yellow_d_bumper_m,
+    yellow_speed_cap_mps, is_holding_yellow_stop != 0, now_sec);
+
+  out->linear_speed_mps = r.linear_speed_mps;
+  out->yaw_rate_rps = r.yaw_rate_rps;
+  out->chosen_kappa = r.chosen_kappa;
+  out->chosen_safe_len_m = r.chosen_safe_len_m;
+  out->min_wall_clearance_m = r.min_wall_clearance_m;
+  out->min_obs_clearance_m = r.min_obs_clearance_m;
+  out->rel_yaw_rad = r.rel_yaw_rad;
+  out->goal_yaw_rad = r.goal_yaw_rad;
+  out->measured_lane_width_m = r.measured_lane_width_m;
+  out->phase = static_cast<int32_t>(r.phase);
+  out->committed_branch = r.committed_branch;
+  out->has_feasible_arc = r.has_feasible_arc ? 1 : 0;
+  out->has_near_obstacle = r.has_near_obstacle ? 1 : 0;
+  out->is_finish_line = r.is_finish_line ? 1 : 0;
+  out->yellow_rearmed = inst->bev_dwa_planner.is_yellow_rearmed() ? 1 : 0;
+  out->goal_yaw_active = r.goal_yaw_active ? 1 : 0;
+  copy_str(out->mode_tag, sizeof(out->mode_tag), r.mode_tag);
+
+  if (fused_grid_out != nullptr) {
+    std::memcpy(fused_grid_out, inst->bev_dwa_planner.fused_grid().data(), line_follower::kBevCells);
+  }
+  return 0;
 }
 
 }  // extern "C"

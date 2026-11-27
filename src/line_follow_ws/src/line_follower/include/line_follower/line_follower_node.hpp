@@ -19,6 +19,8 @@
 #include <std_msgs/msg/string.hpp>
 
 #include "line_follower/ackermann_cbf_shield.hpp"
+#include "line_follower/bev_dwa_planner.hpp"
+#include "line_follower/bev_mapper.hpp"
 #include "line_follower/corridor_planner.hpp"
 #include "line_follower/debug_renderer.hpp"
 #include "line_follower/finals_types.hpp"
@@ -119,6 +121,7 @@ private:
   // ============================================================
   // Finals Mode Switches
   // ============================================================
+  std::string planner_mode_{"bev_dwa"};            // "bev_dwa" (first-principles) | "legacy"
   std::string track_mode_{"fork"};                 // "fork" | "roundabout"
   std::string lane_seg_mode_{"relative_border"};   // "relative_border" | "hybrid" | "legacy_hsv"
   std::string yellow_detect_mode_{"geometric_cv"}; // "geometric_cv" | "yolo_cv_hybrid"
@@ -237,6 +240,9 @@ private:
   AckermannCbfShield cbf_shield_;
   CorridorPlanner corridor_planner_;
   FinishGuard finish_guard_;
+  BevDwaPlanner bev_dwa_planner_;
+  BevMapper bev_mapper_;
+  bool preflight_logged_{false};
 
   CurveAssistState curve_assist_{};
   MotionState motion_state_{};

@@ -1,4 +1,5 @@
 #include "line_follower/ackermann_cbf_shield.hpp"
+#include "line_follower/bev_dwa_planner.hpp"
 #include "line_follower/corridor_planner.hpp"
 #include "line_follower/finals_types.hpp"
 #include "line_follower/finish_guard.hpp"
@@ -1415,6 +1416,224 @@ void test_corridor_ackermann_curve_offtracking_compensation()
   CHECK(right_with_obs.target_y_m + 0.5 * cfg.car_width_m < outer_cone.y_min_m);
 }
 
+void test_bev_dwa_first_principles_and_execution()
+{
+  using line_follower::BEV_FREE;
+  using line_follower::BEV_OBS_CONE;
+  using line_follower::BEV_OBS_NO_ENTRY;
+  using line_follower::BEV_WALL_BLUE;
+  using line_follower::BevDwaConfig;
+  using line_follower::BevDwaPlanner;
+  using line_follower::BevDwaPlanResult;
+  using line_follower::TopologyPhase;
+  using line_follower::kBevCells;
+  using line_follower::kBevCols;
+  using line_follower::kBevRows;
+
+  auto make_straight_grid = [](double half_w_m) {
+    std::array<uint8_t, kBevCells> g{};
+    g.fill(BEV_WALL_BLUE);
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        if (d >= -0.30 && d <= 1.20 && std::abs(y) <= half_w_m) {
+          g[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
+        }
+      }
+    }
+    return g;
+  };
+
+  // 1) Pre-flight self-check: gyro bias calibration + homography width alarm
+  {
+    BevDwaConfig cfg{};
+    BevDwaPlanner planner(cfg);
+    auto good_grid = make_straight_grid(0.215);  // 430mm exact
+    VehiclePose2D idle_pose{true, 0.0, 0.0, 0.0, 0.0, +0.025, 0.0};
+    for (int i = 0; i < 20; ++i) {
+      planner.update_standstill_check(good_grid, idle_pose);
+    }
+    CHECK(planner.preflight_status().checked);
+    CHECK(planner.preflight_status().homography_ok);
+    CHECK(planner.preflight_status().gyro_calibrated);
+    CHECK(std::abs(planner.preflight_status().gyro_bias_rps - 0.025) < 1e-4);
+
+    // Tilted camera producing narrow 0.30m apparent width must trigger warning!
+    auto bad_grid = make_straight_grid(0.15);
+    planner.update_standstill_check(bad_grid, idle_pose);
+    CHECK(!planner.preflight_status().homography_ok);
+    CHECK(!planner.preflight_status().warning_msg.empty());
+  }
+
+  // 2) Fork S T-junction anti-wrong-way test:
+  //    Arriving North (-90 deg) up the right shortcut, even with a red no-entry strip
+  //    on the top-right shoulder (exact fork F195-F203 scenario!), MUST turn RIGHT (kappa < 0)
+  //    into East-bound S-curve and NEVER turn LEFT backwards!
+  {
+    BevDwaConfig cfg{};
+    cfg.track_mode = "fork";
+    cfg.kappa_max_left = 2.38;
+    cfg.kappa_max_right = 2.80;
+    BevDwaPlanner planner(cfg);
+    VehiclePose2D p0{true, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    planner.reset(0.0, p0);
+
+    // Vote single-side right=8 (left missing -> E=4.5 fallback -> chooses RIGHT +1!)
+    GroundDetection d8{SemanticObjectType::BONUS_DIGIT, 8, 0.90, 0.55, -0.10, 0.04, 0.04, 1, 1.0};
+    planner.update_fork_votes({d8}, true);
+    planner.update_fork_votes({d8}, true);
+    const int chosen = planner.finalize_fork_decision();
+    CHECK(chosen == +1);
+    CHECK(planner.phase() == TopologyPhase::FORK_RIGHT_ENTER);
+
+    // Rotate cleanly to North (-pi/2) along straight vertical shortcut
+    auto straight = make_straight_grid(0.215);
+    constexpr double kHalfPi = 1.5707963267948966;
+    for (int k = 1; k <= 10; ++k) {
+      VehiclePose2D pk{
+        true, 0.05 * k, -0.05 * k, -kHalfPi * (static_cast<double>(k) / 10.0), 0.25, -0.5, 0.1 * k};
+      planner.step(straight, pk, {}, false, false, 0.0, 1e9, false, 0.1 * k);
+    }
+    CHECK(planner.phase() == TopologyPhase::FORK_RIGHT_STEM);
+
+    // Build symmetric T-junction grid: vertical stem d in [-0.30, 0.45], horizontal bar d in [0.15, 0.58], y in [-0.78, +0.78]
+    // PLUS red no-entry patch on top-right corner (d in [0.46, 0.56], y in [-0.35, -0.18])!
+    std::array<uint8_t, kBevCells> t_grid{};
+    t_grid.fill(BEV_WALL_BLUE);
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        const bool in_stem = (d >= -0.30 && d <= 0.45 && std::abs(y) <= 0.215);
+        const bool in_bar = (d >= 0.15 && d <= 0.58 && std::abs(y) <= 0.78);
+        if (in_stem || in_bar) {
+          t_grid[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
+        }
+        if (d >= 0.48 && d <= 0.57 && y >= -0.36 && y <= -0.18) {
+          t_grid[static_cast<size_t>(r * kBevCols + c)] = BEV_OBS_NO_ENTRY;
+        }
+      }
+    }
+
+    VehiclePose2D p_t{true, 0.55, -0.80, -kHalfPi, 0.22, 0.0, 1.5};
+    const BevDwaPlanResult t_res = planner.step(t_grid, p_t, {}, false, false, 0.0, 1e9, false, 1.5);
+    CHECK(t_res.phase == TopologyPhase::FORK_T_RIGHT_TURN);
+    CHECK(t_res.chosen_kappa < -0.8);   // Strongly turns RIGHT (East), NEVER turns LEFT backwards!
+    CHECK(t_res.yaw_rate_rps < -0.15);
+  }
+
+  // 3) Roundabout cross-island rejection: disconnected white road across blue island is wiped!
+  {
+    BevDwaConfig cfg{};
+    cfg.track_mode = "roundabout";
+    BevDwaPlanner planner(cfg);
+    planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0});
+
+    std::array<uint8_t, kBevCells> rb_grid{};
+    rb_grid.fill(BEV_WALL_BLUE);
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        // Real road curves LEFT: y_center = +0.5 * d^2
+        const double y_road = 0.55 * std::max(0.0, d) * std::max(0.0, d);
+        if (d >= -0.30 && d <= 0.90 && std::abs(y - y_road) <= 0.215) {
+          rb_grid[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
+        }
+        // Disconnected opposite side of roundabout across blue island on the RIGHT (y in [-0.75, -0.45])
+        if (d >= 0.45 && d <= 1.00 && y >= -0.75 && y <= -0.45) {
+          rb_grid[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
+        }
+      }
+    }
+    const BevDwaPlanResult res = planner.step(
+      rb_grid, VehiclePose2D{true, 0.05, 0.0, 0.0, 0.25, 0.0, 0.1}, {}, false, false, 0.0, 1e9, false, 0.1);
+    // Disconnected right island blob MUST be converted to WALL_BLUE and car must turn LEFT!
+    int rr = 0, rc = 0;
+    CHECK(BevDwaPlanner::metric_to_cell(0.70, -0.60, rr, rc));
+    CHECK(planner.fused_grid()[static_cast<size_t>(rr * kBevCols + rc)] == BEV_WALL_BLUE);
+    CHECK(res.chosen_kappa > 0.2);
+  }
+
+  // 4) Asymmetric penalty economics (+30s no_entry > +10s cone) + non-freezing tight gap
+  {
+    BevDwaConfig cfg{};
+    BevDwaPlanner planner(cfg);
+    planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.22, 0.0, 0.0});
+    auto g = make_straight_grid(0.215);
+    // Put +30s no-entry on left (y in [+0.10, +0.21]) and +10s cone on right (y in [-0.21, -0.10]) at d=0.45m
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        if (d >= 0.38 && d <= 0.52 && y >= 0.105 && y <= 0.21) {
+          g[static_cast<size_t>(r * kBevCols + c)] = BEV_OBS_NO_ENTRY;
+        }
+        if (d >= 0.38 && d <= 0.52 && y >= -0.21 && y <= -0.105) {
+          g[static_cast<size_t>(r * kBevCols + c)] = BEV_OBS_CONE;
+        }
+      }
+    }
+    const BevDwaPlanResult res = planner.step(
+      g, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.22, 0.0, 0.1}, {}, false, false, 0.0, 1e9, false, 0.1);
+    CHECK(res.linear_speed_mps > 0.05);  // Never freezes!
+    CHECK(res.chosen_kappa <= 0.05);     // Prefers shifting away from +30s no-entry (rightward)!
+  }
+
+  // 5) Zero-yellow-count finish immunity + dual visual/distance yellow rearm + deadzone brake floor
+  {
+    BevDwaConfig cfg{};
+    cfg.finish_min_cum_yaw_rad = 2.2;
+    cfg.yellow_rearm_dist_m = 0.25;
+    BevDwaPlanner planner(cfg);
+    planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+    auto g = make_straight_grid(0.215);
+
+    // Trigger yellow stop -> must NOT be rearmed immediately even after seeing yellow disappear once
+    planner.notify_yellow_stop_triggered();
+    CHECK(!planner.is_yellow_rearmed());
+    // Still seeing yellow at d=0.08m after moving 0.30m -> still NOT rearmed until yellow exits!
+    planner.step(g, VehiclePose2D{true, 0.30, 0.0, 0.0, 0.20, 0.0, 1.0}, {}, true, true, 0.08, 1e9, false, 1.0);
+    CHECK(!planner.is_yellow_rearmed());
+    // After 3 frames with yellow gone + dist >= 0.25m -> cleanly rearmed!
+    for (int i = 1; i <= 3; ++i) {
+      planner.step(g, VehiclePose2D{true, 0.30 + 0.02 * i, 0.0, 0.0, 0.20, 0.0, 1.0 + 0.05 * i},
+        {}, false, false, 0.0, 1e9, false, 1.0 + 0.05 * i);
+    }
+    CHECK(planner.is_yellow_rearmed());
+
+    // Deadzone-clearing FinishGuard closed-loop brake floor (brake_min_cmd_mps = 0.20)
+    FinishGuardConfig fg{};
+    fg.brake_damping_gain = 0.85;
+    fg.brake_min_cmd_mps = 0.20;
+    fg.brake_zero_cutoff_mps = 0.04;
+    FinishGuard guard(fg);
+    // At v=0.10 m/s, proportional alone would be -0.085 (deadzone!); floor lifts it to -0.20!
+    CHECK(std::abs(guard.compute_closed_loop_brake_cmd(0.10, 0.05, 0.24, 0.28) - (-0.20)) < 1e-6);
+    // At v=0.03 <= 0.04 cutoff -> immediately cuts to 0.0 (zero rollback)!
+    CHECK(std::abs(guard.compute_closed_loop_brake_cmd(0.03, 0.08, 0.24, 0.28)) < 1e-9);
+
+    // Tiny enclosed blue-tinted digit speck (6x6cm = 36 cells) inside white road MUST be healed to FREE!
+    auto g_speck = make_straight_grid(0.215);
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        if (d >= 0.30 && d <= 0.36 && y >= -0.03 && y <= 0.03) {
+          g_speck[static_cast<size_t>(r * kBevCols + c)] = BEV_WALL_BLUE;
+        }
+      }
+    }
+    const BevDwaPlanResult speck_res = planner.step(
+      g_speck, VehiclePose2D{true, 0.40, 0.0, 0.0, 0.30, 0.0, 2.0}, {}, false, false, 0.0, 1e9, false, 2.0);
+    CHECK(speck_res.chosen_safe_len_m >= 0.70);
+    int sr = 0, sc = 0;
+    CHECK(BevDwaPlanner::metric_to_cell(0.33, 0.0, sr, sc));
+    CHECK(planner.fused_grid()[static_cast<size_t>(sr * kBevCols + sc)] == BEV_FREE);
+  }
+}
+
 }  // namespace
 
 int main()
@@ -1439,6 +1658,7 @@ int main()
   test_dual_layer_brake_and_safe_speed_ceiling();
   test_clear_path_adaptive_speed_and_asymmetric_slew();
   test_corridor_ackermann_curve_offtracking_compensation();
+  test_bev_dwa_first_principles_and_execution();
   std::cout << "ALL_FINALS_CPP_TESTS_PASSED" << std::endl;
   return 0;
 }

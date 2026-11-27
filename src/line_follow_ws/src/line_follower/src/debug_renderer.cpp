@@ -306,6 +306,31 @@ cv::Mat DebugRenderer::render(
       0.44,
       cv::Scalar(255, 255, 255),
       1);
+
+    // 6. Live BEV DWA inset in top-right corner & pre-flight homography warning banner
+    if (!finals_overlay.bev_inset_bgr.empty() &&
+      finals_overlay.bev_inset_bgr.cols < overlay.cols &&
+      finals_overlay.bev_inset_bgr.rows < overlay.rows)
+    {
+      const int ix = overlay.cols - finals_overlay.bev_inset_bgr.cols - 6;
+      const int iy = 6;
+      finals_overlay.bev_inset_bgr.copyTo(
+        overlay(cv::Rect(
+          ix, iy, finals_overlay.bev_inset_bgr.cols, finals_overlay.bev_inset_bgr.rows)));
+    }
+    if (!finals_overlay.preflight_warning.empty()) {
+      cv::rectangle(
+        overlay, cv::Point(8, 72), cv::Point(std::min(overlay.cols - 8, 400), 96),
+        cv::Scalar(0, 0, 210), -1);
+      cv::putText(
+        overlay,
+        finals_overlay.preflight_warning,
+        cv::Point(12, 89),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.44,
+        cv::Scalar(255, 255, 255),
+        1);
+    }
   }
 
   return overlay;

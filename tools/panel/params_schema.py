@@ -135,6 +135,13 @@ SCHEMA = [
         "group": "模式总开关与 B10 白道 CV 红障兜底",
         "default_open": True,
         "items": [
+            ("bev_planner_mode", "核心规划架构模式（一键灰度切换）", "enum",
+             ["bev_dwa", "legacy"], None, None,
+             "bev_dwa=第一性原理 BEV 米制占据栅格+拓扑指南针+阿克曼 DWA（推荐）；legacy=旧版走廊规划一键回退"),
+            ("bev_imu_yaw_kp", "BEV IMU 陀螺仪内环增益", "float", 0.00, 1.20, 0.05,
+             "补偿大角转向 20% 衰减与舵机机械中位偏置（默认 0.35；0=关闭内环）"),
+            ("brake_min_cmd_mps", "黄线反拖死区下限 (m/s)", "float", 0.00, 0.40, 0.02,
+             "越过 Wheeltec 电机 ~0.09 m/s 静摩擦死区，杜绝黄线刹车 timeout 滑行（默认 0.20）"),
             ("lane_seg_mode", "车道视觉分割模式", "enum",
              ["relative_border", "hybrid", "legacy_hsv"], None, None,
              "relative_border 抗光照/泛黄/眩光（零手动标定）；hybrid 结合宽松 HSV；legacy_hsv 极端应急"),

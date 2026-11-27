@@ -35,10 +35,11 @@ struct FinishGuardConfig
   double friction_scale_min{0.65};
   double friction_scale_max{1.25};
 
-  // Dual-layer closed-loop yellow braking (sqrt physics envelope + proportional damping)
+  // Dual-layer closed-loop yellow braking (sqrt physics envelope + deadzone-clearing floor)
   bool enable_sqrt_brake_envelope{true};
   bool enable_closed_loop_brake{true};
   double brake_damping_gain{0.85};
+  double brake_min_cmd_mps{0.0};        // Minimum reverse command above motor deadzone (0.0 preserves legacy unit tests)
   double brake_zero_cutoff_mps{0.025};
 
   // Distance traveled after a yellow stop before re-arming (prevents double-counting)

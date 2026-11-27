@@ -16,8 +16,9 @@ line_follower_node:
     voltage_topic: /PowerVoltage
 
     # ================================
-    # 决赛核心解耦开关
+    # 决赛核心解耦开关（默认启用第一性原理 BEV + 拓扑指南针 + 阿克曼 DWA；支持一键回退 legacy）
     # ================================
+    bev_planner_mode: bev_dwa
     # 车道视觉分割模式：relative_border（抗光照/抗老化，推荐）/ hybrid / legacy_hsv（极端应急）
     lane_seg_mode: relative_border
     # 黄线检测模式：geometric_cv / yolo_cv_hybrid
@@ -40,19 +41,29 @@ line_follower_node:
     red_v_min: 70
     red_cone_area_ratio_threshold: 0.0006
 
-    # 基础控制与环岛宽度自适应融合
+    # 基础控制（Run 1 稳健完赛 0.42 m/s；已按实测左+18.0°/右-21.4°锁死执行层）
     track_mode: roundabout
     target_speed: 0.42
     max_speed: 0.80
     min_speed: 0.0
-    max_yaw_rate: 2.0
+    max_yaw_rate: 1.8
     speed_gain_damping: 0.55
-    enable_clear_path_speed: true
-    clear_straight_speed: 0.62
+    enable_clear_path_speed: false
+    clear_straight_speed: 0.56
     clear_preview_dist_m: 0.95
     max_accel_mps2: 0.90
-    max_decel_mps2: 2.20
-    active_decel_kp: 0.45
+    max_decel_mps2: 2.00
+    active_decel_kp: 0.0
+    bev_wheelbase_m: 0.1395
+    bev_kappa_max_left: 2.38
+    bev_kappa_max_right: 2.80
+    bev_control_latency_s: 0.09
+    bev_imu_yaw_kp: 0.35
+    bev_steer_launch_v_floor: 0.16
+    bev_max_lat_accel_mps2: 0.42
+    bev_memory_ttl_sec: 0.55
+    bev_rollout_horizon_m: 0.85
+    enable_anti_stall_escape: true
     roi_top_ratio: 0.68
     roi_bottom_ratio: 0.22
 
@@ -131,29 +142,30 @@ line_follower_node:
     odom_max_age_sec: 0.20
     yellow_require_odom_still: true
     yellow_max_hold_sec: 3.0
-    yellow_brake_speed: 0.25
+    yellow_brake_speed: 0.24
     yellow_brake_period_s: 0.0
     yellow_brake_pulse_s: 0.0
-    yellow_brake_release_speed: 0.10
-    yellow_brake_max_time_s: 0.35
+    yellow_brake_release_speed: 0.06
+    yellow_brake_max_time_s: 0.28
 
     odom_scale_factor: 1.0
-    finish_min_dist_m: 9.0
+    finish_min_dist_m: 6.5
     finish_force_dist_m: 12.0
-    finish_min_cum_yaw_rad: 0.0
-    yellow_pre_brake_dist_m: 0.70
-    yellow_creep_speed_mps: 0.24
+    finish_min_cum_yaw_rad: 2.2
+    yellow_pre_brake_dist_m: 0.72
+    yellow_creep_speed_mps: 0.22
     yellow_final_ramp_dist_m: 0.35
     yellow_final_creep_speed_mps: 0.18
-    yellow_brake_decel_mps2: 1.8
+    yellow_brake_decel_mps2: 0.85
     voltage_decel_slope: 0.0
-    yellow_control_latency_s: 0.10
-    yellow_bumper_margin_m: 0.08
-    yellow_rearm_dist_m: 0.35
+    yellow_control_latency_s: 0.09
+    yellow_bumper_margin_m: 0.09
+    yellow_rearm_dist_m: 0.25
     enable_sqrt_brake_envelope: true
     enable_closed_loop_brake: true
     brake_damping_gain: 0.85
-    brake_zero_cutoff_mps: 0.025
+    brake_min_cmd_mps: 0.20
+    brake_zero_cutoff_mps: 0.04
 
     # ================================
     # GroundProjector (IPM 单应 / 针孔自动回退)

@@ -53,6 +53,10 @@ struct FinalsDebugOverlay
   double cbf_min_clearance_m{0.0};
   std::string cbf_limiting_source{};
 
+  // Live BEV DWA top-down inset & pre-flight homography self-check banner
+  cv::Mat bev_inset_bgr{};
+  std::string preflight_warning{};
+
   std::vector<DebugDetectionBox> detections{};
 };
 

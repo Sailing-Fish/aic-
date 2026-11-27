@@ -49,6 +49,9 @@ LineFollowerNode::LineFollowerNode()
   obstacle_memory_.reset();
   corridor_planner_.reset();
   finish_guard_.reset();
+  bev_dwa_planner_.reset(now_sec);
+  bev_dwa_planner_.reset_preflight();
+  preflight_logged_ = false;
 
   start_enabled_ = false;
   waiting_log_initialized_ = true;
@@ -142,8 +145,9 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("voltage_topic", "/PowerVoltage");
 
   // ============================================================
-  // Finals mode switches (lane_seg_mode supports relative_border | hybrid | legacy_hsv)
+  // Finals mode switches (bev_planner_mode supports bev_dwa | legacy)
   // ============================================================
+  this->declare_parameter("bev_planner_mode", "bev_dwa");
   this->declare_parameter("track_mode", "fork");
   this->declare_parameter("lane_seg_mode", "relative_border");
   this->declare_parameter("yellow_detect_mode", "geometric_cv");
@@ -369,7 +373,23 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("enable_sqrt_brake_envelope", true);
   this->declare_parameter("enable_closed_loop_brake", true);
   this->declare_parameter("brake_damping_gain", 0.85);
+  this->declare_parameter("brake_min_cmd_mps", 0.0);
   this->declare_parameter("brake_zero_cutoff_mps", 0.025);
+
+  // ============================================================
+  // First-Principles BEV + Topology Compass + Ackermann DWA parameters
+  // (Calibrated to measured Wheeltec mini_akm: +18.0 deg left / -21.4 deg right)
+  // ============================================================
+  this->declare_parameter("bev_wheelbase_m", 0.1395);
+  this->declare_parameter("bev_kappa_max_left", 2.38);
+  this->declare_parameter("bev_kappa_max_right", 2.80);
+  this->declare_parameter("bev_control_latency_s", 0.09);
+  this->declare_parameter("bev_imu_yaw_kp", 0.35);
+  this->declare_parameter("bev_steer_launch_v_floor", 0.16);
+  this->declare_parameter("bev_max_lat_accel_mps2", 0.42);
+  this->declare_parameter("bev_memory_ttl_sec", 0.55);
+  this->declare_parameter("bev_rollout_horizon_m", 0.85);
+  this->declare_parameter("enable_anti_stall_escape", true);
 
   image_topic_ = this->get_parameter("image_topic").as_string();
   cmd_vel_topic_ = this->get_parameter("cmd_vel_topic").as_string();
@@ -386,6 +406,15 @@ void LineFollowerNode::declare_parameters()
 
 void LineFollowerNode::sync_runtime_parameters()
 {
+  planner_mode_ = this->get_parameter("bev_planner_mode").as_string();
+  if (planner_mode_ != "bev_dwa" && planner_mode_ != "legacy") {
+    RCLCPP_WARN(
+      this->get_logger(),
+      "[DEC] param bev_planner_mode='%s' unknown (expected bev_dwa/legacy), using bev_dwa",
+      planner_mode_.c_str());
+    planner_mode_ = "bev_dwa";
+  }
+
   track_mode_ = this->get_parameter("track_mode").as_string();
   if (track_mode_ != "fork" && track_mode_ != "roundabout") {
     RCLCPP_WARN(
@@ -765,8 +794,59 @@ void LineFollowerNode::sync_runtime_parameters()
   fg_cfg.enable_closed_loop_brake =
     this->get_parameter("enable_closed_loop_brake").as_bool();
   fg_cfg.brake_damping_gain = this->get_parameter("brake_damping_gain").as_double();
+  fg_cfg.brake_min_cmd_mps = this->get_parameter("brake_min_cmd_mps").as_double();
   fg_cfg.brake_zero_cutoff_mps = this->get_parameter("brake_zero_cutoff_mps").as_double();
   finish_guard_.set_config(fg_cfg);
+
+  // Sync First-Principles BEV + Topology Compass + Ackermann DWA planner & mapper
+  BevDwaConfig bev_cfg{};
+  bev_cfg.track_mode = track_mode_;
+  bev_cfg.wheelbase_m = this->get_parameter("bev_wheelbase_m").as_double();
+  bev_cfg.car_width_m = cor_cfg.car_width_m;
+  bev_cfg.car_length_m = mem_cfg.car_length_m;
+  bev_cfg.rear_axle_to_bumper_m = mem_cfg.rear_axle_to_bumper_m;
+  bev_cfg.kappa_max_left = this->get_parameter("bev_kappa_max_left").as_double();
+  bev_cfg.kappa_max_right = this->get_parameter("bev_kappa_max_right").as_double();
+  bev_cfg.max_yaw_rate = max_yaw_rate_;
+  bev_cfg.control_latency_s = this->get_parameter("bev_control_latency_s").as_double();
+  bev_cfg.imu_yaw_kp = this->get_parameter("bev_imu_yaw_kp").as_double();
+  bev_cfg.steer_launch_v_floor = this->get_parameter("bev_steer_launch_v_floor").as_double();
+  bev_cfg.cruise_speed_mps = target_speed_;
+  bev_cfg.clear_straight_speed_mps = motion_cfg.clear_straight_speed;
+  bev_cfg.enable_clear_straight_boost = motion_cfg.enable_clear_path_speed;
+  bev_cfg.min_speed_mps = min_speed_;
+  bev_cfg.max_speed_mps = max_speed_;
+  bev_cfg.max_lat_accel_mps2 = this->get_parameter("bev_max_lat_accel_mps2").as_double();
+  bev_cfg.max_accel_mps2 = motion_cfg.max_accel_mps2;
+  bev_cfg.max_decel_mps2 = motion_cfg.max_decel_mps2;
+  bev_cfg.obstacle_speed_mps = cor_cfg.obstacle_speed_mps;
+  bev_cfg.no_entry_speed_mps = cor_cfg.no_entry_speed_mps;
+  bev_cfg.bev_memory_ttl_sec = this->get_parameter("bev_memory_ttl_sec").as_double();
+  bev_cfg.rollout_horizon_m = this->get_parameter("bev_rollout_horizon_m").as_double();
+  bev_cfg.fork_outer_branch = cor_cfg.fork_outer_branch;
+  bev_cfg.fork_outer_time_penalty_s = cor_cfg.fork_outer_time_penalty_s;
+  bev_cfg.fork_min_votes = std::max(1, cor_cfg.fork_min_votes);
+  bev_cfg.digit_min_conf = cor_cfg.digit_min_conf;
+  bev_cfg.allow_dual_digit_cover = allow_dual_digit_cover_;
+  bev_cfg.max_digit_lateral_shift_m = cor_cfg.max_digit_lateral_shift_m;
+  bev_cfg.finish_min_cum_yaw_rad =
+    (fg_cfg.min_cumulative_abs_yaw_rad > 0.1) ? fg_cfg.min_cumulative_abs_yaw_rad : 2.2;
+  bev_cfg.finish_force_dist_m = fg_cfg.finish_force_dist_m;
+  bev_cfg.yellow_rearm_dist_m = fg_cfg.rearm_travel_dist_m;
+  bev_cfg.enable_anti_stall_escape = this->get_parameter("enable_anti_stall_escape").as_bool();
+  bev_cfg.nominal_lane_width_m = cor_cfg.default_lane_width_m;
+  bev_dwa_planner_.set_config(bev_cfg);
+
+  BevMapperConfig map_cfg{};
+  map_cfg.blue_margin = img_cfg.blue_margin;
+  map_cfg.lab_blue_b_max = img_cfg.lab_blue_b_max;
+  map_cfg.red_h_low_1 = red_h_low_1_;
+  map_cfg.red_h_high_1 = red_h_high_1_;
+  map_cfg.red_h_low_2 = red_h_low_2_;
+  map_cfg.red_h_high_2 = red_h_high_2_;
+  map_cfg.red_s_min = red_s_min_;
+  map_cfg.red_v_min = red_v_min_;
+  bev_mapper_.set_config(map_cfg);
 }
 
 void LineFollowerNode::log_effective_parameters() const
@@ -850,6 +930,23 @@ void LineFollowerNode::log_effective_parameters() const
     mcfg.max_accel_mps2,
     mcfg.max_decel_mps2,
     mcfg.active_decel_kp);
+
+  RCLCPP_INFO(
+    this->get_logger(),
+    "[DEC] param effective #bev bev_planner_mode=%s bev_wb=%.4f bev_kappa=[L:%.2f,R:%.2f] "
+    "bev_lat=%.3f bev_imu_kp=%.2f bev_launch_v=%.2f bev_a_lat=%.2f bev_ttl=%.2f "
+    "brake_min_cmd=%.2f finish_min_yaw=%.2f",
+    planner_mode_.c_str(),
+    bev_dwa_planner_.config().wheelbase_m,
+    bev_dwa_planner_.config().kappa_max_left,
+    bev_dwa_planner_.config().kappa_max_right,
+    bev_dwa_planner_.config().control_latency_s,
+    bev_dwa_planner_.config().imu_yaw_kp,
+    bev_dwa_planner_.config().steer_launch_v_floor,
+    bev_dwa_planner_.config().max_lat_accel_mps2,
+    bev_dwa_planner_.config().bev_memory_ttl_sec,
+    fcfg.brake_min_cmd_mps,
+    bev_dwa_planner_.config().finish_min_cum_yaw_rad);
 }
 
 bool LineFollowerNode::brake_pulse_on(double elapsed_s) const
@@ -875,11 +972,14 @@ void LineFollowerNode::publish_segment_info(bool force)
   last_segment_pub_time_ = now;
 
   char buf[160];
+  const int rep_branch = (planner_mode_ == "bev_dwa") ?
+    bev_dwa_planner_.committed_branch() :
+    corridor_planner_.committed_branch(finish_guard_.total_arc_m());
   std::snprintf(
     buf, sizeof(buf), "mode=finals s=%.2f count=%d branch=%d final=%d",
     finish_guard_.total_arc_m(),
     track_state_machine_.state().yellow_line_detection_count,
-    corridor_planner_.committed_branch(finish_guard_.total_arc_m()),
+    rep_branch,
     track_state_machine_.state().permanent_stop ? 1 : 0);
 
   std_msgs::msg::String msg;
@@ -1103,6 +1203,8 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
     obstacle_memory_.reset();
     corridor_planner_.reset();
     finish_guard_.reset();
+    const VehiclePose2D & start_p = ekf_pose_seen_ ? ekf_pose_ : odom_pose_;
+    bev_dwa_planner_.reset(now.seconds(), start_p);
     last_red_src_state_ = RedDetectionSource::NONE;
     last_red_src_log_sec_ = -1e9;
     red_src_yolo_only_frames_ = 0;
@@ -1129,6 +1231,8 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
     curve_assist_ = CurveAssistState{};
     motion_controller_.reset();
     yellow_brake_active_ = false;
+    bev_dwa_planner_.reset_preflight();
+    preflight_logged_ = false;
   }
 
   RCLCPP_INFO(
@@ -1255,9 +1359,9 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
   auto result_opt = process_image(frame_bgr, fill_white_rects, yolo_yellow_rects, active_branch);
 
   // ============================================================
-  // Finals Red Obstacle OR-Fusion (YOLO || White-Lane CV) + Source Attribution Log
+  // Finals Red Obstacle OR-Fusion (legacy corridor mode only; bev_dwa uses BevMapper directly)
   // ============================================================
-  {
+  if (planner_mode_ != "bev_dwa") {
     std::vector<GroundDetection> cv_red_dets;
     std::vector<cv::Rect> cv_red_bboxes;
     if (enable_cv_red_fallback_ && result_opt && result_opt->line_detected) {
@@ -1333,8 +1437,48 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
   finals_overlay.lane_seg_mode = lane_seg_mode_;
   finals_overlay.detections = debug_boxes;
 
+  const bool use_bev_dwa = (planner_mode_ == "bev_dwa");
+  const bool ekf_fresh_now = ekf_pose_seen_ && ((now - last_ekf_odom_time_).seconds() < 0.5);
+  const VehiclePose2D & active_pose_now = ekf_fresh_now ? ekf_pose_ : odom_pose_;
+
+  std::array<uint8_t, kBevCells> live_bev_grid{};
+  std::vector<BevRedOverlayBox> bev_red_boxes;
+  if (use_bev_dwa && result_opt) {
+    bev_mapper_.build_live_grid(
+      frame_bgr,
+      result_opt->binary_mask,
+      result_opt->roi_top,
+      result_opt->roi_bottom,
+      ground_projector_,
+      live_bev_grid,
+      bev_red_boxes);
+  }
+
   if (!start_enabled_) {
     curve_assist_ = CurveAssistState{};
+
+    if (use_bev_dwa && result_opt) {
+      bev_dwa_planner_.update_standstill_check(live_bev_grid, active_pose_now);
+      const auto & pf = bev_dwa_planner_.preflight_status();
+      if (pf.checked && !preflight_logged_) {
+        preflight_logged_ = true;
+        RCLCPP_INFO(
+          this->get_logger(),
+          "[DEC] preflight ok=%d width=%.3fm center=%+.3fm angle=%+.1fdeg gyro_bias=%+.4f warn=%s",
+          pf.homography_ok ? 1 : 0,
+          pf.measured_lane_width_m,
+          pf.measured_center_y_m,
+          pf.measured_edge_angle_deg,
+          pf.gyro_bias_rps,
+          pf.warning_msg.empty() ? "none" : pf.warning_msg.c_str());
+      }
+      finals_overlay.preflight_warning = pf.warning_msg;
+      BevDwaPlanResult idle_plan{};
+      idle_plan.measured_lane_width_m = pf.measured_lane_width_m;
+      finals_overlay.bev_inset_bgr = BevMapper::render_bev_inset(
+        live_bev_grid, idle_plan, pf, false, 0.0, 210);
+      finals_overlay.active_mode_tag = "bev_standby";
+    }
 
     if (!waiting_log_initialized_) {
       waiting_log_initialized_ = true;
@@ -1349,6 +1493,332 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     }
 
     publish_cmd_vel(0.0, 0.0, true);
+    return;
+  }
+
+  // ============================================================
+  // FIRST-PRINCIPLES BEV + TOPOLOGY COMPASS + ACKERMANN DWA PIPELINE
+  // ============================================================
+  if (use_bev_dwa) {
+    // 1) Physical pixel & ground-size validation of YOLO BONUS_DIGIT boxes
+    //    (100% immune to red-stripe='1' & blue-border='6'/'2' false positives!)
+    std::vector<GroundDetection> bev_valid_digits;
+    std::vector<DebugDetectionBox> bev_debug_boxes;
+    if (dets_fresh) {
+      for (const auto & box : latest_raw_boxes_) {
+        if (box.type != SemanticObjectType::BONUS_DIGIT) {
+          continue;
+        }
+        double d_m = 0.0;
+        double y_m = 0.0;
+        if (bev_mapper_.validate_yolo_digit(frame_bgr, box.bbox_img, ground_projector_, d_m, y_m)) {
+          GroundDetection gd{};
+          gd.type = SemanticObjectType::BONUS_DIGIT;
+          gd.digit = box.digit;
+          gd.confidence = box.confidence;
+          gd.d_bumper_m = d_m;
+          gd.y_lat_m = y_m;
+          gd.track_id = box.track_id;
+          gd.stamp_sec = latest_det_stamp_sec_;
+          bev_valid_digits.push_back(gd);
+
+          DebugDetectionBox dbox{};
+          dbox.bbox_img = box.bbox_img;
+          dbox.label = box.label;
+          dbox.confidence = box.confidence;
+          dbox.d_bumper_m = d_m;
+          dbox.y_lat_m = y_m;
+          dbox.is_digit = true;
+          bev_debug_boxes.push_back(dbox);
+        }
+      }
+    }
+    for (const auto & rb : bev_red_boxes) {
+      DebugDetectionBox dbox{};
+      dbox.bbox_img = rb.bbox_img;
+      dbox.label = rb.is_no_entry ? "[BEV]no_entry" : "[BEV]cone";
+      dbox.confidence = 0.85;
+      dbox.d_bumper_m = rb.d_bumper_m;
+      dbox.y_lat_m = rb.y_lat_m;
+      dbox.is_no_entry = rb.is_no_entry;
+      dbox.is_blocking = !rb.is_no_entry;
+      bev_debug_boxes.push_back(dbox);
+    }
+    finals_overlay.detections = bev_debug_boxes;
+
+    // 2) Yellow stop evaluation (zero yellow-count dependence; dual visual+distance rearm!)
+    const bool raw_yellow_detected = result_opt && result_opt->yellow_line_detected;
+    const bool line_detected_raw = result_opt && result_opt->line_detected;
+    const TrackState prev_state = track_state_machine_.state().last_state;
+
+    bool yellow_dist_valid = false;
+    double yellow_d_bumper_m = 0.0;
+    double yellow_y_lat_m = 0.0;
+    if (raw_yellow_detected && result_opt && result_opt->yellow_is_geometric) {
+      const double max_v_px = static_cast<double>(std::max(0, frame_bgr.rows - 1));
+      const double v_yellow_bot = std::clamp(
+        result_opt->yellow_bottom_y_full + crc_yellow_pad_y_px_, 0.0, max_v_px);
+      yellow_dist_valid = ground_projector_.pixel_to_ground(
+        result_opt->yellow_center_x_full, v_yellow_bot, yellow_d_bumper_m, yellow_y_lat_m);
+    }
+
+    const double cur_v = track_state_machine_.state().odom_seen ?
+      track_state_machine_.state().odom_speed : motion_state_.last_linear;
+    const bool img_dead_end = result_opt && result_opt->yellow_has_dead_end_ahead;
+    const bool bev_dead_end =
+      yellow_dist_valid && bev_dwa_planner_.check_bev_dead_end_ahead(yellow_d_bumper_m);
+    const bool dead_end = img_dead_end || bev_dead_end;
+
+    const YellowStopAdvice yellow_advice = finish_guard_.evaluate_yellow_stop(
+      raw_yellow_detected,
+      yellow_dist_valid,
+      yellow_d_bumper_m,
+      cur_v,
+      dead_end,
+      now_sec);
+
+    // Finish gate: immune to random yellow lines & +/-25% odom error
+    const bool bev_is_finish =
+      (dead_end &&
+        bev_dwa_planner_.cum_abs_yaw_rad() >= bev_dwa_planner_.config().finish_min_cum_yaw_rad) ||
+      (finish_guard_.total_arc_m() >= finish_guard_.config().finish_force_dist_m);
+
+    finals_overlay.yellow_dist_valid = yellow_dist_valid;
+    finals_overlay.yellow_d_bumper_m = yellow_d_bumper_m;
+    finals_overlay.yellow_is_finish = bev_is_finish;
+    finals_overlay.yellow_dead_end_ahead = dead_end;
+
+    const bool already_stopping =
+      track_state_machine_.state().yellow_line_stop_active ||
+      track_state_machine_.state().permanent_stop;
+    const bool sm_yellow_trigger = already_stopping ?
+      raw_yellow_detected :
+      (bev_dwa_planner_.is_yellow_rearmed() && yellow_advice.trigger_stop);
+
+    const TrackStepEvents step_events =
+      track_state_machine_.step(sm_yellow_trigger, line_detected_raw, now_sec, bev_is_finish);
+    const auto & sm_state = track_state_machine_.state();
+
+    if (step_events.yellow_stop_begin) {
+      finish_guard_.mark_yellow_stop_triggered();
+      bev_dwa_planner_.notify_yellow_stop_triggered();
+      bev_dwa_planner_.clear_fork_votes();
+
+      yellow_brake_entry_speed_mps_ = sm_state.odom_seen ?
+        sm_state.odom_speed : std::abs(motion_state_.last_linear);
+      yellow_brake_start_arc_m_ = finish_guard_.total_arc_m();
+      yellow_brake_measure_pending_ = true;
+
+      const bool fast_enough = !sm_state.odom_seen ||
+        (sm_state.odom_linear_x > finish_guard_.config().brake_zero_cutoff_mps);
+      yellow_brake_active_ = (yellow_brake_speed_ > 0.0) && fast_enough;
+      yellow_brake_start_ = now;
+      last_brake_cmd_time_ = now;
+      if (yellow_brake_active_) {
+        RCLCPP_INFO(
+          this->get_logger(),
+          "[DEC] yellow brake_begin cl=1 v=%.2f min_cmd=%.2f gain=%.2f cutoff=%.3f max=%.2f a_eff=%.2f",
+          yellow_brake_speed_,
+          finish_guard_.config().brake_min_cmd_mps,
+          finish_guard_.config().brake_damping_gain,
+          finish_guard_.config().brake_zero_cutoff_mps,
+          yellow_brake_max_time_s_,
+          finish_guard_.effective_brake_decel_mps2(now_sec));
+      }
+      RCLCPP_INFO(
+        this->get_logger(),
+        "[DEC] yellow stop_begin count=%d s=%.2f finish=%d dead_end=%d cum_yaw=%.2f",
+        sm_state.yellow_line_detection_count,
+        finish_guard_.total_arc_m(),
+        bev_is_finish ? 1 : 0,
+        dead_end ? 1 : 0,
+        bev_dwa_planner_.cum_abs_yaw_rad());
+    } else if (yellow_brake_measure_pending_) {
+      if (step_events.odom_still_ok) {
+        yellow_brake_measure_pending_ = false;
+        const double stop_travel_m = finish_guard_.total_arc_m() - yellow_brake_start_arc_m_;
+        finish_guard_.update_measured_yellow_stop(
+          yellow_brake_entry_speed_mps_, stop_travel_m, now_sec);
+      } else if (!step_events.yellow_hold_stop) {
+        yellow_brake_measure_pending_ = false;
+      }
+    }
+
+    if (step_events.yellow_stop_end) {
+      yellow_brake_active_ = false;
+      const int chosen = bev_dwa_planner_.finalize_fork_decision();
+      if (chosen != 0) {
+        finish_guard_.mark_fork_passed();
+        RCLCPP_INFO(
+          this->get_logger(),
+          "[DEC] fork_decision branch=%d phase=%s s=%.2f",
+          chosen,
+          topology_phase_to_string(bev_dwa_planner_.phase()),
+          finish_guard_.total_arc_m());
+      }
+      RCLCPP_INFO(
+        this->get_logger(),
+        "[DEC] yellow stop_end dur=%.2f odom_v=%.3f fresh=%d still=%d",
+        step_events.since_yellow_detection,
+        sm_state.odom_speed,
+        step_events.odom_fresh ? 1 : 0,
+        step_events.odom_still_ok ? 1 : 0);
+    }
+
+    if (step_events.yellow_final_stop) {
+      publish_segment_info(true);
+      RCLCPP_INFO(
+        this->get_logger(),
+        "[DEC] yellow final_stop count=%d s=%.2f",
+        sm_state.yellow_line_detection_count,
+        finish_guard_.total_arc_m());
+    } else {
+      publish_segment_info(false);
+    }
+
+    // 3) Run First-Principles BEV + Topology Compass + Ackermann DWA + Execution Step
+    const double yel_cap = (yellow_advice.pre_brake && !yellow_advice.trigger_stop) ?
+      yellow_advice.speed_cap_mps : 1e9;
+    const BevDwaPlanResult bev_plan = bev_dwa_planner_.step(
+      live_bev_grid,
+      active_pose_now,
+      bev_valid_digits,
+      raw_yellow_detected,
+      yellow_dist_valid,
+      yellow_d_bumper_m,
+      yel_cap,
+      step_events.yellow_hold_stop,
+      now_sec);
+
+    double linear_speed = 0.0;
+    double yaw_rate = 0.0;
+    bool publish_stop_cmd = false;
+    TrackState current_state = TrackState::TRACKING;
+
+    if (step_events.yellow_hold_stop) {
+      current_state = TrackState::YELLOW_LINE_DETECTED;
+      yaw_rate = 0.0;
+      if (yellow_brake_active_) {
+        const double brake_elapsed = (now - yellow_brake_start_).seconds();
+        const double cl_cmd = sm_state.odom_seen ?
+          finish_guard_.compute_closed_loop_brake_cmd(
+            sm_state.odom_linear_x, brake_elapsed, yellow_brake_speed_, yellow_brake_max_time_s_) :
+          ((brake_elapsed < 0.15) ? -yellow_brake_speed_ : 0.0);
+        if (cl_cmd < -1e-9) {
+          linear_speed = cl_cmd;
+          publish_stop_cmd = false;
+        } else {
+          yellow_brake_active_ = false;
+          const bool timeout =
+            yellow_brake_max_time_s_ > 0.0 && brake_elapsed >= yellow_brake_max_time_s_;
+          RCLCPP_INFO(
+            this->get_logger(),
+            "[DEC] yellow brake_end dur=%.2f v=%.3f why=%s brake_cmd=+0.000 a_eff=%.2f",
+            brake_elapsed,
+            sm_state.odom_linear_x,
+            timeout ? "timeout" : "zero_cutoff",
+            finish_guard_.effective_brake_decel_mps2(now_sec));
+          linear_speed = 0.0;
+          publish_stop_cmd = true;
+        }
+      } else {
+        linear_speed = 0.0;
+        publish_stop_cmd = true;
+      }
+    } else if (line_detected_raw || bev_plan.chosen_safe_len_m > 0.05 || bev_plan.escape_active) {
+      current_state = TrackState::TRACKING;
+      linear_speed = bev_plan.linear_speed_mps;
+      yaw_rate = bev_plan.yaw_rate_rps;
+      publish_stop_cmd = (std::abs(linear_speed) <= 1e-6 && std::abs(yaw_rate) <= 1e-6);
+    } else {
+      current_state = step_events.base_state;
+      const MotionCommand lcmd = motion_controller_.compute_lost_line_command(
+        step_events.since_line_detection, motion_state_);
+      linear_speed = lcmd.linear_speed;
+      yaw_rate = lcmd.yaw_rate;
+      publish_stop_cmd = lcmd.publish_stop;
+    }
+
+    MotionController::record_motion(step_events.yellow_stop_now, linear_speed, yaw_rate, motion_state_);
+
+    // 4) Structured [DEC] ctrl log & rich BEV panel overlay
+    const bool ctrl_changed =
+      (bev_plan.mode_tag != last_ctrl_mode_tag_) ||
+      (bev_plan.committed_branch != last_ctrl_branch_);
+    if (ctrl_changed || (now_sec - last_ctrl_log_sec_) >= 0.20) {
+      RCLCPP_INFO(
+        this->get_logger(),
+        "[DEC] ctrl mode=%s phase=%s branch=%d k=%+.2f L=%.2f th=%+.1fd "
+        "v=%.2f yaw=%+.2f w_bev=%.2f s=%.2f clr=[w=%+.2f,o=%+.2f] obs=%d",
+        bev_plan.mode_tag.c_str(),
+        topology_phase_to_string(bev_plan.phase),
+        bev_plan.committed_branch,
+        bev_plan.chosen_kappa,
+        bev_plan.chosen_safe_len_m,
+        bev_plan.rel_yaw_rad * (180.0 / kPi),
+        linear_speed,
+        yaw_rate,
+        bev_plan.measured_lane_width_m,
+        finish_guard_.total_arc_m(),
+        bev_plan.min_wall_clearance_m,
+        bev_plan.min_obs_clearance_m,
+        bev_plan.has_near_obstacle ? 1 : 0);
+      last_ctrl_mode_tag_ = bev_plan.mode_tag;
+      last_ctrl_branch_ = bev_plan.committed_branch;
+      last_ctrl_log_sec_ = now_sec;
+    }
+
+    finals_overlay.active_mode_tag = bev_plan.mode_tag;
+    finals_overlay.speed_cap_mps = bev_plan.speed_cap_mps;
+    finals_overlay.preferred_branch = bev_plan.committed_branch;
+    finals_overlay.preflight_warning = bev_dwa_planner_.preflight_status().warning_msg;
+    finals_overlay.bev_inset_bgr = BevMapper::render_bev_inset(
+      bev_dwa_planner_.fused_grid(),
+      bev_plan,
+      bev_dwa_planner_.preflight_status(),
+      raw_yellow_detected && yellow_dist_valid,
+      yellow_d_bumper_m,
+      210);
+
+    char fbuf[96];
+    std::snprintf(
+      fbuf, sizeof(fbuf), "BEV %s L:%d(%d) R:%d(%d) br=%d",
+      topology_phase_to_string(bev_plan.phase),
+      bev_plan.fork_left_digit, bev_plan.fork_left_votes,
+      bev_plan.fork_right_digit, bev_plan.fork_right_votes,
+      bev_plan.committed_branch);
+    finals_overlay.fork_vote_status = fbuf;
+
+    char gbuf[96];
+    std::snprintf(
+      gbuf, sizeof(gbuf), "k=%+.2f L=%.2fm th=%+.0fd cyaw=%.1f s=%.2fm",
+      bev_plan.chosen_kappa,
+      bev_plan.chosen_safe_len_m,
+      bev_plan.rel_yaw_rad * (180.0 / kPi),
+      bev_dwa_planner_.cum_abs_yaw_rad(),
+      finish_guard_.total_arc_m());
+    finals_overlay.finish_guard_status = gbuf;
+
+    if (result_opt && debug_enabled_) {
+      publish_debug_image(msg, frame_bgr, *result_opt, finals_overlay);
+    }
+
+    publish_cmd_vel(linear_speed, yaw_rate, publish_stop_cmd);
+
+    if (current_state != prev_state) {
+      RCLCPP_INFO(
+        this->get_logger(),
+        "[DEC] state change from=%s to=%s",
+        state_to_string(prev_state).c_str(),
+        state_to_string(current_state).c_str());
+    }
+    if (current_state != prev_state ||
+      current_state == TrackState::LOST ||
+      current_state == TrackState::YELLOW_LINE_DETECTED)
+    {
+      publish_state(current_state);
+    }
+    track_state_machine_.commit_state(current_state);
     return;
   }
 

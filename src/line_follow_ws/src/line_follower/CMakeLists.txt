@@ -15,12 +15,14 @@ set(LINE_FOLLOWER_PURE_SOURCES
   src/finish_guard.cpp
   src/track_state_machine.cpp
   src/motion_controller.cpp
+  src/bev_dwa_planner.cpp
 )
 
 set(LINE_FOLLOWER_ALGO_SOURCES
   src/image_processor.cpp
   src/lane_geometry.cpp
   src/debug_renderer.cpp
+  src/bev_mapper.cpp
   ${LINE_FOLLOWER_PURE_SOURCES}
 )
 

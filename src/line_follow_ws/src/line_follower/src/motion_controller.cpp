@@ -325,7 +325,18 @@ AdaptiveSpeedResult MotionController::step_adaptive_corridor_command(
     motion_state,
     local_in);
 
-  last_speed_cmd_mps_ = res.command.linear_speed;
+  // Store the pre-feedback ramped ceiling (avoid active_decel_kp double-integration stutter!)
+  double next_state_v = res.command.linear_speed;
+  if (local_in.odom_valid && std::isfinite(local_in.odom_linear_x) &&
+    config_.active_decel_kp > 0.0)
+  {
+    ClearPathInput no_fb = local_in;
+    no_fb.odom_valid = false;
+    next_state_v = compute_adaptive_corridor_command(
+      target_y_m, current_y_m, heading_proxy, curvature_proxy, confidence,
+      speed_cap_mps, curve_state, motion_state, no_fb).command.linear_speed;
+  }
+  last_speed_cmd_mps_ = next_state_v;
   if (std::isfinite(now_sec)) {
     last_step_time_sec_ = now_sec;
     has_step_time_ = true;

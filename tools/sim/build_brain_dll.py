@@ -29,6 +29,7 @@ PURE_MODULE_NAMES = [
     "finish_guard.cpp",
     "track_state_machine.cpp",
     "motion_controller.cpp",
+    "bev_dwa_planner.cpp",
 ]
 
 BRIDGE_CPP = SIM_DIR / "cpp_brain_bridge.cpp"
