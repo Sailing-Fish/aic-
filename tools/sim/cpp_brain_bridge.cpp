@@ -1169,9 +1169,6 @@ struct BrainInstance
       double y_center_m = 0.0;
       const bool center_ok = ground_projector.pixel_to_ground(centroid_x_px, v_near, d_tmp, y_center_m);
 
-      y_lane_left_m = center_ok ? (y_center_m + half_w_def) : half_w_def;
-      y_lane_right_m = center_ok ? (y_center_m - half_w_def) : -half_w_def;
-
       const double left_edge_px = (in.edges_are_px != 0) ?
         in.left_edge :
         clamp_value((in.left_edge + 1.0) * image_center_x, 0.0, static_cast<double>(img_w - 1));
@@ -1184,6 +1181,27 @@ struct BrainInstance
       const bool left_clipped = near_valid && (in.has_left_edge == 0);
       const bool right_clipped = near_valid && (in.has_right_edge == 0);
 
+      // Prevent far-band lookahead from shifting near corridor center onto the inside apex
+      // when both near edges clip on a tight curve (matching line_follower_node.cpp)
+      if (center_ok && !has_fork_split && active_branch == 0 &&
+        near_valid && left_clipped && right_clipped &&
+        lane_width_ratio < wide_road_ratio_threshold &&
+        std::abs(far_err) > std::abs(near_err) + 0.15)
+      {
+        const double near_cx_px = clamp_value(
+          image_center_x + near_err * image_center_x,
+          0.0,
+          static_cast<double>(img_w - 1));
+        double d_near_tmp = 0.0;
+        double y_near_m = 0.0;
+        if (ground_projector.pixel_to_ground(near_cx_px, v_near, d_near_tmp, y_near_m)) {
+          y_center_m = std::clamp(y_center_m, y_near_m - 0.030, y_near_m + 0.030);
+        }
+      }
+
+      y_lane_left_m = center_ok ? (y_center_m + half_w_def) : half_w_def;
+      y_lane_right_m = center_ok ? (y_center_m - half_w_def) : -half_w_def;
+
       double d_l = 0.0, y_l = 0.0;
       double d_r = 0.0, y_r = 0.0;
       const bool left_proj_ok = near_left_valid &&
@@ -1191,13 +1209,21 @@ struct BrainInstance
       const bool right_proj_ok = near_right_valid &&
         ground_projector.pixel_to_ground(right_edge_px, v_near, d_r, y_r);
 
+      const double measured_span = y_l - y_r;
       if (!has_fork_split && left_proj_ok && right_proj_ok &&
-        (y_l - y_r) >= 0.30 && (y_l - y_r) <= 0.52 &&
+        measured_span >= 0.30 && measured_span <= 0.52 &&
         (active_branch == 0 ||
           (center_ok && std::abs(y_center_m - 0.5 * (y_l + y_r)) <= 0.04)))
       {
         y_lane_left_m = y_l;
         y_lane_right_m = y_r;
+      } else if (!has_fork_split && active_branch == 0 && left_proj_ok && right_proj_ok &&
+        measured_span > 0.52 && measured_span <= 0.68 &&
+        lane_width_ratio < wide_road_ratio_threshold)
+      {
+        const double y_mid = 0.5 * (y_l + y_r);
+        y_lane_left_m = y_mid + half_w_def;
+        y_lane_right_m = y_mid - half_w_def;
       } else if (!has_fork_split && active_branch == 0 && near_valid) {
         const double def_w = corridor_planner.config().default_lane_width_m;
         if (left_clipped && !right_clipped &&
@@ -1221,6 +1247,12 @@ struct BrainInstance
         eff_curve_lvl = std::max(eff_curve_lvl, 0.85);
       }
 
+      const double curve_hdg_for_apex =
+        (!has_fork_split && active_branch == 0 &&
+        lane_width_ratio < wide_road_ratio_threshold &&
+        std::abs(far_err) >= std::abs(near_err)) ?
+        in.heading_error : 0.0;
+
       plan = corridor_planner.plan(
         y_lane_left_m,
         y_lane_right_m,
@@ -1230,7 +1262,8 @@ struct BrainInstance
         false,
         finish_guard.total_arc_m(),
         now_sec,
-        eff_curve_lvl);
+        eff_curve_lvl,
+        curve_hdg_for_apex);
 
       const bool corridor_event_active =
         plan.has_blocking_obstacle ||

@@ -118,7 +118,11 @@ public:
     bool is_stopped_at_yellow,
     double current_arc_s_m,
     double now_sec,
-    double curve_level = 0.0);
+    double curve_level = 0.0,
+    double signed_heading_proxy = 0.0);
+
+  // Ackermann rear-axle off-tracking lateral compensation in v_near frame (+y left)
+  static double compute_curve_offtracking_offset(double signed_heading_proxy);
 
   // Pure helper exposed for unit testing
   static std::vector<LateralInterval> subtract_interval(

@@ -398,6 +398,25 @@ void CorridorPlanner::update_straight_digit_tracks(
   }
 }
 
+double CorridorPlanner::compute_curve_offtracking_offset(double signed_heading_proxy)
+{
+  if (!std::isfinite(signed_heading_proxy)) {
+    return 0.0;
+  }
+  // Kinematic rear-axle off-tracking compensation for Ackermann vehicle on tight curves:
+  // heading_proxy > 0 means far lane bends RIGHT -> inner rear wheel cuts inside (-y),
+  // so shift v_near target slightly OUTSIDE (+y, left) strictly within the safe corridor.
+  constexpr double kDeadband = 0.15;
+  constexpr double kGain = 0.16;
+  constexpr double kMaxShiftM = 0.075;
+  const double mag = std::abs(signed_heading_proxy);
+  if (mag <= kDeadband) {
+    return 0.0;
+  }
+  const double shift = std::min(kMaxShiftM, kGain * (mag - kDeadband));
+  return (signed_heading_proxy > 0.0) ? shift : -shift;
+}
+
 CorridorPlan CorridorPlanner::plan(
   double y_lane_left_m,
   double y_lane_right_m,
@@ -407,7 +426,8 @@ CorridorPlan CorridorPlanner::plan(
   bool is_stopped_at_yellow,
   double current_arc_s_m,
   double now_sec,
-  double curve_level)
+  double curve_level,
+  double signed_heading_proxy)
 {
   CorridorPlan out{};
   out.speed_cap_mps = config_.cruise_speed_mps;
@@ -557,7 +577,9 @@ CorridorPlan CorridorPlanner::plan(
     out.safe_y_max_m = chosen_gap.y_max;
 
     if (active_obs.empty()) {
-      out.target_y_m = std::clamp(lane_mid, chosen_gap.y_min, chosen_gap.y_max);
+      const double apex_shift = (committed_branch(current_arc_s_m) == 0) ?
+        compute_curve_offtracking_offset(signed_heading_proxy) : 0.0;
+      out.target_y_m = std::clamp(lane_mid + apex_shift, chosen_gap.y_min, chosen_gap.y_max);
       if (any_obs_in_lookahead) {
         // Far preview zone: pre-decelerate smoothly without premature lateral steering
         out.speed_cap_mps = any_no_entry_in_lookahead ?

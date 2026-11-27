@@ -1634,6 +1634,21 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     const bool center_ok = ground_projector_.pixel_to_ground(
       static_cast<double>(result_opt->centroid.x), v_near, d_tmp, y_center_m);
 
+    // Prevent far-band lookahead from shifting near corridor center onto the inside apex
+    // when both near edges clip on a tight curve (heading_proxy already provides lookahead).
+    const double wide_thresh = lane_geometry_.config().wide_road_ratio_threshold;
+    if (center_ok && !obs.has_fork_split && active_branch == 0 &&
+      obs.near_band.valid && obs.near_band.left_clipped && obs.near_band.right_clipped &&
+      obs.lane_width_ratio < wide_thresh &&
+      std::abs(obs.far_center_norm) > std::abs(obs.near_center_norm) + 0.15)
+    {
+      double d_near_tmp = 0.0;
+      double y_near_m = 0.0;
+      if (ground_projector_.pixel_to_ground(obs.near_center_px, v_near, d_near_tmp, y_near_m)) {
+        y_center_m = std::clamp(y_center_m, y_near_m - 0.030, y_near_m + 0.030);
+      }
+    }
+
     double y_lane_left_m = center_ok ? (y_center_m + half_w_def) : half_w_def;
     double y_lane_right_m = center_ok ? (y_center_m - half_w_def) : -half_w_def;
 
@@ -1644,19 +1659,26 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     const bool right_proj_ok = obs.near_right_valid &&
       ground_projector_.pixel_to_ground(obs.near_right_edge_px, v_near, d_r, y_r);
 
-    // B8: Only recover measured [y_l, y_r] on clean unsplit lanes of physical width [0.30, 0.52]m
-    // (and during active fork steering, only when near-band center still agrees within 4cm);
-    // otherwise keep anchored to y_center_m +/- half_w_def so far_band fork steering is preserved.
-    // When exactly one near-band edge is clipped off-screen (non-fork), enforce the visible edge
-    // strictly inward if it is more restrictive than the far-blended estimate so inner corners
-    // cannot mask an imminent lane departure while preserving full far-band curve anticipation.
+    // B8 + oblique curve continuity:
+    // - Recover measured [y_l, y_r] on clean unsplit lanes of physical width [0.30, 0.52]m.
+    // - On sharp curves, horizontal slicing widens apparent span to W/cos(theta) in (0.52, 0.68]m;
+    //   keep the exact measured near centerline y_mid with conservative nominal half-width instead
+    //   of falling back to far-blended centroid_x (which causes inside-apex chord cutting).
+    const double measured_span = y_l - y_r;
     if (!obs.has_fork_split && left_proj_ok && right_proj_ok &&
-      (y_l - y_r) >= 0.30 && (y_l - y_r) <= 0.52 &&
+      measured_span >= 0.30 && measured_span <= 0.52 &&
       (active_branch == 0 ||
         (center_ok && std::abs(y_center_m - 0.5 * (y_l + y_r)) <= 0.04)))
     {
       y_lane_left_m = y_l;
       y_lane_right_m = y_r;
+    } else if (!obs.has_fork_split && active_branch == 0 && left_proj_ok && right_proj_ok &&
+      measured_span > 0.52 && measured_span <= 0.68 &&
+      obs.lane_width_ratio < wide_thresh)
+    {
+      const double y_mid = 0.5 * (y_l + y_r);
+      y_lane_left_m = y_mid + half_w_def;
+      y_lane_right_m = y_mid - half_w_def;
     } else if (!obs.has_fork_split && active_branch == 0 && obs.near_band.valid) {
       const double def_w = corridor_planner_.config().default_lane_width_m;
       if (obs.near_band.left_clipped && !obs.near_band.right_clipped &&
@@ -1682,6 +1704,11 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     {
       eff_curve_lvl = std::max(eff_curve_lvl, 0.85);
     }
+    const double curve_hdg_for_apex =
+      (!obs.has_fork_split && active_branch == 0 &&
+      obs.lane_width_ratio < wide_thresh &&
+      std::abs(obs.far_center_norm) >= std::abs(obs.near_center_norm)) ?
+      obs.heading_proxy : 0.0;
     const CorridorPlan plan = corridor_planner_.plan(
       y_lane_left_m,
       y_lane_right_m,
@@ -1691,7 +1718,8 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       false,
       finish_guard_.total_arc_m(),
       now_sec,
-      eff_curve_lvl);
+      eff_curve_lvl,
+      curve_hdg_for_apex);
 
     const bool corridor_event_active =
       plan.has_blocking_obstacle ||

@@ -1374,6 +1374,44 @@ void test_clear_path_adaptive_speed_and_asymmetric_slew()
   CHECK(std::abs(r_off.command.linear_speed - cfg_off.target_speed) < 1e-6);
 }
 
+void test_corridor_ackermann_curve_offtracking_compensation()
+{
+  CorridorPlannerConfig cfg{};
+  cfg.car_width_m = 0.191;
+  cfg.default_lane_width_m = 0.430;
+  cfg.border_margin_m = 0.025;
+  CorridorPlanner planner(cfg);
+
+  // Deadband on straights (|hdg| <= 0.15) -> zero shift
+  CHECK(std::abs(CorridorPlanner::compute_curve_offtracking_offset(0.0)) < 1e-12);
+  CHECK(std::abs(CorridorPlanner::compute_curve_offtracking_offset(+0.15)) < 1e-12);
+  CHECK(std::abs(CorridorPlanner::compute_curve_offtracking_offset(-0.15)) < 1e-12);
+
+  // Sharp right curve (+0.55) shifts target OUTSIDE (LEFT, +y) inside safe corridor
+  const CorridorPlan right_turn = planner.plan(
+    +0.215, -0.215, 0.0, {}, {}, false, 1.0, 1.0, 0.55, +0.55);
+  CHECK(right_turn.target_y_m > 0.04 && right_turn.target_y_m <= right_turn.safe_y_max_m);
+
+  // Mirror: sharp left curve (-0.55) shifts target OUTSIDE (RIGHT, -y) inside safe corridor
+  const CorridorPlan left_turn = planner.plan(
+    +0.215, -0.215, 0.0, {}, {}, false, 1.0, 1.1, 0.55, -0.55);
+  CHECK(left_turn.target_y_m < -0.04 && left_turn.target_y_m >= left_turn.safe_y_min_m);
+  CHECK(std::abs(right_turn.target_y_m + left_turn.target_y_m) < 1e-9);
+
+  // Never pushes into an obstacle on the outside of the curve!
+  LocalObstacle outer_cone{};
+  outer_cone.type = SemanticObjectType::RED_CONE;
+  outer_cone.d_bumper_m = 0.45;
+  outer_cone.d_min_m = 0.38;
+  outer_cone.d_max_m = 0.52;
+  outer_cone.y_lat_m = +0.14;
+  outer_cone.y_min_m = +0.0725;
+  outer_cone.y_max_m = +0.2075;
+  const CorridorPlan right_with_obs = planner.plan(
+    +0.215, -0.215, 0.0, {outer_cone}, {}, false, 1.0, 1.2, 0.55, +0.55);
+  CHECK(right_with_obs.target_y_m + 0.5 * cfg.car_width_m < outer_cone.y_min_m);
+}
+
 }  // namespace
 
 int main()
@@ -1397,6 +1435,7 @@ int main()
   test_tier1_corridor_risk_aware_fork_and_straight_digits();
   test_dual_layer_brake_and_safe_speed_ceiling();
   test_clear_path_adaptive_speed_and_asymmetric_slew();
+  test_corridor_ackermann_curve_offtracking_compensation();
   std::cout << "ALL_FINALS_CPP_TESTS_PASSED" << std::endl;
   return 0;
 }
