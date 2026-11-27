@@ -47,8 +47,8 @@ class SafetyWatchdogLogic:
     def __init__(
         self,
         upstream_topics=None,
-        silence_timeout=0.30,
-        mux_timeout_sec=0.35,
+        silence_timeout=0.50,
+        mux_timeout_sec=0.55,
         mux_startup_grace_sec=3.0,
         require_seen=True,
         require_mux_heartbeat=True,
@@ -187,8 +187,8 @@ class SafetyNode(Node):
     def __init__(self):
         super().__init__('safety_node')
 
-        self.declare_parameter('silence_timeout', 0.30)
-        self.declare_parameter('mux_timeout_sec', 0.35)
+        self.declare_parameter('silence_timeout', 0.50)
+        self.declare_parameter('mux_timeout_sec', 0.55)
         self.declare_parameter('mux_startup_grace_sec', 3.0)
         self.declare_parameter('publish_rate', 20.0)
         self.declare_parameter('require_seen', True)

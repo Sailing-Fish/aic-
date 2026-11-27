@@ -32,6 +32,7 @@ import yaml
 try:
     import rclpy
     from rclpy.node import Node
+    from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
     from cv_bridge import CvBridge
     from geometry_msgs.msg import Twist
     from sensor_msgs.msg import Image
@@ -41,6 +42,9 @@ except ImportError:
     HAS_ROS = False
     rclpy = None
     Node = object
+    HistoryPolicy = None
+    QoSProfile = None
+    ReliabilityPolicy = None
     CvBridge = None
     Twist = None
     Image = None
@@ -691,10 +695,20 @@ class PanelNode(Node):
         super().__init__('panel_node')
         self.bridge = CvBridge()
         self._last_started = False
+        self._last_debug_jpeg_ts = 0.0
 
-        self.create_subscription(Image, 'line_follower/debug_image', self._on_debug, 5)
-        self.create_subscription(Image, '/yolo_detection_image', self._on_yolo, 5)
-        self.create_subscription(Image, '/image_raw', self._on_raw_image, 5)
+        img_qos = (
+            QoSProfile(
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            )
+            if QoSProfile is not None
+            else 5
+        )
+        self.create_subscription(Image, 'line_follower/debug_image', self._on_debug, img_qos)
+        self.create_subscription(Image, '/yolo_detection_image', self._on_yolo, img_qos)
+        self.create_subscription(Image, '/image_raw', self._on_raw_image, img_qos)
         self.create_subscription(Bool, 'line_follower/start_cmd', self._on_start, 10)
         self.create_subscription(String, 'line_follower/track_state', self._on_state, 10)
         # 当前状态与显式终点标志：mode=finals s=.. count=.. branch=.. final=0/1
@@ -710,14 +724,22 @@ class PanelNode(Node):
         return buf.tobytes() if ok else None
 
     def _on_debug(self, msg):
+        now = time.time()
+        need_rec = RECORDER.is_active and RECORDER.source == 'debug'
+        need_jpeg = (now - self._last_debug_jpeg_ts) >= STREAM_PERIOD
+        if not need_rec and not need_jpeg:
+            return
         frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-        if RECORDER.is_active and RECORDER.source == 'debug':
-            RECORDER.push_frame(frame)
+        if need_rec:
+            RECORDER.push_frame(frame, now=now)
+        if not need_jpeg:
+            return
+        self._last_debug_jpeg_ts = now
         ok, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
         if ok:
             with SH.lock:
                 SH.frames['debug'] = buf.tobytes()
-                SH.frame_ts['debug'] = time.time()
+                SH.frame_ts['debug'] = now
                 SH.frame_seq['debug'] += 1
 
     def _on_yolo(self, msg):
@@ -1112,12 +1134,13 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
         'last_t': '',
     }
     milestones = []
+    safety_active = False
 
     rd = run_dir()
     if not rd:
         return {
             'perf': perf, 'milestones': milestones, 'red_hint': red_hint,
-            'tier1': tier1, 'brake_speed': brake_speed,
+            'tier1': tier1, 'brake_speed': brake_speed, 'safety_active': safety_active,
         }
     path = os.path.join(rd, 'events.csv')
     rows = []
@@ -1209,6 +1232,12 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
             })
             continue
 
+        if area == 'safety':
+            if event == 'deadman_on':
+                safety_active = True
+            elif event == 'deadman_off':
+                safety_active = False
+
         if area == 'ctrl':
             continue
         if area == 'state' and event == 'change' and 'to=lost' not in kv:
@@ -1231,6 +1260,7 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
         'red_hint': red_hint,
         'tier1': tier1,
         'brake_speed': brake_speed,
+        'safety_active': safety_active,
     }
 
 
@@ -1656,6 +1686,7 @@ class Handler(BaseHTTPRequestHandler):
             'red_hint': diag['red_hint'],
             'tier1': diag['tier1'],
             'brake_speed': brake_speed,
+            'safety_active': bool(diag.get('safety_active', False)),
             'frames': frames_ok,
             'frame_age': frame_age,
             'voltage': {

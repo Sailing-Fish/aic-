@@ -1358,8 +1358,12 @@ function translateMilestoneOrIssue(e){
   const rawTxt = `[${e.area} ${e.event}] ${e.kv || ''}`.trim();
 
   if(e.area === 'safety' && e.event === 'deadman_on'){
+    const reason = kv.reason || 'timeout';
+    const up = kv.upstream_silence ? `上游静默 ${kv.upstream_silence}` : '';
+    const mx = kv.mux_silence ? `mux静默 ${kv.mux_silence}` : '';
+    const detail = [reason, up, mx].filter(Boolean).join(' · ');
     return { kind:'issue', tone:'bad', time:tStr, raw:rawTxt, node:'safety',
-      title:'🛡️ 触发安全兜底急刹', desc:'巡线或底盘控制指令超时中断，安全节点已自动接管并停车，请查巡线与底盘日志。' };
+      title:'🛡️ 触发安全兜底急刹', desc:`控制链路短暂中断，安全节点已自动接管发零速（${detail}），请查巡线与安全日志。` };
   }
   if(e.area === 'state' && kv.to === 'lost'){
     return { kind:'issue', tone:'bad', time:tStr, raw:rawTxt, node:'follow',
@@ -1599,7 +1603,8 @@ function updateCompanions(d){
   let dsCls = 'ds', dsMoodTxt = '待命', dsText = '系统安静待命，空格即可发车';
   const t1 = d.tier1 || {};
   const cbfRecent = t1.cbf_count > 0 && t1.cbf_last_t !== '' && (d.timer.elapsed - Number(t1.cbf_last_t || -99) < 4);
-  if(lastSafety && (d.timer.elapsed - Number(lastSafety.t || 0) < 6)){
+  const safetyActive = !!d.safety_active;
+  if(safetyActive){
     dsCls = 'ds alert'; dsMoodTxt = '兜底接管'; dsText = '上游静默了，我已自动刹车保安全！';
   } else if(d.started && d.track_state === 'lost'){
     dsCls = 'ds alert'; dsMoodTxt = '注意丢线'; dsText = '刚才有点丢线，请在诊室看定位提示';

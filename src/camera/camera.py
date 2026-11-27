@@ -312,7 +312,9 @@ class CameraPublisher(Node):
         self.declare_parameter('image_height', 480)
         self.declare_parameter('framerate', 30.0)
         self.declare_parameter('topic_name', '/image_raw')
-        self.declare_parameter('qos_depth', 1)
+        # Keep 4 frames (~133ms) in RELIABLE writer cache so RELIABLE tools never hit FastDDS
+        # depth=1 HEARTBEAT/GAP 2s stalls, while BEST_EFFORT subscribers always drop-to-latest.
+        self.declare_parameter('qos_depth', 4)
         # Double-buffering (2) prevents V4L2 single-buffer SOF starvation (which halves 30fps -> 15fps)
         # while keeping capture latency to at most 1 frame.
         self.declare_parameter('v4l2_buffer_size', 2)

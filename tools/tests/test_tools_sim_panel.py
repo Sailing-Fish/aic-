@@ -634,6 +634,15 @@ class TestPanelAndTelemetry(unittest.TestCase):
                 m_pairs = [(m["area"], m["event"]) for m in body3["milestones"]]
                 self.assertEqual(m_pairs, [("yellow", "stop_begin"), ("state", "change")])
                 self.assertIn("to=lost", body3["milestones"][1]["kv"])
+                self.assertFalse(body3["safety_active"])
+
+                # 5. safety_active tracks deadman_on -> deadman_off transitions accurately
+                with open(log_dir / "events.csv", "a", encoding="utf-8") as ef:
+                    ef.write("220.0,120.0,safety,safety,deadman_on,reason=upstream_silence upstream_silence=0.54s\n")
+                self.assertTrue(panel_server.read_diagnostics()["safety_active"])
+                with open(log_dir / "events.csv", "a", encoding="utf-8") as ef:
+                    ef.write("221.0,121.0,safety,safety,deadman_off,last_src=/cmd_vel_stop upstream_silence=0.02s\n")
+                self.assertFalse(panel_server.read_diagnostics()["safety_active"])
             finally:
                 panel_server.LOGROOT = orig_logroot
                 panel_server.STATE_DIR = orig_state_dir

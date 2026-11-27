@@ -233,6 +233,7 @@ camera_publisher_node:
     ae_awb_mode: lock_on_start
     power_line_frequency: 1
     backlight_compensation: 0
+    exposure_dynamic_framerate: -1
     unlock_on_stop: true
 
 bpu_yolov8_digit_node:

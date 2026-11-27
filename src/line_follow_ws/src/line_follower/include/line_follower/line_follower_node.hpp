@@ -97,7 +97,7 @@ private:
     const sensor_msgs::msg::Image::ConstSharedPtr & source,
     const cv::Mat & frame_bgr,
     const ProcessingResult & result,
-    const FinalsDebugOverlay & finals_overlay) const;
+    const FinalsDebugOverlay & finals_overlay);
 
   static double clamp(double value, double min_value, double max_value);
 
@@ -208,6 +208,8 @@ private:
 
   bool enable_curve_assist_{true};
   bool publish_debug_image_{true};
+  double debug_image_max_fps_{15.0};
+  double last_debug_pub_sec_{-1e9};
   bool use_homography_{false};
 
   // ============================================================

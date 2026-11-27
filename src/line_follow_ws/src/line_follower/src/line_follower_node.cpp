@@ -12,6 +12,7 @@
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/imgproc.hpp>
+#include <rmw/qos_profiles.h>
 #include <std_msgs/msg/bool.hpp>
 
 namespace
@@ -172,6 +173,7 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("roi_bottom_ratio", 0.18);
   this->declare_parameter("yellow_roi_bottom_ratio", 0.0);
   this->declare_parameter("publish_debug_image", true);
+  this->declare_parameter("debug_image_max_fps", 15.0);
 
   // ============================================================
   // Image processing (relative_border / hybrid / legacy_hsv fallback)
@@ -417,6 +419,7 @@ void LineFollowerNode::sync_runtime_parameters()
   yellow_roi_bottom_ratio_ =
     clamp(this->get_parameter("yellow_roi_bottom_ratio").as_double(), 0.0, 0.5);
   publish_debug_image_ = this->get_parameter("publish_debug_image").as_bool();
+  debug_image_max_fps_ = std::max(0.0, this->get_parameter("debug_image_max_fps").as_double());
 
   gaussian_kernel_ = static_cast<int>(this->get_parameter("gaussian_kernel").as_int());
   if (gaussian_kernel_ <= 0) {
@@ -894,11 +897,16 @@ void LineFollowerNode::setup_interfaces()
     std::chrono::milliseconds(500),
     [this]() {publish_segment_info(false);});
 
+  // BEST_EFFORT + depth=1 avoids FastDDS RELIABLE 2s HEARTBEAT/GAP retransmission stalls
+  // on 30fps 921KB /image_raw frames and always processes the freshest camera frame.
+  rmw_qos_profile_t img_sub_qos = rmw_qos_profile_sensor_data;
+  img_sub_qos.depth = 1;
   image_sub_ = image_transport::create_subscription(
     this,
     image_topic_,
     std::bind(&LineFollowerNode::image_callback, this, std::placeholders::_1),
-    "raw");
+    "raw",
+    img_sub_qos);
 
   start_sub_ = this->create_subscription<std_msgs::msg::Bool>(
     start_topic_, 10, std::bind(&LineFollowerNode::start_callback, this, std::placeholders::_1));
@@ -925,7 +933,9 @@ void LineFollowerNode::setup_interfaces()
   }
 
   if (publish_debug_image_) {
-    debug_pub_ = image_transport::create_publisher(this, debug_image_topic_);
+    rmw_qos_profile_t dbg_pub_qos = rmw_qos_profile_default;
+    dbg_pub_qos.depth = 2;
+    debug_pub_ = image_transport::create_publisher(this, debug_image_topic_, dbg_pub_qos);
     debug_enabled_ = true;
   }
 }
@@ -2242,10 +2252,19 @@ void LineFollowerNode::publish_debug_image(
   const sensor_msgs::msg::Image::ConstSharedPtr & source,
   const cv::Mat & frame_bgr,
   const ProcessingResult & result,
-  const FinalsDebugOverlay & finals_overlay) const
+  const FinalsDebugOverlay & finals_overlay)
 {
   if (!debug_enabled_ || result.binary_mask.empty()) {
     return;
+  }
+
+  if (debug_image_max_fps_ > 0.0) {
+    const double now_sec = this->now().seconds();
+    const double min_interval = 1.0 / debug_image_max_fps_;
+    if ((now_sec - last_debug_pub_sec_) < min_interval) {
+      return;
+    }
+    last_debug_pub_sec_ = now_sec;
   }
 
   const cv::Mat overlay = debug_renderer_.render(

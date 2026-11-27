@@ -406,6 +406,48 @@ class TestBPUYoloV8PostProcessAndTracker(unittest.TestCase):
         self.assertGreater(f7[0]['track_id'], max(id_cone, id_ne))
         self.assertEqual(f7[0]['track_hits'], 1)
 
+    def test_decode_nchw_with_per_channel_scale_data(self):
+        """Regression test: NCHW outputs with per-channel scale_data must not broadcast-crash."""
+        grids = _make_grids()
+        dfl_w = np.arange(16, dtype=np.float32)
+        injections = [
+            {'stride_idx': 1, 'gy': 20, 'gx': 20, 'cls_id': 4, 'logit': 4.0, 'dfl_dist': (2, 2, 2, 2)},
+        ]
+        outputs = _build_synthetic_outputs(8, injections, layout='NCHW')
+        for out in outputs:
+            ch = out.buffer.shape[1]
+            out.properties.scale_data = [0.5] * ch
+        all_boxes, all_scores, all_cls_ids, ok, cls_cnt, reg_cnt = yolo_mod.decode_yolov8_outputs(
+            outputs=outputs,
+            grids=grids,
+            dfl_weights=dfl_w,
+            num_classes=8,
+            conf_thresh=0.25,
+            pad_w=0.0,
+            pad_h=80.0,
+            scale_r=1.0,
+            orig_w=640,
+            orig_h=480,
+        )
+        self.assertTrue(ok)
+        self.assertEqual((cls_cnt, reg_cnt), (3, 3))
+        self.assertEqual(sum(len(s) for s in all_scores), 1)
+        self.assertEqual(int(all_cls_ids[0][0]), 4)
+
+    def test_image_qos_best_effort_prevents_fastdds_stall(self):
+        cam_src = (WS_ROOT / 'src' / 'camera' / 'camera.py').read_text(encoding='utf-8')
+        yolo_src = (WS_ROOT / 'src' / 'yolov8' / 'bpu_yolov8_node.py').read_text(encoding='utf-8')
+        panel_src = (WS_ROOT / 'tools' / 'panel' / 'server.py').read_text(encoding='utf-8')
+        lf_src = (
+            WS_ROOT / 'src' / 'line_follow_ws' / 'src' / 'line_follower'
+            / 'src' / 'line_follower_node.cpp'
+        ).read_text(encoding='utf-8')
+        self.assertIn("declare_parameter('qos_depth', 4)", cam_src)
+        self.assertIn('ReliabilityPolicy.BEST_EFFORT', yolo_src)
+        self.assertIn('ReliabilityPolicy.BEST_EFFORT', panel_src)
+        self.assertIn('rmw_qos_profile_sensor_data', lf_src)
+        self.assertIn('debug_image_max_fps', lf_src)
+
 
 class TestSafetyWatchdogLogic(unittest.TestCase):
     def test_upstream_topics_exclude_detection_channel(self):

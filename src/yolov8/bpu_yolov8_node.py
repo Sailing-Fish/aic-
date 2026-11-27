@@ -25,11 +25,15 @@ except ImportError:
 try:
     import rclpy
     from rclpy.node import Node
+    from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import Image, RegionOfInterest
     from ai_msgs.msg import PerceptionTargets, Target, Roi
 except ImportError:
     rclpy = None
     Node = object
+    HistoryPolicy = None
+    QoSProfile = None
+    ReliabilityPolicy = None
     Image = None
     RegionOfInterest = None
     PerceptionTargets = None
@@ -457,13 +461,12 @@ def decode_yolov8_outputs(
     tensors = []
     for out in outputs:
         data = out.buffer.astype(np.float32)
-        if hasattr(out.properties, 'scale_data') and len(out.properties.scale_data) > 0:
-            scale = np.array(out.properties.scale_data, dtype=np.float32)
-            data *= scale[0] if len(scale) == 1 else scale
-
         if len(data.shape) == 4 and (data.shape[1] == num_classes or data.shape[1] == 64):
             if data.shape[-1] != num_classes and data.shape[-1] != 64:
                 data = np.transpose(data, (0, 2, 3, 1))
+        if hasattr(out.properties, 'scale_data') and len(out.properties.scale_data) > 0:
+            scale = np.array(out.properties.scale_data, dtype=np.float32)
+            data *= scale[0] if len(scale) == 1 else scale
         tensors.append(data)
 
     cls_heads = sorted(
@@ -813,9 +816,20 @@ class BPUYoloV8DigitNode(Node):
 
         # =====================================================
         # 7. ROS2 接口（保持原有话题与消息类型不变）
+        #    图像订阅使用 BEST_EFFORT + depth=1，避免高帧率大图在 FastDDS
+        #    RELIABLE 模式下触发 2s HEARTBEAT/GAP 重传卡死。
         # =====================================================
+        img_sub_qos = (
+            QoSProfile(
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            )
+            if QoSProfile is not None
+            else 1
+        )
         self.sub = self.create_subscription(
-            Image, '/image_raw', self.image_callback, 1
+            Image, '/image_raw', self.image_callback, img_sub_qos
         )
 
         self.det_pub = self.create_publisher(
@@ -823,7 +837,7 @@ class BPUYoloV8DigitNode(Node):
         )
 
         self.img_pub = self.create_publisher(
-            Image, '/yolo_detection_image', 1
+            Image, '/yolo_detection_image', 2
         )
 
         pub_dbg = bool(self.get_parameter('publish_debug_image').value)
