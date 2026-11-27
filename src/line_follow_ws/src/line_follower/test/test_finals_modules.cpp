@@ -1387,15 +1387,18 @@ void test_corridor_ackermann_curve_offtracking_compensation()
   CHECK(std::abs(CorridorPlanner::compute_curve_offtracking_offset(+0.15)) < 1e-12);
   CHECK(std::abs(CorridorPlanner::compute_curve_offtracking_offset(-0.15)) < 1e-12);
 
-  // Sharp right curve (+0.55) shifts target OUTSIDE (LEFT, +y) inside safe corridor
+  // Sharp right curve (+0.55) shifts target OUTSIDE (LEFT, +y) inside safe corridor,
+  // bounded by Ackermann wheelbase off-tracking (<= 0.05m) so yaw authority is preserved.
   const CorridorPlan right_turn = planner.plan(
     +0.215, -0.215, 0.0, {}, {}, false, 1.0, 1.0, 0.55, +0.55);
-  CHECK(right_turn.target_y_m > 0.04 && right_turn.target_y_m <= right_turn.safe_y_max_m);
+  CHECK(right_turn.target_y_m > 0.030 && right_turn.target_y_m <= 0.050);
+  CHECK(right_turn.target_y_m <= right_turn.safe_y_max_m);
 
   // Mirror: sharp left curve (-0.55) shifts target OUTSIDE (RIGHT, -y) inside safe corridor
   const CorridorPlan left_turn = planner.plan(
     +0.215, -0.215, 0.0, {}, {}, false, 1.0, 1.1, 0.55, -0.55);
-  CHECK(left_turn.target_y_m < -0.04 && left_turn.target_y_m >= left_turn.safe_y_min_m);
+  CHECK(left_turn.target_y_m < -0.030 && left_turn.target_y_m >= -0.050);
+  CHECK(left_turn.target_y_m >= left_turn.safe_y_min_m);
   CHECK(std::abs(right_turn.target_y_m + left_turn.target_y_m) < 1e-9);
 
   // Never pushes into an obstacle on the outside of the curve!

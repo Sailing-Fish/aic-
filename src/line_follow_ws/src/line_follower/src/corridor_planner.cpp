@@ -406,9 +406,11 @@ double CorridorPlanner::compute_curve_offtracking_offset(double signed_heading_p
   // Kinematic rear-axle off-tracking compensation for Ackermann vehicle on tight curves:
   // heading_proxy > 0 means far lane bends RIGHT -> inner rear wheel cuts inside (-y),
   // so shift v_near target slightly OUTSIDE (+y, left) strictly within the safe corridor.
+  // Calibrated to Ackermann wheelbase off-tracking (L^2 / (2R) + overhang ~ 2.5-3.6 cm at R=0.65m)
+  // so it prevents inner-wheel apex clipping without starving yaw authority on the outer wall.
   constexpr double kDeadband = 0.15;
-  constexpr double kGain = 0.16;
-  constexpr double kMaxShiftM = 0.075;
+  constexpr double kGain = 0.11;
+  constexpr double kMaxShiftM = 0.045;
   const double mag = std::abs(signed_heading_proxy);
   if (mag <= kDeadband) {
     return 0.0;

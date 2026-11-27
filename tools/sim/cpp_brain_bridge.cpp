@@ -1195,7 +1195,7 @@ struct BrainInstance
         double d_near_tmp = 0.0;
         double y_near_m = 0.0;
         if (ground_projector.pixel_to_ground(near_cx_px, v_near, d_near_tmp, y_near_m)) {
-          y_center_m = std::clamp(y_center_m, y_near_m - 0.030, y_near_m + 0.030);
+          y_center_m = y_near_m;
         }
       }
 
@@ -1226,16 +1226,37 @@ struct BrainInstance
         y_lane_right_m = y_mid - half_w_def;
       } else if (!has_fork_split && active_branch == 0 && near_valid) {
         const double def_w = corridor_planner.config().default_lane_width_m;
-        if (left_clipped && !right_clipped &&
-          right_proj_ok && y_r >= -0.45 && y_r <= 0.25 && y_r > y_lane_right_m)
-        {
-          y_lane_right_m = y_r;
-          y_lane_left_m = y_r + def_w;
-        } else if (right_clipped && !left_clipped &&
-          left_proj_ok && y_l >= -0.25 && y_l <= 0.45 && y_l < y_lane_left_m)
-        {
-          y_lane_left_m = y_l;
-          y_lane_right_m = y_l - def_w;
+        if (left_clipped && !right_clipped && right_proj_ok) {
+          double d_clip = 0.0;
+          double y_l_clip = 0.0;
+          const bool clip_ok = ground_projector.pixel_to_ground(0.0, v_near, d_clip, y_l_clip);
+          const double vis_span = y_l_clip - y_r;
+          if (clip_ok && lane_width_ratio < wide_road_ratio_threshold &&
+            vis_span > def_w && vis_span <= 0.68)
+          {
+            const double y_mid = 0.5 * (y_l_clip + y_r);
+            y_lane_left_m = y_mid + half_w_def;
+            y_lane_right_m = y_mid - half_w_def;
+          } else if (y_r >= -0.45 && y_r <= 0.25 && y_r > y_lane_right_m) {
+            y_lane_right_m = y_r;
+            y_lane_left_m = y_r + def_w;
+          }
+        } else if (right_clipped && !left_clipped && left_proj_ok) {
+          double d_clip = 0.0;
+          double y_r_clip = 0.0;
+          const double max_u_px = static_cast<double>(std::max(1, img_w - 1));
+          const bool clip_ok = ground_projector.pixel_to_ground(max_u_px, v_near, d_clip, y_r_clip);
+          const double vis_span = y_l - y_r_clip;
+          if (clip_ok && lane_width_ratio < wide_road_ratio_threshold &&
+            vis_span > def_w && vis_span <= 0.68)
+          {
+            const double y_mid = 0.5 * (y_l + y_r_clip);
+            y_lane_left_m = y_mid + half_w_def;
+            y_lane_right_m = y_mid - half_w_def;
+          } else if (y_l >= -0.25 && y_l <= 0.45 && y_l < y_lane_left_m) {
+            y_lane_left_m = y_l;
+            y_lane_right_m = y_l - def_w;
+          }
         }
       }
 
