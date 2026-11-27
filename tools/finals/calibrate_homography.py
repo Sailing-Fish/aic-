@@ -15,6 +15,14 @@
   2) 无头 / 自动化模式（从 JSON 或 CSV 读取对应点）：
      python3 tools/finals/calibrate_homography.py --points calib_points.json --out homography.yaml
 
+  3) 一键标定并自动写回配置（MobaXterm 文本模式，无需 X11 弹窗）：
+     python3 tools/finals/calibrate_homography.py --image tools/logs/calib.jpg --text --apply
+
+     说明：--text 模式在终端里逐个提示输入标靶点的像素坐标 (u v)，
+           地面坐标用脚本内置的 DEFAULT_TARGET_POINTS_M 预设；
+           --apply 会把结果自动写入 tools/config/finals_fork.yaml 和
+           tools/config/finals_roundabout.yaml（先备份为 .bak）。
+
 JSON 点集格式示例：
   [
     {"u": 220, "v": 420, "d_bumper_m": 0.30, "y_lat_m":  0.215},
@@ -35,6 +43,8 @@ import csv
 import json
 import math
 import os
+import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -260,13 +270,13 @@ def interactive_pick(
                     f"  [点 #{idx + 1}] 像素=({x}, {y}) -> 预设地面=({d_m:.3f}m, {y_m:+.3f}m)"
                 )
             else:
-                raw = input(
-                    f"  [点 #{idx + 1}] 像素=({x}, {y}) 请输入地面坐标 'd_bumper_m y_lat_m': "
-                ).strip()
-                parts = raw.replace(",", " ").split()
-                d_m, y_m = float(parts[0]), float(parts[1])
+                print("  [提示] 预设靶点已全部点完，请按 Enter / Space 求解；")
+                print("         若为自定义靶点请改用 --text 文本模式，不要再点击。")
+                return
             img_pts.append((float(x), float(y)))
             ground_pts.append((float(d_m), float(y_m)))
+            if len(img_pts) == len(targets):
+                print(f"  [完成] 已点满 {len(targets)} 个预设靶点，请按 Enter / Space 求解。")
 
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
     cv2.setMouseCallback(win, on_mouse)
@@ -316,6 +326,161 @@ def interactive_pick(
     return img_pts, ground_pts
 
 
+def save_grid_image(image: np.ndarray, scale: int = 2) -> str:
+    """生成放大带坐标网格的取点参考图，返回绝对路径。"""
+    h, w = image.shape[:2]
+    vis = cv2.resize(image, (w * scale, h * scale), interpolation=cv2.INTER_CUBIC)
+    step_src = 20
+    for u in range(0, w + 1, step_src):
+        x = u * scale
+        cv2.line(vis, (x, 0), (x, vis.shape[0]), (0, 200, 0), 1)
+        cv2.putText(vis, str(u), (x + 2, vis.shape[0] - 4), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.32, (0, 255, 0), 1, cv2.LINE_AA)
+    for v in range(0, h + 1, step_src):
+        y = v * scale
+        cv2.line(vis, (0, y), (vis.shape[1], y), (0, 200, 0), 1)
+        cv2.putText(vis, str(v), (2, y + 10), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.32, (0, 255, 0), 1, cv2.LINE_AA)
+    cv2.putText(vis, "u ->", (vis.shape[1] - 60, vis.shape[0] - 4),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1, cv2.LINE_AA)
+    cv2.putText(vis, "v v", (vis.shape[1] - 30, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1, cv2.LINE_AA)
+    out = Path("tools/logs/calib_grid.png")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out), vis)
+    return str(out.resolve())
+
+
+def interactive_pick_text(
+    image: np.ndarray,
+    targets: Sequence[Tuple[float, float]] = DEFAULT_TARGET_POINTS_M,
+) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
+    """MobaXterm 无 X11 弹窗模式：在终端逐个输入标靶点的像素坐标。"""
+    h, w = image.shape[:2]
+    img_pts: List[Tuple[float, float]] = []
+    ground_pts: List[Tuple[float, float]] = []
+
+    grid_path = save_grid_image(image)
+    print("=" * 72)
+    print(f"文本标定模式：图像尺寸 {w} x {h} px")
+    print(f"已自动生成取点参考图: {grid_path}")
+    print("  ↓↓↓ 请在 MobaXterm 左侧 SFTP 面板双击下载这张图，放大后读取红色标靶的像素坐标 ↓↓↓")
+    print("  （图上每 20px 一条网格，标注了 u/v 数值；原点在左上角）")
+    print("地面坐标默认使用内置靶点（原点=车头防撞条中心，+d 向前 m，+y 向左 m）：")
+    for i, (d_m, y_m) in enumerate(targets):
+        print(f"  #{i + 1}: d={d_m:.3f} m, y={y_m:+.3f} m")
+    print("-" * 72)
+    print("输入格式：")
+    print("  'u v'       -> 像素坐标，地面坐标用对应预设靶点")
+    print("  'u v d y'   -> 像素 + 自定义地面坐标")
+    print("  回车         -> 结束输入（至少需 4 点）")
+    print("  'u'         -> 撤销上一个点")
+    print("  'grid'      -> 重新生成取点参考图")
+    print("=" * 72)
+
+    while True:
+        idx = len(img_pts)
+        default = targets[idx] if idx < len(targets) else None
+        if default:
+            hint = f"预设 d={default[0]:.3f} y={default[1]:+.3f}"
+        else:
+            hint = "超出预设，需输入 d y"
+        try:
+            raw = input(f"点 #{idx + 1} [{hint}] > ").strip()
+        except EOFError:
+            break
+        if not raw:
+            break
+        cmd = raw.lower()
+        if cmd == "u":
+            if img_pts:
+                img_pts.pop()
+                ground_pts.pop()
+                print("  已撤销上一个点")
+            continue
+        if cmd == "grid":
+            print(f"  取点参考图已重新生成: {save_grid_image(image)}")
+            continue
+        parts = raw.replace(",", " ").split()
+        try:
+            u = float(parts[0])
+            v = float(parts[1])
+            if len(parts) >= 4:
+                d_m, y_m = float(parts[2]), float(parts[3])
+            elif default:
+                d_m, y_m = default
+            else:
+                print("  [ERROR] 已超出预设靶点数，请用 'u v d y' 自定义地面坐标")
+                continue
+        except (ValueError, IndexError):
+            print("  [ERROR] 输入格式错误，应为 'u v' 或 'u v d y'")
+            continue
+        img_pts.append((u, v))
+        ground_pts.append((d_m, y_m))
+        print(f"  -> 记录 ({u:.1f}, {v:.1f}) => d={d_m:.3f} m, y={y_m:+.3f} m")
+
+    return img_pts, ground_pts
+
+
+def inject_homography_into_config(
+    yaml_path: Path,
+    h_flat: Sequence[float],
+    precision: int = 8,
+    make_backup: bool = True,
+) -> bool:
+    """把标定结果写入单个 YAML 配置（use_homography + homography_matrix）。"""
+    if not yaml_path.is_file():
+        print(f"  [WARN] 配置文件不存在，跳过: {yaml_path}")
+        return False
+    original = yaml_path.read_text(encoding="utf-8")
+    if make_backup:
+        backup = yaml_path.with_suffix(yaml_path.suffix + ".bak")
+        backup.write_text(original, encoding="utf-8")
+        print(f"  [BAK] 原文件已备份: {backup}")
+
+    val_str = ", ".join(_fmt_yaml_float(float(x), precision) for x in h_flat)
+    new_text, n_use = re.subn(
+        r"^(\s*)use_homography:\s*(?:true|false)\s*$",
+        r"\1use_homography: true",
+        original,
+        flags=re.MULTILINE,
+    )
+    if n_use == 0:
+        print(f"  [WARN] 未找到 use_homography 字段: {yaml_path}")
+
+    lines = new_text.splitlines(keepends=True)
+    out: List[str] = []
+    i = 0
+    n_rep = 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r"^(\s*)homography_matrix:\s*(.*)$", line.rstrip("\n"))
+        if not m:
+            out.append(line)
+            i += 1
+            continue
+        indent = m.group(1)
+        rest = m.group(2)
+        out.append(f"{indent}homography_matrix: [{val_str}]\n")
+        n_rep += 1
+        if rest.startswith("["):
+            if "]" not in rest:
+                while i < len(lines) and "]" not in lines[i]:
+                    i += 1
+            i += 1
+        else:
+            i += 1
+            while i < len(lines) and re.match(r"^\s*-\s+", lines[i]):
+                i += 1
+
+    if n_rep == 0:
+        print(f"  [WARN] 未找到 homography_matrix 字段: {yaml_path}")
+        return False
+    yaml_path.write_text("".join(out), encoding="utf-8")
+    print(f"  [OK] 已写入: {yaml_path}")
+    return True
+
+
 def print_report(
     img_pts: Sequence[Tuple[float, float]],
     ground_pts: Sequence[Tuple[float, float]],
@@ -355,6 +520,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     ap.add_argument("--save-points", default=None, help="保存交互点选的对应点到 JSON")
     ap.add_argument("--ransac", action="store_true", help="点数 >4 时使用 RANSAC 抗离群点")
     ap.add_argument("--out", default=None, help="可选：把 YAML 片段写入文件")
+    ap.add_argument("--text", action="store_true",
+                    help="文本模式：终端输入像素坐标，无需 X11 弹窗（适合 MobaXterm）")
+    ap.add_argument("--apply", action="store_true",
+                    help="自动把标定结果写入 --config 指定的 YAML（默认两份决赛配置）")
+    ap.add_argument("--config", action="append", default=None,
+                    help="要写入的配置文件路径，可重复指定；默认 tools/config/finals_fork.yaml 和 finals_roundabout.yaml")
+    ap.add_argument("--no-backup", action="store_true", help="--apply 时不备份原文件（不推荐）")
     return ap.parse_args(argv)
 
 
@@ -382,7 +554,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("[ERROR] 请指定 --points <file> 或 --image <img.png> 或 --device /dev/video0",
                   file=sys.stderr)
             return 2
-        img_pts, ground_pts = interactive_pick(img)
+        if args.text:
+            img_pts, ground_pts = interactive_pick_text(img)
+        else:
+            img_pts, ground_pts = interactive_pick(img)
         if args.save_points:
             Path(args.save_points).parent.mkdir(parents=True, exist_ok=True)
             payload = [
@@ -394,6 +569,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             print(f"[INFO] 已保存对应点: {args.save_points}")
 
+    if len(img_pts) < 4:
+        print(f"[ERROR] 至少需要 4 个标定点，当前只有 {len(img_pts)} 个", file=sys.stderr)
+        return 2
+
     res = solve_homography(img_pts, ground_pts, use_ransac=args.ransac)
     print_report(img_pts, ground_pts, res)
 
@@ -402,6 +581,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(format_yaml_snippet(res["H"]) + "\n", encoding="utf-8")
         print(f"[OUT] 已写入 YAML 片段: {out_path}")
+
+    if args.apply:
+        configs = (
+            [Path(p) for p in args.config]
+            if args.config
+            else [
+                Path("tools/config/finals_fork.yaml"),
+                Path("tools/config/finals_roundabout.yaml"),
+            ]
+        )
+        print(f"\n[APPLY] 自动写入 {len(configs)} 份配置（use_homography: true + homography_matrix）：")
+        for cfg in configs:
+            inject_homography_into_config(
+                cfg, res["H_flat"], make_backup=not args.no_backup
+            )
+        print("[APPLY] 完成。记得重新编译并启动节点，配置才会生效。")
     return 0
 
 
