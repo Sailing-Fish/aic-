@@ -307,7 +307,7 @@ ros2 node list | grep -c "line_follower_node\|detection_turn_controller\|cmd_mux
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `silence_timeout` | 0.30 s | 三路全静默判定阈值 |
+| `silence_timeout` | 0.50 s | 三路全静默判定阈值（容忍启动期调度抖动） |
 | `publish_rate` | 20 Hz | 兜底发布频率 |
 | `topics` | 见上 | 可配置 |
 

@@ -148,6 +148,28 @@ class TestCameraV4L2Policy(unittest.TestCase):
             cam_src.index('CAP_PROP_BUFFERSIZE'),
         )
 
+    def test_unsupported_optional_ctrl_is_not_reported_as_set_fail(self):
+        logs = []
+
+        def unsupported_runner(cmd, **_kwargs):
+            if '--set-ctrl' in cmd:
+                ctrl = cmd[cmd.index('--set-ctrl') + 1]
+                if ctrl.startswith(('exposure_dynamic_framerate=', 'exposure_auto_priority=')):
+                    return FakeCompletedProcess(1, '', "unknown control 'exposure_auto_priority'")
+            return FakeCompletedProcess(0, '', '')
+
+        policy = camera_mod.CameraV4L2Policy(
+            device='/dev/video0',
+            ae_awb_mode='lock_on_start',
+            exposure_dynamic_framerate=0,
+            runner=unsupported_runner,
+            logger=logs.append,
+        )
+        summary = policy.apply_startup()
+        self.assertIsNone(summary['exposure_dynamic_framerate'])
+        self.assertFalse(any('set_fail' in m for m in logs))
+        self.assertTrue(any('unsupported_optional ctrl=exposure_dynamic_framerate' in m for m in logs))
+
     def test_manual_fixed_mode_locks_configured_values(self):
         calls = []
 
@@ -331,6 +353,39 @@ class TestBPUYoloV8PostProcessAndTracker(unittest.TestCase):
         det_types = {d['type'] for d in dets}
         self.assertEqual(det_types, {'red_no_entry', 'red_cone'})
 
+    def test_decode_per_channel_scale_nchw_and_nhwc(self):
+        grids = _make_grids()
+        dfl_w = np.arange(16, dtype=np.float32)
+        injections = [
+            {'stride_idx': 1, 'gy': 20, 'gx': 20, 'cls_id': 3, 'logit': 5.0,
+             'dfl_dist': (2, 2, 2, 2)}
+        ]
+
+        for layout in ('NCHW', 'NHWC'):
+            with self.subTest(layout=layout):
+                outputs = _build_synthetic_outputs(8, injections, layout=layout)
+                for idx, out in enumerate(outputs):
+                    channels = 8 if idx % 2 == 0 else 64
+                    out.properties.scale_data = [2.0] * channels
+
+                boxes, scores, cls_ids, ok, cls_cnt, reg_cnt = yolo_mod.decode_yolov8_outputs(
+                    outputs=outputs,
+                    grids=grids,
+                    dfl_weights=dfl_w,
+                    num_classes=8,
+                    conf_thresh=0.25,
+                    pad_w=0.0,
+                    pad_h=80.0,
+                    scale_r=1.0,
+                    orig_w=640,
+                    orig_h=480,
+                )
+                self.assertTrue(ok)
+                self.assertEqual((cls_cnt, reg_cnt), (3, 3))
+                self.assertEqual(len(boxes), 1)
+                self.assertEqual(int(np.asarray(cls_ids[0]).item()), 3)
+                self.assertGreater(float(np.asarray(scores[0]).item()), 0.25)
+
     def test_per_class_nms_keeps_adjacent_different_classes_and_suppresses_same_class(self):
         cls11 = yolo_mod.load_class_list(
             str(WS_ROOT / 'src' / 'yolov8' / 'mod1' / 'out_finals11.list')
@@ -441,6 +496,20 @@ class TestSafetyWatchdogLogic(unittest.TestCase):
         r3 = wd.evaluate(2.55)
         self.assertFalse(r3['should_brake'])
         self.assertEqual(r3['transition'], 'deadman_off')
+
+    def test_default_silence_timeout_tolerates_startup_jitter(self):
+        wd = safety_mod.SafetyWatchdogLogic(mux_timeout_sec=0.35)
+        self.assertEqual(wd.silence_timeout, 0.5)
+
+        wd.on_upstream('/cmd_vel_stop', 10.0)
+        wd.on_mux_heartbeat(10.0)
+        self.assertFalse(wd.evaluate(10.32)['should_brake'])
+
+        wd.on_mux_heartbeat(10.5)
+        r = wd.evaluate(10.55)
+        self.assertTrue(r['should_brake'])
+        self.assertEqual(r['transition'], 'deadman_on')
+        self.assertIn('upstream_silence', r['reason'])
 
     def test_cmd_mux_crash_while_follower_keeps_publishing_triggers_brake(self):
         """

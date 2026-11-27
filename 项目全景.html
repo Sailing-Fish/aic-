@@ -1560,13 +1560,13 @@ rx[23]       0x7D</code></pre>
 
   <h3>软件层的补丁：看门狗</h3>
   <div class="filelbl">tools/safety_node.py</div>
-  <pre><code data-lang="py"># 20 Hz 检查：如果三路速度指令都超过 0.3 s 没更新，就自己发一条零速
-if now - last_seen &gt; silence_timeout:      # silence_timeout = 0.30
+  <pre><code data-lang="py"># 20 Hz 检查：如果三路速度指令都超过 0.5 s 没更新，就自己发一条零速
+if now - last_seen &gt; silence_timeout:      # silence_timeout = 0.50
     pub.publish(Twist())                   # 全零：linear.x = 0, angular.z = 0</code></pre>
 
   <div class="translate">
-    <b>为什么是 0.3 s：</b>正常指令流是 30 Hz（33 ms 一条）。0.3 s 相当于<b>连续丢了 9 条</b>。
-    再短容易误判（网络抖动）；再长，车已经多跑了 12 cm（按 0.4 m/s 算）。
+    <b>为什么是 0.5 s：</b>正常指令流是 30 Hz（33 ms 一条）。0.5 s 相当于<b>连续丢了 15 条</b>。
+    再短容易被启动期调度抖动误判；再长，车已经多跑了 20 cm（按 0.4 m/s 算）。
   </div>
 
   <div class="box">

@@ -130,7 +130,7 @@ class CameraV4L2Policy:
                 parsed[m.group(1)] = int(m.group(2))
         return parsed
 
-    def set_ctrl(self, name, value, aliases=()):
+    def set_ctrl(self, name, value, aliases=(), optional=False):
         """Try setting a V4L2 control by primary name, then fallback aliases."""
         candidates = (name,) + tuple(aliases)
         last_err = ''
@@ -141,8 +141,9 @@ class CameraV4L2Policy:
             last_err = (err or '').strip()
             if not self.v4l2_available:
                 return False, ctrl_name
+        event = 'unsupported_optional' if optional else 'set_fail'
         self._log(
-            f'[DEC] camera v4l2 set_fail ctrl={name} val={int(value)} '
+            f'[DEC] camera v4l2 {event} ctrl={name} val={int(value)} '
             f'err={last_err or "unsupported"}'
         )
         return False, name
@@ -169,6 +170,7 @@ class CameraV4L2Policy:
                 'exposure_dynamic_framerate',
                 self.exposure_dynamic_framerate,
                 aliases=('exposure_auto_priority',),
+                optional=True,
             )
         awb_ok, _ = self.set_ctrl(
             'white_balance_automatic', 1, aliases=('white_balance_temperature_auto',)
@@ -222,6 +224,7 @@ class CameraV4L2Policy:
                 'exposure_dynamic_framerate',
                 self.exposure_dynamic_framerate,
                 aliases=('exposure_auto_priority',),
+                optional=True,
             )
             summary['exposure_dynamic_framerate'] = (
                 self.exposure_dynamic_framerate if ok else None
