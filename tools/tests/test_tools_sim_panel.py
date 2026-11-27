@@ -657,6 +657,85 @@ class TestPanelAndTelemetry(unittest.TestCase):
                 self.assertIn("d.run_elapsed_sec", html_txt)
                 self.assertNotIn("d.timer.elapsed - Number(lastDigit.t", html_txt)
                 self.assertNotIn("d.timer.elapsed - Number(t1.cbf_last_t", html_txt)
+                for hook in ("btnStartToggle", "topMapSwitch", "btnSwitchMap", "/api/start", "/api/map/switch"):
+                    self.assertIn(hook, html_txt, f"Missing UI hook: {hook}")
+
+                # 7. POST /api/start and POST /api/map/switch end-to-end tests
+                class _FakeNode:
+                    def __init__(self):
+                        self.start_calls = []
+
+                    def set_start_cmd(self, val):
+                        self.start_calls.append(bool(val))
+
+                    def estop(self):
+                        self.start_calls.append(False)
+
+                def _invoke_post(path_str, payload):
+                    import io as _io
+                    raw_body = json.dumps(payload).encode("utf-8")
+                    buf = _io.BytesIO()
+                    h = panel_server.Handler.__new__(panel_server.Handler)
+                    h.path = path_str
+                    h.headers = {"Content-Length": str(len(raw_body))}
+                    h.rfile = _io.BytesIO(raw_body)
+                    h.wfile = buf
+                    h.requestline = f"POST {path_str} HTTP/1.1"
+                    h.request_version = "HTTP/1.1"
+                    h.client_address = ("127.0.0.1", 12345)
+                    cap = {"status": 0}
+                    h.send_response = lambda code, msg=None: cap.__setitem__("status", code)
+                    h.send_header = lambda k, v: None
+                    h.end_headers = lambda: None
+                    h.do_POST()
+                    return cap["status"], json.loads(buf.getvalue().decode("utf-8"))
+
+                orig_node = panel_server.NODE
+                orig_locked = panel_server.SH.locked
+                orig_start_cmd = panel_server.SH.start_cmd
+                orig_restart = panel_server.SH.restart
+                fake_node = _FakeNode()
+                panel_server.NODE = fake_node
+                panel_server.SH.locked = False
+                panel_server.SH.start_cmd = False
+                panel_server.SH.restart = None
+                try:
+                    # Switch map to finals_roundabout writes cmd.switch_map cleanly
+                    sc_sw, body_sw = _invoke_post("/api/map/switch", {"map": "finals_roundabout"})
+                    self.assertEqual(sc_sw, 200, body_sw)
+                    self.assertTrue(body_sw["ok"])
+                    self.assertEqual((state_dir / "cmd.switch_map").read_text(encoding="utf-8"), "finals_roundabout")
+                    self.assertEqual(body_sw["restart"]["map"], "finals_roundabout")
+
+                    # Invalid map rejected with 400
+                    sc_bad, _ = _invoke_post("/api/map/switch", {"map": "unknown_map"})
+                    self.assertEqual(sc_bad, 400)
+
+                    # Starting while restarting is blocked (409), then allowed once ready/idle
+                    sc_busy, _ = _invoke_post("/api/start", {"start": True})
+                    self.assertEqual(sc_busy, 409)
+                    panel_server.SH.restart = None
+
+                    sc_go, body_go = _invoke_post("/api/start", {"start": True})
+                    self.assertEqual(sc_go, 200, body_go)
+                    self.assertTrue(body_go["started"])
+                    self.assertEqual(fake_node.start_calls[-1], True)
+
+                    # Locked while running blocks /api/map/switch (423), but /api/start false is always allowed
+                    panel_server.SH.locked = True
+                    sc_lk, _ = _invoke_post("/api/map/switch", {"map": "finals_fork"})
+                    self.assertEqual(sc_lk, 423)
+
+                    sc_stop, body_stop = _invoke_post("/api/start", {"start": False})
+                    self.assertEqual(sc_stop, 200, body_stop)
+                    self.assertFalse(body_stop["started"])
+                    self.assertFalse(panel_server.SH.locked)
+                    self.assertEqual(fake_node.start_calls[-1], False)
+                finally:
+                    panel_server.NODE = orig_node
+                    panel_server.SH.locked = orig_locked
+                    panel_server.SH.start_cmd = orig_start_cmd
+                    panel_server.SH.restart = orig_restart
             finally:
                 panel_server.LOGROOT = orig_logroot
                 panel_server.STATE_DIR = orig_state_dir

@@ -275,6 +275,28 @@
     box-shadow:0 6px 18px rgba(225, 29, 72, 0.28);
   }
   button.estop:hover:not(:disabled){filter:brightness(1.08)}
+  button.go-btn{
+    background:linear-gradient(135deg, #10b981, #059669);
+    border-color:transparent;color:#fff;font-weight:700;padding:7px 15px;
+    box-shadow:0 6px 18px rgba(16, 185, 129, 0.28);
+  }
+  button.go-btn:hover:not(:disabled){filter:brightness(1.08)}
+  button.go-btn.running{
+    background:linear-gradient(135deg, #f59e0b, #d97706);
+    box-shadow:0 6px 18px rgba(217, 119, 6, 0.28);
+  }
+  .map-pills{
+    display:inline-flex;align-items:center;gap:2px;padding:3px;
+    border-radius:var(--radius-pill);background:var(--glass-soft);border:1px solid var(--border-soft);
+  }
+  .map-pill{
+    padding:4px 10px;border-radius:var(--radius-pill);border:1px solid transparent;
+    background:transparent;color:var(--dim);font-size:11.5px;font-weight:700;
+  }
+  .map-pill.active{
+    background:linear-gradient(135deg, var(--gem-soft), var(--ds-soft));
+    border-color:var(--border-strong);color:var(--fg);
+  }
 
   .conn-banner{
     position:fixed;top:74px;left:50%;transform:translateX(-50%);z-index:50;
@@ -852,8 +874,12 @@
       </button>
     </nav>
 
-    <!-- 右岛：电压、轮次、艺术计时与急停 -->
+    <!-- 右岛：地图切换、电压、轮次、艺术计时与发车/急停 -->
     <div class="top-island island">
+      <div class="map-pills" id="topMapSwitch" title="在线切换地图并自动重启巡线（未发车时可用）">
+        <button class="map-pill active" data-map="finals_fork" type="button">岔路 S</button>
+        <button class="map-pill" data-map="finals_roundabout" type="button">环岛</button>
+      </div>
       <div class="volt" id="voltBadge" title="底盘电池电压 (/PowerVoltage)，低于 11.6V 告警">--.-V</div>
       <div class="round" id="round">第 1 轮</div>
       <div class="clock-wrap">
@@ -862,6 +888,7 @@
       <button class="icon-btn" id="btnTheme" title="切换 🌙 星夜深海璃 / ☀ 晨光珍珠璃">🌙</button>
       <button class="icon-btn" id="btnHelp" title="使用说明与指标规则">?</button>
       <button id="btnReset" title="清零本轮计时与计数（不控制车）">重置本轮</button>
+      <button class="go-btn" id="btnStartToggle" title="一键发车或停止发车（与 ⑤窗口空格键双向同步）">▶ 发车</button>
       <button class="estop" id="estop">立即停车</button>
     </div>
   </header>
@@ -1059,6 +1086,7 @@
             <option value="finals_fork">决赛岔路 finals_fork</option>
             <option value="finals_roundabout">决赛环岛 finals_roundabout</option>
           </select>
+          <button id="btnSwitchMap" type="button" title="将小车在线切换到所选地图并重启巡线">⚡ 切换运行此地图</button>
           <span class="memo" id="memo">未修改</span>
           <div class="foot-actions">
             <button id="btnUndo" title="撤销所有未保存修改" disabled>↺ 撤销</button>
@@ -1715,7 +1743,7 @@ async function pollStatus(){
 
     $('stState').textContent = d.started ? (STATE_CN[d.track_state]||d.track_state) : '未发车';
     $('stState').style.color = (d.started && d.track_state==='lost') ? 'var(--bad)' : '';
-    $('stStateSub').textContent = d.started ? '运行中' : '在 ⑤发车窗口按空格';
+    $('stStateSub').textContent = d.started ? '运行中' : '点右上「发车」或 ⑤窗口按空格';
 
     const evPool = (d.milestones && d.milestones.length) ? d.milestones : (d.events || []);
     const dg = evPool.filter(e=>e.area==='digit').slice(-1)[0];
@@ -1777,6 +1805,7 @@ async function pollStatus(){
     lastStarted = d.started;
     const lk = !!d.locked;
     if(lk !== lastLocked){ setLocked(lk); }
+    syncTopActionButtons(d);
 
     const segTag = ' · 决赛走廊' + (typeof si.s === 'number' ? (' s=' + si.s.toFixed(2) + 'm') : '');
     $('paramTag').textContent = (runningMap ? ('当前 ' + runningMap + '.yaml') : '-')
@@ -1868,6 +1897,22 @@ function setLocked(running, quiet){
   if(running && !quiet) toast('已发车：参数已锁定（赛规禁止赛中调车）');
 }
 
+function syncTopActionButtons(d){
+  const isRun = !!(d && (d.started || d.start_cmd));
+  const btn = $('btnStartToggle');
+  if(btn){
+    btn.textContent = isRun ? '⏸ 停止发车' : '▶ 发车';
+    btn.classList.toggle('running', isRun);
+    btn.disabled = !isRun && restarting;
+  }
+  const activeMap = (d && d.params_file) || runningMap || 'finals_fork';
+  document.querySelectorAll('#topMapSwitch .map-pill').forEach(p=>{
+    const isCur = p.dataset.map === activeMap;
+    p.classList.toggle('active', isCur);
+    p.disabled = isRun || restarting;
+  });
+}
+
 function updateButtons(){
   const sel = $('mapSel').value;
   const mismatch = !!(runningMap && sel !== runningMap);
@@ -1876,8 +1921,12 @@ function updateButtons(){
   $('btnUndo').disabled = locked || !dirty;
   $('btnSaveRestart').disabled = locked || mismatch || restarting;
   $('btnSaveRestart').title = mismatch
-    ? ('当前运行的是 ' + runningMap + '.yaml；改 ' + sel + '.yaml 再重启不会生效')
+    ? ('当前运行的是 ' + runningMap + '.yaml；可先点「切换运行此地图」')
     : (restarting ? '重启进行中，等新进程就绪' : '');
+  if($('btnSwitchMap')){
+    $('btnSwitchMap').disabled = locked || restarting || !mismatch;
+    $('btnSwitchMap').style.display = mismatch ? '' : 'none';
+  }
   if($('presetSel')) $('presetSel').disabled = locked;
   if($('btnApplyPreset')) $('btnApplyPreset').disabled = locked;
   document.querySelectorAll('#params input, #params select, #params button.step-btn').forEach(el=>{ el.disabled = locked; });
@@ -2209,21 +2258,49 @@ async function restartProc(name, changed){
   updateButtons(); toast(d.msg || '已请求重启');
 }
 
+async function switchRunningMap(targetMap){
+  if(!targetMap || restarting) return;
+  if(runningMap && targetMap === runningMap){
+    toast(`当前已在运行 ${targetMap}`);
+    return;
+  }
+  if(dirty && !confirm('调参区有未保存修改，切换地图将放弃未保存内容，确定切换吗？')) return;
+  const r = await fetch('/api/map/switch', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({map: targetMap}),
+  });
+  const d = await r.json();
+  if(!d.ok){ toast('切换地图失败：' + (d.error || d.msg), true); return; }
+  restarting = true;
+  pendingChanged = `地图 → ${targetMap}`;
+  $('memo').textContent = `切换地图至 ${targetMap}：正在重启巡线…`;
+  $('mapSel').value = targetMap;
+  prevMapVal = targetMap;
+  loadParams(targetMap);
+  updateButtons();
+  syncTopActionButtons(lastStatusSnapshot);
+  toast(d.msg || `正在切换地图到 ${targetMap}…`);
+}
+
 function handleRestart(rs){
   if(!rs || !restarting) return;
   if(rs.state === 'ready'){
     restarting = false;
+    const mapDone = rs.map ? `（当前地图 ${rs.map}）` : '';
     const extra = pendingChanged ? `：${pendingChanged}` : '';
-    toast(`④巡线已重启完成，参数已生效${extra}。需到⑤窗口按空格发车`);
-    $('memo').textContent = '重启完成，参数已生效';
+    toast(`✅ ④巡线已就绪${mapDone}${extra}，点「▶ 发车」即可发车`);
+    $('memo').textContent = '已就绪，参数已生效';
     pendingChanged = '';
+    if(rs.map){ runningMap = rs.map; $('mapSel').value = rs.map; prevMapVal = rs.map; }
     if(!dirty) loadParams($('mapSel').value);
     updateButtons();
+    syncTopActionButtons(lastStatusSnapshot);
   } else if(rs.state === 'timeout'){
     restarting = false;
     toast('④巡线重启超时：30s 没等到新进程上报参数，请看终端 follow 日志', true);
     $('memo').textContent = '重启超时';
-    pendingChanged = ''; updateButtons();
+    pendingChanged = ''; updateButtons(); syncTopActionButtons(lastStatusSnapshot);
   } else {
     $('memo').textContent = (rs.state === 'queued' || rs.state === 'killing')
       ? `重启中：正在关闭旧进程… ${rs.elapsed}s`
@@ -2334,6 +2411,26 @@ $('estop').addEventListener('click',async()=>{
   toast(d.ok?'已停车，参数已解锁':('失败：'+d.error), !d.ok);
   if(d.ok){ setLocked(false, true); }
 });
+$('btnStartToggle').addEventListener('click',async()=>{
+  const btn = $('btnStartToggle');
+  const isRun = btn.classList.contains('running');
+  btn.disabled = true;
+  try{
+    const r = await fetch('/api/start',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({start: !isRun}),
+    });
+    const d = await r.json();
+    toast(d.ok ? (d.msg || (!isRun ? '已发车' : '已停止发车')) : ('失败：' + (d.error || d.msg)), !d.ok);
+    if(d.ok && !d.started){ setLocked(false, true); }
+  }catch(e){ toast('发车指令异常：' + e, true); }
+  finally{ btn.disabled = false; pollStatus(); }
+});
+document.querySelectorAll('#topMapSwitch .map-pill').forEach(btn=>{
+  btn.addEventListener('click', ()=> switchRunningMap(btn.dataset.map));
+});
+$('btnSwitchMap').addEventListener('click', ()=> switchRunningMap($('mapSel').value));
 
 $('recMode').addEventListener('change', syncRecModeUI);
 $('btnRecToggle').addEventListener('click',async()=>{

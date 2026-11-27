@@ -715,6 +715,11 @@ class PanelNode(Node):
         self.create_subscription(String, 'line_follower/segment', self._on_segment, 10)
         self.create_subscription(Float32, '/PowerVoltage', self._on_voltage, 10)
         self.estop_pub = self.create_publisher(Twist, '/cmd_vel_stop', 10)
+        self.start_set_pub = self.create_publisher(Bool, 'line_follower/start_set', 10)
+        self.start_cmd_fallback_pub = self.create_publisher(Bool, 'line_follower/start_cmd', 10)
+        self._fallback_start_desired = None
+        self._last_start_rx_ts = 0.0
+        self._start_fallback_timer = self.create_timer(0.1, self._on_start_fallback_tick)
 
         self.get_logger().info('panel_node ready')
 
@@ -759,6 +764,7 @@ class PanelNode(Node):
 
     def _on_start(self, msg):
         new_val = bool(msg.data)
+        self._last_start_rx_ts = time.time()
 
         # 原始值单独存一份：判断"重启安不安全"要用它。
         # start_toggle 以 10Hz 重复发布同一个值，这里只认跳变沿。
@@ -810,7 +816,45 @@ class PanelNode(Node):
             SH.voltage = val
             SH.voltage_ts = time.time()
 
+    def _on_start_fallback_tick(self):
+        """仅当 ⑤发车节点未运行时，由面板兜底以 10Hz 发布 line_follower/start_cmd。"""
+        desired = self._fallback_start_desired
+        if desired is None:
+            return
+        st = read_status()
+        start_alive = bool(((st.get('procs') or {}).get('start') or {}).get('alive', False))
+        if start_alive:
+            return
+        msg = Bool()
+        msg.data = bool(desired)
+        self.start_cmd_fallback_pub.publish(msg)
+
+    def set_start_cmd(self, desired):
+        """通知 start_toggle_node 切换发车状态；若 start 进程未存活则启用兜底直发。"""
+        val = bool(desired)
+        self._fallback_start_desired = val
+        msg = Bool()
+        msg.data = val
+        self.start_set_pub.publish(msg)
+        st = read_status()
+        start_alive = bool(((st.get('procs') or {}).get('start') or {}).get('alive', False))
+        if not start_alive:
+            self.start_cmd_fallback_pub.publish(msg)
+        else:
+            def _burst():
+                for _ in range(2):
+                    time.sleep(0.04)
+                    try:
+                        self.start_set_pub.publish(msg)
+                    except Exception:
+                        break
+            threading.Thread(target=_burst, daemon=True).start()
+
     def estop(self, frames=30, rate=20.0):
+        try:
+            self.set_start_cmd(False)
+        except Exception:
+            pass
         msg = Twist()
         for _ in range(frames):
             self.estop_pub.publish(msg)
@@ -966,7 +1010,10 @@ def restart_state():
         state = 'killing'
     else:
         state = 'queued'
-    return {'name': name, 'state': state, 'elapsed': round(elapsed, 1)}
+    out = {'name': name, 'state': state, 'elapsed': round(elapsed, 1)}
+    if r.get('map'):
+        out['map'] = r['map']
+    return out
 
 
 def read_recent_events(limit=60):
@@ -1537,6 +1584,67 @@ class Handler(BaseHTTPRequestHandler):
                 _write_state_file('started', '0')
                 print('[DEC] panel round_reset', flush=True)
                 return self._json({'ok': True, 'msg': '本轮已清零，参数已解锁'})
+
+            if path == '/api/start':
+                if NODE is None:
+                    return self._err(503, 'ROS 节点未就绪，无法发送发车指令')
+                body = self._body()
+                with SH.lock:
+                    cur_live = bool(SH.start_cmd or SH.started)
+                if 'start' in body:
+                    desired = bool(body.get('start'))
+                else:
+                    desired = not cur_live
+                if desired:
+                    rs = restart_state()
+                    if rs and rs.get('state') in ('queued', 'killing', 'starting'):
+                        return self._err(409, '巡线节点正在重启/切换地图，请等就绪后再发车')
+                NODE.set_start_cmd(desired)
+                if not desired:
+                    with SH.lock:
+                        SH.started = False
+                        SH.locked = False
+                    _write_state_file('started', '0')
+                print(f"[DEC] panel start_cmd val={'true' if desired else 'false'}", flush=True)
+                return self._json({
+                    'ok': True,
+                    'started': desired,
+                    'msg': '已发送发车指令' if desired else '已停止发车，参数已解锁',
+                })
+
+            if path == '/api/map/switch':
+                if self._is_running():
+                    return self._err(423, '已发车，禁止切换地图（请先停止发车）')
+                with SH.lock:
+                    live = SH.start_cmd
+                if live:
+                    return self._err(409, '发车信号仍为开，请先停止发车再切换地图')
+                body = self._body()
+                target_map = str(body.get('map') or '').strip()
+                if target_map not in MAP_FILES:
+                    return self._err(400, f'不支持的地图 {target_map}（可选: {", ".join(MAP_FILES)}）')
+                yaml_path = os.path.join(CONFIG_DIR, f'{target_map}.yaml')
+                if not os.path.isfile(yaml_path):
+                    return self._err(404, f'地图配置文件不存在: {target_map}.yaml')
+
+                off = 0
+                rd = run_dir()
+                if rd:
+                    try:
+                        off = os.path.getsize(os.path.join(rd, 'follow.log'))
+                    except OSError:
+                        off = 0
+                with SH.lock:
+                    SH.restart = {'name': 'follow', 't0': time.time(), 'off': off, 'map': target_map}
+                with open(os.path.join(STATE_DIR, 'cmd.switch_map'), 'w', encoding='utf-8') as f:
+                    f.write(target_map)
+                print(f'[DEC] panel switch_map map={target_map}', flush=True)
+                return self._json({
+                    'ok': True,
+                    'map': target_map,
+                    'msg': f'正在切换地图至 {target_map} 并重启巡线…',
+                    'restart': restart_state(),
+                })
 
             if path == '/api/estop':
                 if NODE is None:

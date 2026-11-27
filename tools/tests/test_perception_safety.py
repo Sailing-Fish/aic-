@@ -516,6 +516,10 @@ class TestBPUYoloV8PostProcessAndTracker(unittest.TestCase):
         self.assertIn('dropped_total=', yolo_src)
         self.assertIn('stdin_eof_', st_src)
         self.assertIn('rclcpp::shutdown()', st_src)
+        self.assertIn('line_follower/start_set', st_src)
+        start_sh = (WS_ROOT / 'tools' / 'start.sh').read_text(encoding='utf-8')
+        self.assertIn('cmd.switch_map', start_sh)
+        self.assertIn('wait_for_log start', start_sh)
 
         tr = yolo_mod.StageLatencyTracker(window_size=10)
         rep = tr.format_report(proc_fps=30.0, rx_fps=30.0, dropped_frames=0, debug_pub_frames=12, dropped_total=18)

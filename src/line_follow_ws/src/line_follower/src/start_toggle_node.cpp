@@ -19,15 +19,20 @@ public:
   , stdin_raw_(setup_stdin_raw())
   {
     topic_ = this->declare_parameter<std::string>("start_topic", "line_follower/start_cmd");
+    set_topic_ = this->declare_parameter<std::string>("start_set_topic", "line_follower/start_set");
     pub_ = this->create_publisher<std_msgs::msg::Bool>(topic_, rclcpp::QoS(10));
+    set_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+      set_topic_, rclcpp::QoS(10),
+      std::bind(&StartToggleNode::on_set_cmd, this, std::placeholders::_1));
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(100), std::bind(&StartToggleNode::on_timer, this));
 
     RCLCPP_INFO(
       get_logger(),
-      "Publishing start signal on '%s' at 10Hz (tty_raw=%d). Press Space to toggle (false<->true).",
+      "Publishing start signal on '%s' at 10Hz (tty_raw=%d, remote_set='%s'). Press Space to toggle (false<->true).",
       topic_.c_str(),
-      stdin_raw_.active ? 1 : 0);
+      stdin_raw_.active ? 1 : 0,
+      set_topic_.c_str());
     std::fflush(stdout);
   }
 
@@ -39,6 +44,25 @@ public:
   }
 
 private:
+  void on_set_cmd(const std_msgs::msg::Bool::SharedPtr msg)
+  {
+    if (!msg) {
+      return;
+    }
+    const bool desired = msg->data;
+    if (desired != started_) {
+      started_ = desired;
+      RCLCPP_INFO(
+        get_logger(),
+        "[DEC] start_toggle set by=panel started=%s",
+        started_ ? "true" : "false");
+      std::fflush(stdout);
+    }
+    std_msgs::msg::Bool out;
+    out.data = started_;
+    pub_->publish(out);
+  }
+
   void on_timer()
   {
     std_msgs::msg::Bool msg;
@@ -117,9 +141,11 @@ private:
   }
 
   std::string topic_;
+  std::string set_topic_;
   bool started_{false};
   bool stdin_eof_{false};
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr set_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   StdinGuard stdin_raw_;
 };

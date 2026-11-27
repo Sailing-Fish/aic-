@@ -95,7 +95,7 @@ fi
 mkdir -p "$STATE" "$LOGROOT"
 # 清掉上一轮的状态文件：pid 残留会让守护误判"进程已死"（踩过）
 rm -f "$STATE"/*.pid "$STATE"/*.exit "$STATE"/*.suppress "$STATE"/*.seg 2>/dev/null
-rm -f "$STATE/cmd.restart" "$STATE/cmd.stop" "$STATE/started" "$STATE/panel_port" 2>/dev/null
+rm -f "$STATE/cmd.restart" "$STATE/cmd.switch_map" "$STATE/cmd.stop" "$STATE/started" "$STATE/panel_port" 2>/dev/null
 
 RUN_ID="run_$(date +%Y%m%d_%H%M%S)"
 RUN_DIR="$LOGROOT/$RUN_ID"
@@ -375,6 +375,34 @@ while [[ $STOPPING -eq 0 ]]; do
   # ---- 发车状态由面板写盘（不要在这里起 ros2 进程，每秒一次太贵）
   if [[ -f "$STATE/started" ]]; then
     [[ "$(read_file "$STATE/started")" == "1" ]] && STARTED=1 || STARTED=0
+  fi
+
+  # ---- 面板请求的在线切换地图（finals_fork <-> finals_roundabout）
+  if [[ -f "$STATE/cmd.switch_map" ]]; then
+    new_map="$(read_file "$STATE/cmd.switch_map")"
+    rm -f "$STATE/cmd.switch_map"
+    if [[ "$new_map" == "finals_fork" || "$new_map" == "finals_roundabout" ]]; then
+      new_file="$TOOLS/config/$new_map.yaml"
+      if [[ -f "$new_file" ]]; then
+        PARAMS="$new_map"
+        PARAMS_FILE="$new_file"
+        cp "$PARAMS_FILE" "$RUN_DIR/params_snapshot.yaml" 2>/dev/null || true
+        write_status
+        log "面板请求切换地图 -> $PARAMS ($PARAMS_FILE)"
+        printf '[DEC] proc switch_map map=%s by=panel\n' "$PARAMS"
+        fi_idx="$(idx_of follow)"
+        kill_proc follow 6
+        RESTARTS[fi_idx]=0
+        launch_proc follow
+        FOLLOW_GRACE_UNTIL=$(( $(date +%s) + FOLLOW_GRACE ))
+        if wait_for_log follow "$(ready_pat follow)" 15; then
+          printf '[DEC] proc ready name=follow map=%s\n' "$PARAMS"
+        else
+          printf '[DEC] proc timeout name=follow map=%s\n' "$PARAMS"
+          log "\033[31m切换地图 $PARAMS 后 follow 15s 内未就绪（查 $RUN_DIR/follow.log）\033[0m"
+        fi
+      fi
+    fi
   fi
 
   # ---- 面板请求的重启
