@@ -160,8 +160,8 @@ line_follower_node:
     # ================================
     # GroundProjector (IPM 单应 / 针孔自动回退)
     # ================================
-    use_homography: false
-    homography_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    use_homography: true
+    homography_matrix: [-1.3985236e-05, 0.00074556476, -0.41829529, 0.0007049316, -2.6281263e-05, -0.21497408, -4.7978586e-06, -0.0063203042, 1.0]
     cam_height_m: 0.11
     cam_pitch_deg: 12.5
     focal_px: 325.0

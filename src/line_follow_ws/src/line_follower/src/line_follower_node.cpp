@@ -1701,7 +1701,7 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       } else if (obs.near_band.right_clipped && !obs.near_band.left_clipped && left_proj_ok) {
         double d_clip = 0.0;
         double y_r_clip = 0.0;
-        const double max_u_px = static_cast<double>(std::max(1, seg.frame_width - 1));
+        const double max_u_px = static_cast<double>(std::max(1, frame_bgr.cols - 1));
         const bool clip_ok = ground_projector_.pixel_to_ground(max_u_px, v_near, d_clip, y_r_clip);
         const double vis_span = y_l - y_r_clip;
         if (clip_ok && obs.lane_width_ratio < wide_thresh &&
