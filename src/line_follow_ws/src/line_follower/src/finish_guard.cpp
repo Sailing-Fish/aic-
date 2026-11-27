@@ -35,6 +35,8 @@ void FinishGuard::set_config(const FinishGuardConfig & config)
   config_.friction_scale_min = std::clamp(config_.friction_scale_min, 0.30, 1.0);
   config_.friction_scale_max = std::clamp(
     config_.friction_scale_max, config_.friction_scale_min, 2.0);
+  config_.brake_damping_gain = std::clamp(config_.brake_damping_gain, 0.0, 5.0);
+  config_.brake_zero_cutoff_mps = std::clamp(config_.brake_zero_cutoff_mps, 0.0, 0.20);
   config_.rearm_travel_dist_m = std::max(0.05, config_.rearm_travel_dist_m);
   friction_scale_ = std::clamp(
     friction_scale_, config_.friction_scale_min, config_.friction_scale_max);
@@ -173,6 +175,48 @@ double FinishGuard::compute_stop_trigger_dist(double current_speed_mps, double n
   return std::clamp(raw, config_.min_stop_trigger_dist_m, config_.max_stop_trigger_dist_m);
 }
 
+double FinishGuard::compute_closed_loop_brake_cmd(
+  double odom_linear_x,
+  double elapsed_s,
+  double max_brake_speed,
+  double max_time_s) const
+{
+  if (!std::isfinite(odom_linear_x) || !std::isfinite(elapsed_s) ||
+    !std::isfinite(max_brake_speed) || !std::isfinite(max_time_s))
+  {
+    return 0.0;
+  }
+  const double v_max = std::max(0.0, max_brake_speed);
+  if (v_max <= 0.0 || max_time_s <= 0.0 || elapsed_s < 0.0 || elapsed_s >= max_time_s) {
+    return 0.0;
+  }
+  if (odom_linear_x <= config_.brake_zero_cutoff_mps) {
+    return 0.0;
+  }
+  const double mag = std::clamp(config_.brake_damping_gain * odom_linear_x, 0.0, v_max);
+  return (mag > 1e-9) ? -mag : 0.0;
+}
+
+double FinishGuard::compute_safe_speed_ceiling(
+  double preview_dist_m,
+  double target_end_speed_mps,
+  double now_sec) const
+{
+  const double a_eff = effective_brake_decel_mps2(now_sec);
+  const double t_lat = config_.control_latency_s;
+  const double margin = config_.bumper_margin_m;
+  const double v_end =
+    (std::isfinite(target_end_speed_mps) && target_end_speed_mps > 0.0) ? target_end_speed_mps : 0.0;
+  const double d_avail =
+    std::isfinite(preview_dist_m) ? std::max(0.0, preview_dist_m - margin) : 0.0;
+
+  // Exact positive root of: v^2/(2*a_eff) + v*t_lat = d_avail + v_end^2/(2*a_eff)
+  const double at = a_eff * t_lat;
+  const double disc = at * at + 2.0 * a_eff * d_avail + v_end * v_end;
+  const double v_root = std::max(0.0, -at + std::sqrt(std::max(0.0, disc)));
+  return std::max(v_end, v_root);
+}
+
 YellowStopAdvice FinishGuard::evaluate_yellow_stop(
   bool yellow_detected,
   bool has_metric_distance,
@@ -214,14 +258,21 @@ YellowStopAdvice FinishGuard::evaluate_yellow_stop(
     advice.trigger_stop = false;
     const double ramp_dist = std::min(config_.yellow_final_ramp_dist_m, config_.pre_brake_dist_m);
     const double v_final = std::min(config_.yellow_final_creep_speed_mps, config_.creep_speed_mps);
+    double pre_brake_cap = config_.creep_speed_mps;
     if (ramp_dist > advice.stop_trigger_dist_m + 1e-6 && d_bumper_m < ramp_dist) {
       const double alpha = std::clamp(
         (d_bumper_m - advice.stop_trigger_dist_m) / (ramp_dist - advice.stop_trigger_dist_m),
         0.0,
         1.0);
-      advice.speed_cap_mps = v_final + alpha * (config_.creep_speed_mps - v_final);
+      pre_brake_cap = v_final + alpha * (config_.creep_speed_mps - v_final);
+    }
+    if (config_.enable_sqrt_brake_envelope) {
+      const double a_eff = effective_brake_decel_mps2(now_sec);
+      const double d_rem = std::max(0.0, d_bumper_m - advice.stop_trigger_dist_m);
+      const double v_env = std::sqrt(2.0 * a_eff * d_rem);
+      advice.speed_cap_mps = std::clamp(v_env, v_final, pre_brake_cap);
     } else {
-      advice.speed_cap_mps = config_.creep_speed_mps;
+      advice.speed_cap_mps = pre_brake_cap;
     }
   }
 

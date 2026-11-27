@@ -35,6 +35,12 @@ struct FinishGuardConfig
   double friction_scale_min{0.65};
   double friction_scale_max{1.25};
 
+  // Dual-layer closed-loop yellow braking (sqrt physics envelope + proportional damping)
+  bool enable_sqrt_brake_envelope{true};
+  bool enable_closed_loop_brake{true};
+  double brake_damping_gain{0.85};
+  double brake_zero_cutoff_mps{0.025};
+
   // Distance traveled after a yellow stop before re-arming (prevents double-counting)
   double rearm_travel_dist_m{0.35};
 };
@@ -77,6 +83,15 @@ public:
   double active_battery_voltage(double now_sec = -1.0) const;
   double effective_brake_decel_mps2(double now_sec = -1.0) const;
   double compute_stop_trigger_dist(double current_speed_mps, double now_sec = -1.0) const;
+  double compute_closed_loop_brake_cmd(
+    double odom_linear_x,
+    double elapsed_s,
+    double max_brake_speed,
+    double max_time_s) const;
+  double compute_safe_speed_ceiling(
+    double preview_dist_m,
+    double target_end_speed_mps = 0.0,
+    double now_sec = -1.0) const;
 
   YellowStopAdvice evaluate_yellow_stop(
     bool yellow_detected,

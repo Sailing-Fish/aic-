@@ -1,0 +1,622 @@
+{
+  "schema_version": "1.0",
+  "sources": [
+    "C:\\Users\\Lenovo\\.gemini\\antigravity\\brain\\2074e89a-af1d-4634-a0f0-907324d9e90a\\scratch\\roundabout_212118",
+    "C:\\Users\\Lenovo\\.gemini\\antigravity\\brain\\2074e89a-af1d-4634-a0f0-907324d9e90a\\scratch\\fork_215951"
+  ],
+  "calibrated": {
+    "a_eff_mps2": 1.436,
+    "a_eff_mean_mps2": 1.4746,
+    "a_eff_min_mps2": 1.343,
+    "a_eff_slippery_078x_mps2": 1.1201,
+    "a_kin_raw_mean_mps2": 0.4936,
+    "a_kin_lat_adj_mean_mps2": 0.7853,
+    "battery_voltage_nominal_v": 12.03,
+    "battery_voltage_range_v": [
+      11.97,
+      12.13
+    ],
+    "camera_fps_hz": 14.97,
+    "camera_read_p50_ms": 61.37,
+    "camera_read_p95_ms": 62.55,
+    "camera_pub_p50_ms": 3.59,
+    "yolo_proc_fps_hz": 14.969,
+    "yolo_e2e_p50_ms": 30.68,
+    "yolo_e2e_p95_ms": 35.22,
+    "est_vision_pipeline_latency_ms": 34.27,
+    "est_yolo_pipeline_latency_ms": 64.95,
+    "est_worst_p95_latency_ms": 97.77,
+    "recommended_holdout_extra_latency_ms": 35.0,
+    "startup_response_lag_s": 1.02,
+    "speed_actual_to_cmd_ratio_p50": 0.9809,
+    "max_observed_abs_yaw_rps": 1.46,
+    "p95_observed_abs_yaw_rps": 0.98,
+    "p95_observed_dyaw_dt_rps2": 2.6867,
+    "brake_window_dur_mean_s": 0.32
+  },
+  "aggregates": {
+    "brake_a_eff_mps2": {
+      "count": 5,
+      "min": 1.343,
+      "max": 1.579,
+      "mean": 1.4746,
+      "p50": 1.436,
+      "p95": 1.579
+    },
+    "brake_a_kin_raw_mps2": {
+      "count": 5,
+      "min": 0.3733,
+      "max": 0.6317,
+      "mean": 0.4936,
+      "p50": 0.4944,
+      "p95": 0.6089
+    },
+    "brake_a_kin_lat_adj_mps2": {
+      "count": 5,
+      "min": 0.56,
+      "max": 1.0735,
+      "mean": 0.7853,
+      "p50": 0.7166,
+      "p95": 1.0331
+    },
+    "brake_window_dur_s": {
+      "count": 5,
+      "min": 0.27,
+      "max": 0.34,
+      "mean": 0.32,
+      "p50": 0.33,
+      "p95": 0.338
+    },
+    "battery_voltage_v": {
+      "count": 5,
+      "min": 11.97,
+      "max": 12.13,
+      "mean": 12.03,
+      "p50": 11.98,
+      "p95": 12.124
+    },
+    "camera_fps_hz": {
+      "count": 12,
+      "min": 14.8,
+      "max": 15.0,
+      "mean": 14.967,
+      "p50": 15.0,
+      "p95": 15.0
+    },
+    "camera_read_p50_ms": {
+      "count": 12,
+      "min": 61.07,
+      "max": 61.58,
+      "mean": 61.37,
+      "p50": 61.34,
+      "p95": 61.58
+    },
+    "camera_read_p95_ms": {
+      "count": 12,
+      "min": 62.26,
+      "max": 63.08,
+      "mean": 62.55,
+      "p50": 62.45,
+      "p95": 63.06
+    },
+    "camera_pub_p50_ms": {
+      "count": 12,
+      "min": 3.39,
+      "max": 3.73,
+      "mean": 3.59,
+      "p50": 3.66,
+      "p95": 3.72
+    },
+    "yolo_proc_fps_hz": {
+      "count": 13,
+      "min": 14.8,
+      "max": 15.0,
+      "mean": 14.969,
+      "p50": 15.0,
+      "p95": 15.0
+    },
+    "yolo_e2e_p50_ms": {
+      "count": 13,
+      "min": 30.1,
+      "max": 31.36,
+      "mean": 30.68,
+      "p50": 30.75,
+      "p95": 31.15
+    },
+    "yolo_e2e_p95_ms": {
+      "count": 13,
+      "min": 32.18,
+      "max": 38.46,
+      "mean": 35.22,
+      "p50": 35.18,
+      "p95": 38.44
+    },
+    "v_cmd_mps": {
+      "count": 179,
+      "min": 0.18,
+      "max": 0.41,
+      "mean": 0.314,
+      "p50": 0.34,
+      "p95": 0.401
+    },
+    "v_actual_ds_dt_mps": {
+      "count": 150,
+      "min": 0.0988,
+      "max": 0.486,
+      "mean": 0.2994,
+      "p50": 0.3012,
+      "p95": 0.4003
+    },
+    "speed_actual_to_cmd_ratio": {
+      "count": 150,
+      "min": 0.2934,
+      "max": 2.1131,
+      "mean": 1.0318,
+      "p50": 0.9809,
+      "p95": 1.7237
+    },
+    "abs_yaw_cmd_rps": {
+      "count": 179,
+      "min": 0.0,
+      "max": 1.46,
+      "mean": 0.3081,
+      "p50": 0.16,
+      "p95": 0.98
+    },
+    "abs_dyaw_dt_rps2": {
+      "count": 172,
+      "min": 0.0,
+      "max": 6.3139,
+      "mean": 0.6279,
+      "p50": 0.2252,
+      "p95": 2.6867
+    },
+    "startup_response_lag_s": {
+      "count": 2,
+      "min": 0.993,
+      "max": 1.046,
+      "mean": 1.02,
+      "p50": 1.02,
+      "p95": 1.043
+    }
+  },
+  "comparison_vs_sim_defaults": {
+    "a_eff_mps2": {
+      "calibrated": 1.436,
+      "calibrated_range": [
+        1.343,
+        1.579
+      ],
+      "sim_world_pc_default": 1.44,
+      "delta": -0.004,
+      "note": "Median brake_adapt a_eff matches sim_world_pc.py default (1.44 m/s^2); observed floor is 1.343 m/s^2."
+    },
+    "voltage_v": {
+      "calibrated": 12.03,
+      "calibrated_range": [
+        11.97,
+        12.13
+      ],
+      "sim_world_pc_default": 12.0,
+      "delta": 0.03,
+      "note": "Real-car 3S LiPo ran at 11.97..12.13V during test runs vs 12.0V sim nominal."
+    },
+    "latency_ms": {
+      "calibrated_vision_ms": 34.27,
+      "calibrated_yolo_total_ms": 64.95,
+      "sim_world_pc_default": 0.0,
+      "delta_vs_vision_ms": 34.27,
+      "note": "Real camera read_p50~61.4ms + pub~3.6ms + YOLO e2e~30.7ms; blind holdout injects +35ms extra command latency."
+    },
+    "camera_fps_hz": {
+      "calibrated": 14.97,
+      "sim_world_pc_default_rate_hz": 30.0,
+      "note": "Real V4L2 camera runs ~15 Hz (61.4ms read); PC sim runs 30 Hz (2x control rate)."
+    },
+    "tau_speed_s": {
+      "observed_startup_lag_s": 1.02,
+      "sim_world_pc_default": 0.61,
+      "note": "Observed real-car start-to-motion lag (~0.99-1.05s incl. mux handoff) is consistent with tau_speed=0.61s first-order lag."
+    },
+    "tau_steer_s": {
+      "observed_p95_dyaw_dt_rps2": 2.6867,
+      "sim_world_pc_default": 0.26,
+      "note": "Ackermann servo steering lag retained at 0.26s with +/-12% steer_scale mismatch in blind holdout."
+    },
+    "wheelbase_m": {
+      "sim_world_pc_default": 0.1395,
+      "yaml_cbf_wheelbase_m": 0.142
+    },
+    "max_steer_deg": {
+      "sim_world_pc_default": 21.0
+    }
+  },
+  "sim_world_pc_defaults": {
+    "wheelbase_m": 0.1395,
+    "max_steer_deg": 21.0,
+    "tau_speed": 0.61,
+    "tau_steer": 0.26,
+    "a_eff": 1.44,
+    "voltage": 12.0,
+    "voltage_nominal": 12.0,
+    "voltage_decel_slope": 0.08,
+    "a_eff_scale": 1.0,
+    "steer_scale": 1.0,
+    "speed_scale": 1.0,
+    "odom_scale_mismatch": 1.0,
+    "latency_ms": 0.0,
+    "latency_jitter_ms": 0.0,
+    "cam_offset_mm": 120.0,
+    "rear_axle_to_bumper_m": 0.18,
+    "seed": 42
+  },
+  "runs": [
+    {
+      "name": "roundabout_212118",
+      "source_path": "C:\\Users\\Lenovo\\.gemini\\antigravity\\brain\\2074e89a-af1d-4634-a0f0-907324d9e90a\\scratch\\roundabout_212118",
+      "track_mode": "roundabout",
+      "duration_sec": 26.1,
+      "video_frames": 198,
+      "debug_record_fps_p50": 7.52,
+      "max_arc_s_m": 3.66,
+      "camera_fps": {
+        "count": 5,
+        "min": 14.8,
+        "max": 15.0,
+        "mean": 14.96,
+        "p50": 15.0,
+        "p95": 15.0
+      },
+      "camera_read_p50_ms": {
+        "count": 5,
+        "min": 61.07,
+        "max": 61.58,
+        "mean": 61.42,
+        "p50": 61.51,
+        "p95": 61.57
+      },
+      "camera_read_p95_ms": {
+        "count": 5,
+        "min": 62.59,
+        "max": 63.08,
+        "mean": 62.84,
+        "p50": 62.82,
+        "p95": 63.07
+      },
+      "camera_pub_p50_ms": {
+        "count": 5,
+        "min": 3.39,
+        "max": 3.51,
+        "mean": 3.45,
+        "p50": 3.47,
+        "p95": 3.5
+      },
+      "yolo_proc_fps": {
+        "count": 5,
+        "min": 14.8,
+        "max": 15.0,
+        "mean": 14.96,
+        "p50": 15.0,
+        "p95": 15.0
+      },
+      "yolo_e2e_p50_ms": {
+        "count": 5,
+        "min": 30.1,
+        "max": 30.82,
+        "mean": 30.54,
+        "p50": 30.74,
+        "p95": 30.82
+      },
+      "yolo_e2e_p95_ms": {
+        "count": 5,
+        "min": 32.18,
+        "max": 35.89,
+        "mean": 34.39,
+        "p50": 35.35,
+        "p95": 35.78
+      },
+      "brake_adapt_events": [
+        {
+          "v_in_mps": 0.331,
+          "travel_m": 0.1108,
+          "scale_before": 1.0,
+          "scale_after": 0.877,
+          "a_eff_mps2": 1.579,
+          "a_kin_raw_mps2": 0.4944,
+          "a_kin_lat_adj_mps2": 0.705,
+          "vbat_v": 12.13,
+          "epoch": 1795699282.5690124
+        },
+        {
+          "v_in_mps": 0.243,
+          "travel_m": 0.0655,
+          "scale_before": 0.877,
+          "scale_after": 0.798,
+          "a_eff_mps2": 1.436,
+          "a_kin_raw_mps2": 0.4508,
+          "a_kin_lat_adj_mps2": 0.7166,
+          "vbat_v": 12.1,
+          "epoch": 1795699292.1722963
+        }
+      ],
+      "brake_a_eff_mps2": {
+        "count": 2,
+        "min": 1.436,
+        "max": 1.579,
+        "mean": 1.5075,
+        "p50": 1.5075,
+        "p95": 1.5718
+      },
+      "brake_a_kin_raw_mps2": {
+        "count": 2,
+        "min": 0.4508,
+        "max": 0.4944,
+        "mean": 0.4726,
+        "p50": 0.4726,
+        "p95": 0.4922
+      },
+      "brake_a_kin_lat_adj_mps2": {
+        "count": 2,
+        "min": 0.705,
+        "max": 0.7166,
+        "mean": 0.7108,
+        "p50": 0.7108,
+        "p95": 0.716
+      },
+      "brake_window_dur_s": {
+        "count": 2,
+        "min": 0.33,
+        "max": 0.33,
+        "mean": 0.33,
+        "p50": 0.33,
+        "p95": 0.33
+      },
+      "brake_release_v_mps": {
+        "count": 2,
+        "min": 0.037,
+        "max": 0.071,
+        "mean": 0.054,
+        "p50": 0.054,
+        "p95": 0.0693
+      },
+      "battery_voltage_v": {
+        "count": 2,
+        "min": 12.1,
+        "max": 12.13,
+        "mean": 12.115,
+        "p50": 12.115,
+        "p95": 12.129
+      },
+      "v_cmd_mps": {
+        "count": 67,
+        "min": 0.18,
+        "max": 0.41,
+        "mean": 0.2948,
+        "p50": 0.26,
+        "p95": 0.41
+      },
+      "v_actual_ds_dt_mps": {
+        "count": 53,
+        "min": 0.0988,
+        "max": 0.4503,
+        "mean": 0.2763,
+        "p50": 0.2939,
+        "p95": 0.3887
+      },
+      "speed_actual_to_cmd_ratio": {
+        "count": 53,
+        "min": 0.3624,
+        "max": 1.934,
+        "mean": 1.0382,
+        "p50": 1.0104,
+        "p95": 1.7616
+      },
+      "abs_yaw_cmd_rps": {
+        "count": 67,
+        "min": 0.0,
+        "max": 1.36,
+        "mean": 0.2745,
+        "p50": 0.12,
+        "p95": 1.087
+      },
+      "abs_dyaw_dt_rps2": {
+        "count": 64,
+        "min": 0.0,
+        "max": 6.3139,
+        "mean": 0.7203,
+        "p50": 0.2359,
+        "p95": 2.6957
+      },
+      "startup_response_lag_s": 0.993
+    },
+    {
+      "name": "fork_215951",
+      "source_path": "C:\\Users\\Lenovo\\.gemini\\antigravity\\brain\\2074e89a-af1d-4634-a0f0-907324d9e90a\\scratch\\fork_215951",
+      "track_mode": "fork",
+      "duration_sec": 35.68,
+      "video_frames": 273,
+      "debug_record_fps_p50": 7.52,
+      "max_arc_s_m": 7.3,
+      "camera_fps": {
+        "count": 7,
+        "min": 14.8,
+        "max": 15.0,
+        "mean": 14.971,
+        "p50": 15.0,
+        "p95": 15.0
+      },
+      "camera_read_p50_ms": {
+        "count": 7,
+        "min": 61.17,
+        "max": 61.58,
+        "mean": 61.34,
+        "p50": 61.3,
+        "p95": 61.56
+      },
+      "camera_read_p95_ms": {
+        "count": 7,
+        "min": 62.26,
+        "max": 62.45,
+        "mean": 62.35,
+        "p50": 62.3,
+        "p95": 62.45
+      },
+      "camera_pub_p50_ms": {
+        "count": 7,
+        "min": 3.65,
+        "max": 3.73,
+        "mean": 3.69,
+        "p50": 3.7,
+        "p95": 3.73
+      },
+      "yolo_proc_fps": {
+        "count": 8,
+        "min": 14.8,
+        "max": 15.0,
+        "mean": 14.975,
+        "p50": 15.0,
+        "p95": 15.0
+      },
+      "yolo_e2e_p50_ms": {
+        "count": 8,
+        "min": 30.36,
+        "max": 31.36,
+        "mean": 30.78,
+        "p50": 30.79,
+        "p95": 31.24
+      },
+      "yolo_e2e_p95_ms": {
+        "count": 8,
+        "min": 34.01,
+        "max": 38.46,
+        "mean": 35.73,
+        "p50": 34.94,
+        "p95": 38.45
+      },
+      "brake_adapt_events": [
+        {
+          "v_in_mps": 0.255,
+          "travel_m": 0.0628,
+          "scale_before": 1.0,
+          "scale_after": 0.877,
+          "a_eff_mps2": 1.579,
+          "a_kin_raw_mps2": 0.5177,
+          "a_kin_lat_adj_mps2": 0.8716,
+          "vbat_v": 11.98,
+          "epoch": 1795701599.32556
+        },
+        {
+          "v_in_mps": 0.224,
+          "travel_m": 0.0672,
+          "scale_before": 0.877,
+          "scale_after": 0.798,
+          "a_eff_mps2": 1.436,
+          "a_kin_raw_mps2": 0.3733,
+          "a_kin_lat_adj_mps2": 0.56,
+          "vbat_v": 11.97,
+          "epoch": 1795701606.8552454
+        },
+        {
+          "v_in_mps": 0.307,
+          "travel_m": 0.0746,
+          "scale_before": 0.798,
+          "scale_after": 0.746,
+          "a_eff_mps2": 1.343,
+          "a_kin_raw_mps2": 0.6317,
+          "a_kin_lat_adj_mps2": 1.0735,
+          "vbat_v": 11.97,
+          "epoch": 1795701624.3901255
+        }
+      ],
+      "brake_a_eff_mps2": {
+        "count": 3,
+        "min": 1.343,
+        "max": 1.579,
+        "mean": 1.4527,
+        "p50": 1.436,
+        "p95": 1.5647
+      },
+      "brake_a_kin_raw_mps2": {
+        "count": 3,
+        "min": 0.3733,
+        "max": 0.6317,
+        "mean": 0.5076,
+        "p50": 0.5177,
+        "p95": 0.6203
+      },
+      "brake_a_kin_lat_adj_mps2": {
+        "count": 3,
+        "min": 0.56,
+        "max": 1.0735,
+        "mean": 0.835,
+        "p50": 0.8716,
+        "p95": 1.0533
+      },
+      "brake_window_dur_s": {
+        "count": 3,
+        "min": 0.27,
+        "max": 0.34,
+        "mean": 0.313,
+        "p50": 0.33,
+        "p95": 0.339
+      },
+      "brake_release_v_mps": {
+        "count": 3,
+        "min": 0.013,
+        "max": 0.081,
+        "mean": 0.0427,
+        "p50": 0.034,
+        "p95": 0.0763
+      },
+      "battery_voltage_v": {
+        "count": 3,
+        "min": 11.97,
+        "max": 11.98,
+        "mean": 11.973,
+        "p50": 11.97,
+        "p95": 11.979
+      },
+      "v_cmd_mps": {
+        "count": 112,
+        "min": 0.18,
+        "max": 0.41,
+        "mean": 0.3255,
+        "p50": 0.36,
+        "p95": 0.38
+      },
+      "v_actual_ds_dt_mps": {
+        "count": 97,
+        "min": 0.1115,
+        "max": 0.486,
+        "mean": 0.312,
+        "p50": 0.3357,
+        "p95": 0.4033
+      },
+      "speed_actual_to_cmd_ratio": {
+        "count": 97,
+        "min": 0.2934,
+        "max": 2.1131,
+        "mean": 1.0283,
+        "p50": 0.967,
+        "p95": 1.6893
+      },
+      "abs_yaw_cmd_rps": {
+        "count": 112,
+        "min": 0.0,
+        "max": 1.46,
+        "mean": 0.3282,
+        "p50": 0.27,
+        "p95": 0.939
+      },
+      "abs_dyaw_dt_rps2": {
+        "count": 108,
+        "min": 0.0,
+        "max": 5.3274,
+        "mean": 0.5731,
+        "p50": 0.2059,
+        "p95": 2.4084
+      },
+      "startup_response_lag_s": 1.046
+    }
+  ]
+}

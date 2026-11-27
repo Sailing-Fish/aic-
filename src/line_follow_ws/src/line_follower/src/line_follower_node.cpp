@@ -44,6 +44,7 @@ LineFollowerNode::LineFollowerNode()
   track_state_machine_.reset(now_sec);
   curve_assist_ = CurveAssistState{};
   motion_state_ = MotionState{};
+  motion_controller_.reset();
   obstacle_memory_.reset();
   corridor_planner_.reset();
   finish_guard_.reset();
@@ -161,6 +162,12 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("min_speed", 0.0);
   this->declare_parameter("max_yaw_rate", 1.6);
   this->declare_parameter("speed_gain_damping", 0.45);
+  this->declare_parameter("enable_clear_path_speed", true);
+  this->declare_parameter("clear_straight_speed", 0.62);
+  this->declare_parameter("clear_preview_dist_m", 0.95);
+  this->declare_parameter("max_accel_mps2", 0.90);
+  this->declare_parameter("max_decel_mps2", 2.20);
+  this->declare_parameter("active_decel_kp", 0.45);
   this->declare_parameter("roi_top_ratio", 0.68);
   this->declare_parameter("roi_bottom_ratio", 0.18);
   this->declare_parameter("yellow_roi_bottom_ratio", 0.0);
@@ -357,6 +364,10 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("yellow_control_latency_s", 0.10);
   this->declare_parameter("yellow_bumper_margin_m", 0.08);
   this->declare_parameter("yellow_rearm_dist_m", 0.35);
+  this->declare_parameter("enable_sqrt_brake_envelope", true);
+  this->declare_parameter("enable_closed_loop_brake", true);
+  this->declare_parameter("brake_damping_gain", 0.85);
+  this->declare_parameter("brake_zero_cutoff_mps", 0.025);
 
   image_topic_ = this->get_parameter("image_topic").as_string();
   cmd_vel_topic_ = this->get_parameter("cmd_vel_topic").as_string();
@@ -656,6 +667,15 @@ void LineFollowerNode::sync_runtime_parameters()
     this->get_parameter("lost_line_safe_stop_time").as_double();
   motion_cfg.corridor_kp_y = this->get_parameter("corridor_kp_y").as_double();
   motion_cfg.corridor_heading_gain = this->get_parameter("corridor_heading_gain").as_double();
+  motion_cfg.enable_clear_path_speed =
+    this->get_parameter("enable_clear_path_speed").as_bool();
+  motion_cfg.clear_straight_speed =
+    this->get_parameter("clear_straight_speed").as_double();
+  motion_cfg.clear_preview_dist_m =
+    this->get_parameter("clear_preview_dist_m").as_double();
+  motion_cfg.max_accel_mps2 = this->get_parameter("max_accel_mps2").as_double();
+  motion_cfg.max_decel_mps2 = this->get_parameter("max_decel_mps2").as_double();
+  motion_cfg.active_decel_kp = this->get_parameter("active_decel_kp").as_double();
   motion_controller_.set_config(motion_cfg);
 
   // Sync ObstacleMemory (including B3 rear_axle_to_bumper_m)
@@ -737,6 +757,12 @@ void LineFollowerNode::sync_runtime_parameters()
   fg_cfg.control_latency_s = this->get_parameter("yellow_control_latency_s").as_double();
   fg_cfg.bumper_margin_m = this->get_parameter("yellow_bumper_margin_m").as_double();
   fg_cfg.rearm_travel_dist_m = this->get_parameter("yellow_rearm_dist_m").as_double();
+  fg_cfg.enable_sqrt_brake_envelope =
+    this->get_parameter("enable_sqrt_brake_envelope").as_bool();
+  fg_cfg.enable_closed_loop_brake =
+    this->get_parameter("enable_closed_loop_brake").as_bool();
+  fg_cfg.brake_damping_gain = this->get_parameter("brake_damping_gain").as_double();
+  fg_cfg.brake_zero_cutoff_mps = this->get_parameter("brake_zero_cutoff_mps").as_double();
   finish_guard_.set_config(fg_cfg);
 }
 
@@ -783,7 +809,11 @@ void LineFollowerNode::log_effective_parameters() const
     "enable_cbf_shield=%d cbf_wb=%.3f cbf_h=%d cbf_dt=%.3f cbf_gamma=%.2f "
     "yellow_final_ramp_dist_m=%.3f yellow_final_creep_speed_mps=%.3f "
     "voltage_decel_slope=%.3f enable_brake_adaptation=%d enable_risk_aware_decision=%d "
-    "crc_pad_px=[no_entry=%.1f,cone=%.1f,yellow=%.1f]",
+    "crc_pad_px=[no_entry=%.1f,cone=%.1f,yellow=%.1f] "
+    "enable_sqrt_brake_envelope=%d enable_closed_loop_brake=%d "
+    "brake_damping_gain=%.2f brake_zero_cutoff_mps=%.3f "
+    "enable_clear_path_speed=%d clear_straight_speed=%.2f clear_preview_dist_m=%.2f "
+    "max_accel_mps2=%.2f max_decel_mps2=%.2f active_decel_kp=%.2f",
     mcfg.corridor_kp_y, mcfg.corridor_heading_gain,
     mcfg.speed_gain_damping, mcfg.max_yaw_rate,
     yellow_roi_bottom_ratio_, ocfg.rear_axle_to_bumper_m,
@@ -806,7 +836,17 @@ void LineFollowerNode::log_effective_parameters() const
     fcfg.voltage_decel_slope,
     fcfg.enable_brake_adaptation ? 1 : 0,
     ccfg.enable_risk_aware_decision ? 1 : 0,
-    crc_no_entry_pad_y_px_, crc_cone_pad_y_px_, crc_yellow_pad_y_px_);
+    crc_no_entry_pad_y_px_, crc_cone_pad_y_px_, crc_yellow_pad_y_px_,
+    fcfg.enable_sqrt_brake_envelope ? 1 : 0,
+    fcfg.enable_closed_loop_brake ? 1 : 0,
+    fcfg.brake_damping_gain,
+    fcfg.brake_zero_cutoff_mps,
+    mcfg.enable_clear_path_speed ? 1 : 0,
+    mcfg.clear_straight_speed,
+    mcfg.clear_preview_dist_m,
+    mcfg.max_accel_mps2,
+    mcfg.max_decel_mps2,
+    mcfg.active_decel_kp);
 }
 
 bool LineFollowerNode::brake_pulse_on(double elapsed_s) const
@@ -1047,6 +1087,7 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
     track_state_machine_.reset(now.seconds());
     curve_assist_ = CurveAssistState{};
     motion_state_ = MotionState{};
+    motion_controller_.reset();
     yellow_brake_active_ = false;
 
     obstacle_memory_.reset();
@@ -1076,6 +1117,7 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
 
   if (!start_enabled_) {
     curve_assist_ = CurveAssistState{};
+    motion_controller_.reset();
     yellow_brake_active_ = false;
   }
 
@@ -1344,9 +1386,9 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
   YellowStopAdvice yellow_advice{};
   bool sm_yellow_trigger = false;
   bool external_is_finish = false;
+  bool yellow_dist_valid = false;
+  double yellow_d_bumper_m = 0.0;
   {
-    bool has_metric_dist = false;
-    double yellow_d_bumper_m = 0.0;
     double yellow_y_lat_m = 0.0;
 
     if (raw_yellow_detected && result_opt && result_opt->yellow_is_geometric) {
@@ -1355,7 +1397,7 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         result_opt->yellow_bottom_y_full + crc_yellow_pad_y_px_,
         0.0,
         max_v_px);
-      has_metric_dist = ground_projector_.pixel_to_ground(
+      yellow_dist_valid = ground_projector_.pixel_to_ground(
         result_opt->yellow_center_x_full,
         v_yellow_bot,
         yellow_d_bumper_m,
@@ -1368,13 +1410,13 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
     yellow_advice = finish_guard_.evaluate_yellow_stop(
       raw_yellow_detected,
-      has_metric_dist,
+      yellow_dist_valid,
       yellow_d_bumper_m,
       cur_v,
       dead_end,
       now_sec);
 
-    finals_overlay.yellow_dist_valid = has_metric_dist;
+    finals_overlay.yellow_dist_valid = yellow_dist_valid;
     finals_overlay.yellow_d_bumper_m = yellow_d_bumper_m;
     finals_overlay.yellow_is_finish = yellow_advice.is_finish_line;
     finals_overlay.yellow_dead_end_ahead = dead_end;
@@ -1402,16 +1444,23 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     yellow_brake_measure_pending_ = true;
 
     const bool entry_fast_enough_for_brake =
-      !sm_state.odom_seen || (sm_state.odom_linear_x > yellow_brake_release_speed_);
+      finish_guard_.config().enable_closed_loop_brake ?
+      (!sm_state.odom_seen || (sm_state.odom_linear_x > finish_guard_.config().brake_zero_cutoff_mps)) :
+      (!sm_state.odom_seen || (sm_state.odom_linear_x > yellow_brake_release_speed_));
     yellow_brake_active_ = (yellow_brake_speed_ > 0.0) && entry_fast_enough_for_brake;
     yellow_brake_start_ = now;
     last_brake_cmd_time_ = now;
     if (yellow_brake_active_) {
       RCLCPP_INFO(
         this->get_logger(),
-        "[DEC] yellow brake_begin v=%.2f period=%.2f pulse=%.2f rel=%.2f max=%.2f",
-        yellow_brake_speed_, yellow_brake_period_s_, yellow_brake_pulse_s_,
-        yellow_brake_release_speed_, yellow_brake_max_time_s_);
+        "[DEC] yellow brake_begin cl=%d v=%.2f gain=%.2f cutoff=%.3f period=%.2f pulse=%.2f rel=%.2f max=%.2f a_eff=%.2f",
+        finish_guard_.config().enable_closed_loop_brake ? 1 : 0,
+        yellow_brake_speed_,
+        finish_guard_.config().brake_damping_gain,
+        finish_guard_.config().brake_zero_cutoff_mps,
+        yellow_brake_period_s_, yellow_brake_pulse_s_,
+        yellow_brake_release_speed_, yellow_brake_max_time_s_,
+        finish_guard_.effective_brake_decel_mps2(now_sec));
     }
   } else if (yellow_brake_measure_pending_) {
     if (step_events.odom_still_ok) {
@@ -1505,6 +1554,11 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
   // ============================================================
   // Control: Yellow Stop > Finals Corridor > Lost-Line Safety
   // ============================================================
+  const double a_eff_now = finish_guard_.effective_brake_decel_mps2(now_sec);
+  double brake_cmd_mps = 0.0;
+  double v_safe_cap_mps = 0.0;
+  double clear_path_score = 0.0;
+
   if (step_events.yellow_hold_stop) {
     current_state = TrackState::YELLOW_LINE_DETECTED;
     linear_speed = 0.0;
@@ -1513,29 +1567,53 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
     if (yellow_brake_active_) {
       const double brake_elapsed = (now - yellow_brake_start_).seconds();
-      // Signed velocity zero-reverse guard: release immediately if car reaches zero or begins reversing!
-      const bool reverse_guard =
-        sm_state.odom_seen && sm_state.odom_linear_x <= 0.01;
-      const bool slow_enough =
-        yellow_brake_release_speed_ > 0.0 &&
-        brake_elapsed >= 0.04 &&
-        sm_state.odom_seen &&
-        sm_state.odom_linear_x <= yellow_brake_release_speed_;
-      const bool timeout =
-        yellow_brake_max_time_s_ > 0.0 && brake_elapsed >= yellow_brake_max_time_s_;
-
-      if (reverse_guard || slow_enough || timeout) {
-        yellow_brake_active_ = false;
-        const char * why = timeout ? "timeout" : (reverse_guard ? "reverse_guard" : "slow");
-        RCLCPP_INFO(
-          this->get_logger(),
-          "[DEC] yellow brake_end dur=%.2f v=%.3f why=%s",
-          brake_elapsed, sm_state.odom_linear_x, why);
+      if (finish_guard_.config().enable_closed_loop_brake && sm_state.odom_seen) {
+        const double cl_cmd = finish_guard_.compute_closed_loop_brake_cmd(
+          sm_state.odom_linear_x,
+          brake_elapsed,
+          yellow_brake_speed_,
+          yellow_brake_max_time_s_);
+        if (cl_cmd < -1e-9) {
+          publish_stop_cmd = false;
+          linear_speed = cl_cmd;
+          brake_cmd_mps = cl_cmd;
+        } else {
+          yellow_brake_active_ = false;
+          const bool timeout =
+            yellow_brake_max_time_s_ > 0.0 && brake_elapsed >= yellow_brake_max_time_s_;
+          const char * why = timeout ? "timeout" : "zero_cutoff";
+          RCLCPP_INFO(
+            this->get_logger(),
+            "[DEC] yellow brake_end dur=%.2f v=%.3f why=%s brake_cmd=+0.000 a_eff=%.2f v_safe_cap=0.00 clear_score=0.00",
+            brake_elapsed, sm_state.odom_linear_x, why, a_eff_now);
+        }
       } else {
-        publish_stop_cmd = false;
-        linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed_ : 0.0;
+        // Legacy open-loop pulse brake with signed velocity zero-reverse guard
+        const bool reverse_guard =
+          sm_state.odom_seen && sm_state.odom_linear_x <= 0.01;
+        const bool slow_enough =
+          yellow_brake_release_speed_ > 0.0 &&
+          brake_elapsed >= 0.04 &&
+          sm_state.odom_seen &&
+          sm_state.odom_linear_x <= yellow_brake_release_speed_;
+        const bool timeout =
+          yellow_brake_max_time_s_ > 0.0 && brake_elapsed >= yellow_brake_max_time_s_;
+
+        if (reverse_guard || slow_enough || timeout) {
+          yellow_brake_active_ = false;
+          const char * why = timeout ? "timeout" : (reverse_guard ? "reverse_guard" : "slow");
+          RCLCPP_INFO(
+            this->get_logger(),
+            "[DEC] yellow brake_end dur=%.2f v=%.3f why=%s brake_cmd=+0.000 a_eff=%.2f v_safe_cap=0.00 clear_score=0.00",
+            brake_elapsed, sm_state.odom_linear_x, why, a_eff_now);
+        } else {
+          publish_stop_cmd = false;
+          linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed_ : 0.0;
+          brake_cmd_mps = linear_speed;
+        }
       }
     }
+    motion_controller_.notify_external_speed(0.0, now_sec);
   } else if (line_detected) {
     current_state = TrackState::TRACKING;
 
@@ -1615,7 +1693,19 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       now_sec,
       eff_curve_lvl);
 
-    double eff_speed_cap = plan.speed_cap_mps;
+    const bool corridor_event_active =
+      plan.has_blocking_obstacle ||
+      plan.near_obstacle_count > 0 ||
+      plan.far_obstacle_count > 0 ||
+      plan.digit_target_active ||
+      plan.preferred_branch != 0 ||
+      plan.active_mode_tag != "cruise";
+
+    double eff_speed_cap = corridor_event_active ?
+      plan.speed_cap_mps :
+      (motion_controller_.config().enable_clear_path_speed ?
+        std::max(target_speed_, motion_controller_.config().clear_straight_speed) :
+        plan.speed_cap_mps);
     if (finish_guard_.is_yellow_rearmed() &&
       yellow_advice.pre_brake &&
       !yellow_advice.trigger_stop)
@@ -1623,7 +1713,58 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       eff_speed_cap = std::min(eff_speed_cap, yellow_advice.speed_cap_mps);
     }
 
-    const MotionCommand cmd = motion_controller_.compute_corridor_command(
+    // Physics-envelope safe speed ceiling from FinishGuard (stopping distance + latency + margin)
+    double eff_preview_m = motion_controller_.config().clear_preview_dist_m;
+    if (!curve_assist_.far_valid) {
+      eff_preview_m = std::min(eff_preview_m, 0.50 * motion_controller_.config().clear_preview_dist_m);
+    }
+    if (obs.confidence < 0.70) {
+      eff_preview_m *= clamp(obs.confidence / 0.70, 0.35, 1.0);
+    }
+    if (yellow_dist_valid && yellow_d_bumper_m > 0.0 && finish_guard_.is_yellow_rearmed()) {
+      eff_preview_m = std::min(eff_preview_m, yellow_d_bumper_m);
+    }
+    v_safe_cap_mps = finish_guard_.compute_safe_speed_ceiling(eff_preview_m, 0.0, now_sec);
+    bool has_no_entry_ahead = false;
+    for (const auto & loc : local_obstacles) {
+      if (loc.type == SemanticObjectType::RED_NO_ENTRY &&
+        loc.d_max_m >= -corridor_planner_.config().obstacle_rear_keep_m &&
+        loc.d_min_m <= corridor_planner_.config().obstacle_lookahead_m)
+      {
+        has_no_entry_ahead = true;
+      }
+      if (loc.d_min_m > 0.0 && loc.d_min_m <= eff_preview_m) {
+        const double obs_end_v = (loc.type == SemanticObjectType::RED_NO_ENTRY) ?
+          corridor_planner_.config().no_entry_speed_mps :
+          corridor_planner_.config().obstacle_speed_mps;
+        v_safe_cap_mps = std::min(
+          v_safe_cap_mps,
+          finish_guard_.compute_safe_speed_ceiling(loc.d_min_m, obs_end_v, now_sec));
+      }
+    }
+
+    ClearPathInput cp_in{};
+    cp_in.has_active_obstacle =
+      plan.has_blocking_obstacle ||
+      plan.near_obstacle_count > 0 ||
+      plan.far_obstacle_count > 0;
+    cp_in.has_no_entry_ahead = has_no_entry_ahead;
+    cp_in.has_yellow_ahead =
+      finish_guard_.is_yellow_rearmed() &&
+      (raw_yellow_detected || yellow_advice.pre_brake || yellow_advice.trigger_stop);
+    cp_in.has_digit_target = plan.digit_target_active;
+    cp_in.has_fork_context = (plan.preferred_branch != 0) || obs.has_fork_split;
+    cp_in.confidence = obs.confidence;
+    cp_in.curvature_proxy = obs.curvature_proxy;
+    cp_in.heading_proxy = obs.heading_proxy;
+    cp_in.lateral_err_m = plan.target_y_m;
+    cp_in.lane_width_ratio = obs.lane_width_ratio;
+    cp_in.reverse_curve_active = curve_assist_.reverse_curve_active;
+    cp_in.v_safe_cap_mps = v_safe_cap_mps;
+    cp_in.odom_linear_x = sm_state.odom_linear_x;
+    cp_in.odom_valid = sm_state.odom_seen;
+
+    const AdaptiveSpeedResult adaptive_res = motion_controller_.step_adaptive_corridor_command(
       plan.target_y_m,
       0.0,
       obs.heading_proxy,
@@ -1631,7 +1772,13 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       obs.confidence,
       eff_speed_cap,
       curve_assist_,
-      motion_state_);
+      motion_state_,
+      cp_in,
+      now_sec);
+
+    const MotionCommand & cmd = adaptive_res.command;
+    clear_path_score = adaptive_res.clear_path_score;
+    eff_speed_cap = adaptive_res.effective_speed_cap_mps;
 
     linear_speed = cmd.linear_speed;
     yaw_rate = cmd.yaw_rate;
@@ -1674,7 +1821,8 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       RCLCPP_INFO(
         this->get_logger(),
         "[DEC] ctrl mode=%s branch=%d y_ref=%+.3f lane=[%+.2f,%+.2f] "
-        "hdg=%+.2f rev=%d v=%.2f yaw=%+.2f obs=%d/%d s=%.2f",
+        "hdg=%+.2f rev=%d v=%.2f yaw=%+.2f obs=%d/%d s=%.2f "
+        "v_safe_cap=%.2f clear_score=%.2f brake_cmd=%+.3f a_eff=%.2f",
         plan.active_mode_tag.c_str(),
         plan.preferred_branch,
         plan.target_y_m,
@@ -1686,7 +1834,11 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         yaw_rate,
         plan.near_obstacle_count,
         plan.far_obstacle_count,
-        finish_guard_.total_arc_m());
+        finish_guard_.total_arc_m(),
+        v_safe_cap_mps,
+        clear_path_score,
+        brake_cmd_mps,
+        a_eff_now);
       last_ctrl_mode_tag_ = plan.active_mode_tag;
       last_ctrl_branch_ = plan.preferred_branch;
       last_ctrl_log_sec_ = now_sec;
@@ -1719,20 +1871,32 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     linear_speed = cmd.linear_speed;
     yaw_rate = cmd.yaw_rate;
     publish_stop_cmd = cmd.publish_stop;
+    v_safe_cap_mps = linear_speed;
+    motion_controller_.notify_external_speed(linear_speed, now_sec);
   }
 
   const bool yellow_stop_now = step_events.yellow_stop_now;
 
-  // Final safety lock: yellow stop holds highest priority while preserving reverse-brake pulse
+  // Final safety lock: yellow stop holds highest priority while preserving closed-loop / pulse brake
   if (step_events.yellow_hold_stop) {
     current_state = TrackState::YELLOW_LINE_DETECTED;
     yaw_rate = 0.0;
     if (yellow_brake_active_) {
       const double brake_elapsed = (now - yellow_brake_start_).seconds();
-      linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed_ : 0.0;
-      publish_stop_cmd = false;
+      if (finish_guard_.config().enable_closed_loop_brake && sm_state.odom_seen) {
+        linear_speed = finish_guard_.compute_closed_loop_brake_cmd(
+          sm_state.odom_linear_x,
+          brake_elapsed,
+          yellow_brake_speed_,
+          yellow_brake_max_time_s_);
+      } else {
+        linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed_ : 0.0;
+      }
+      brake_cmd_mps = linear_speed;
+      publish_stop_cmd = (linear_speed >= -1e-9);
     } else {
       linear_speed = 0.0;
+      brake_cmd_mps = 0.0;
       publish_stop_cmd = true;
     }
   }

@@ -466,6 +466,31 @@
   .mile-pill.gem{background:var(--gem-soft);border-color:var(--gem-border);color:var(--gem)}
   .mile-pill.done{background:var(--ok-soft);border-color:rgba(20,158,97,.36);color:var(--ok)}
 
+  /* 紧凑双层刹车 & 畅通提速实时遥测微条 */
+  .telem-strip{
+    display:flex;gap:5px;flex-wrap:wrap;align-items:center;flex-shrink:0;
+  }
+  .telem-badge{
+    display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:var(--radius-pill);
+    background:var(--glass-soft);border:1px solid var(--border-soft);
+    font:700 10.5px/1.3 var(--font-ui);color:var(--dim);white-space:nowrap;
+  }
+  .telem-badge b{font-family:var(--font-num);color:var(--fg);font-weight:800}
+  .telem-badge.lit{background:var(--ds-soft);border-color:var(--ds-border);color:var(--ds)}
+  .telem-badge.lit b{color:var(--ds)}
+  .telem-badge.warn{background:var(--warn-soft);border-color:rgba(212,130,10,.36);color:var(--warn)}
+  .telem-badge.warn b{color:var(--warn)}
+  .telem-badge.ok{background:var(--ok-soft);border-color:rgba(20,158,97,.32);color:var(--ok)}
+  .telem-badge.ok b{color:var(--ok)}
+
+  .preset-ctrl{display:inline-flex;align-items:center;gap:5px}
+  .preset-ctrl select{
+    background:var(--glass-input);color:var(--fg);border:1px solid var(--border-soft);
+    border-radius:var(--radius-pill);padding:4px 10px;font:600 11.5px var(--font-ui);outline:none;max-width:210px;
+  }
+  .preset-ctrl select:focus{border-color:var(--ds)}
+  .preset-ctrl button{padding:4px 10px;font-size:11.5px}
+
   /* 人话诊室 */
   .clinic-head{
     display:flex;align-items:center;gap:7px;flex-shrink:0;padding-top:2px;
@@ -967,6 +992,13 @@
             <span class="mile-pill">⏳ 等待本轮发车</span>
           </div>
 
+          <div class="telem-strip" id="brakeSpeedStrip" title="双层闭环刹车与畅通直道物理包络实时遥测（未上报时显示 -）">
+            <span class="telem-badge" id="bsVSafeCapBadge" title="运动学安全速帽 (v_safe_cap_mps)">⚡ 速帽 <b id="bsVSafeCap">-</b></span>
+            <span class="telem-badge" id="bsClearScoreBadge" title="畅通直道评分 (clear_path_score)">🛣 畅通 <b id="bsClearScore">-</b></span>
+            <span class="telem-badge" id="bsBrakeCmdBadge" title="闭环反拖刹车指令 (brake_cmd_mps)">🛑 反拖 <b id="bsBrakeCmd">-</b></span>
+            <span class="telem-badge" id="bsAEffBadge" title="生效刹车减速度 (effective_brake_decel_mps2)">📉 a_eff <b id="bsAEff">-</b></span>
+          </div>
+
           <div class="clinic-head">
             <span class="clinic-title">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ds)" stroke-width="2.3"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -1006,6 +1038,12 @@
             </div>
             <div class="atelier-sub-row">
               <span id="tierBannerText">日常只调这 4 组正交物理量</span>
+              <div class="preset-ctrl" title="一键填充刹车/畅通直道推荐预设（仅填入表单并标黄，可检查差异后再保存）">
+                <select id="presetSel">
+                  <option value="">预设档位…</option>
+                </select>
+                <button id="btnApplyPreset" type="button">套用</button>
+              </div>
               <div class="psearch-box">
                 <input type="text" id="paramSearch" placeholder="快筛参数名或说明…">
                 <button id="btnParamSearchClear" title="清空筛选">✕</button>
@@ -1291,6 +1329,26 @@ function renderMilestoneStrip(d, milestones){
     pills.push(`<span class="mile-pill">🛞 摩擦×${t1.brake_scale.toFixed(2)}</span>`);
   }
   strip.innerHTML = pills.join('');
+}
+
+function renderBrakeSpeedTelemetry(d){
+  const bs = d.brake_speed || {};
+  const vSafe = (typeof bs.v_safe_cap_mps === 'number' && Number.isFinite(bs.v_safe_cap_mps)) ? bs.v_safe_cap_mps : null;
+  const cScore = (typeof bs.clear_path_score === 'number' && Number.isFinite(bs.clear_path_score)) ? bs.clear_path_score : null;
+  const bCmd = (typeof bs.brake_cmd_mps === 'number' && Number.isFinite(bs.brake_cmd_mps)) ? bs.brake_cmd_mps : null;
+  const aEff = (typeof bs.effective_brake_decel_mps2 === 'number' && Number.isFinite(bs.effective_brake_decel_mps2)) ? bs.effective_brake_decel_mps2 : null;
+
+  $('bsVSafeCap').textContent = (vSafe !== null) ? `${vSafe.toFixed(2)}m/s` : '-';
+  $('bsVSafeCapBadge').className = 'telem-badge' + (vSafe !== null ? (vSafe >= 0.55 ? ' ok' : ' lit') : '');
+
+  $('bsClearScore').textContent = (cScore !== null) ? `${Math.round(Math.max(0, Math.min(1, cScore)) * 100)}%` : '-';
+  $('bsClearScoreBadge').className = 'telem-badge' + (cScore !== null ? (cScore >= 0.70 ? ' ok' : (cScore >= 0.30 ? ' lit' : '')) : '');
+
+  $('bsBrakeCmd').textContent = (bCmd !== null) ? `${bCmd.toFixed(2)}m/s` : '-';
+  $('bsBrakeCmdBadge').className = 'telem-badge' + (bCmd !== null && bCmd < -0.005 ? ' warn' : '');
+
+  $('bsAEff').textContent = (aEff !== null) ? `${aEff.toFixed(2)}m/s²` : '-';
+  $('bsAEffBadge').className = 'telem-badge' + (aEff !== null ? (aEff < 1.2 ? ' warn' : ' lit') : '');
 }
 
 function translateMilestoneOrIssue(e){
@@ -1698,6 +1756,7 @@ async function pollStatus(){
     lastStatusSnapshot = d;
     updateHealthDots(d);
     renderMilestoneStrip(d, evPool);
+    renderBrakeSpeedTelemetry(d);
     renderClinic(d);
     updateCompanions(d);
 
@@ -1805,6 +1864,8 @@ function updateButtons(){
   $('btnSaveRestart').title = mismatch
     ? ('当前运行的是 ' + runningMap + '.yaml；改 ' + sel + '.yaml 再重启不会生效')
     : (restarting ? '重启进行中，等新进程就绪' : '');
+  if($('presetSel')) $('presetSel').disabled = locked;
+  if($('btnApplyPreset')) $('btnApplyPreset').disabled = locked;
   document.querySelectorAll('#params input, #params select, #params button.step-btn').forEach(el=>{ el.disabled = locked; });
 }
 
@@ -1979,12 +2040,57 @@ async function loadParams(map){
   });
 
   dirty = false;
+  populatePresets(d.presets || []);
   setTier(activeTier);
   applyParamSearch();
   markPending();
   updateTabDirtyDots();
   $('memo').textContent = '已加载';
   setLocked(lastLocked===true, true);
+}
+
+function populatePresets(presets){
+  const sel = $('presetSel');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">刹车/提速预设…</option>';
+  (presets || []).forEach(p=>{
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.textContent = p.label || p.id;
+    if(p.desc) o.title = p.desc;
+    sel.appendChild(o);
+  });
+}
+
+function applySelectedPreset(){
+  if(lastLocked === true || !paramsState) return;
+  const pid = $('presetSel').value;
+  if(!pid){ toast('请先选择一个预设档位', true); return; }
+  const preset = (paramsState.presets || []).find(p => p.id === pid);
+  if(!preset || !preset.values){ toast('未找到预设配置', true); return; }
+  let touched = 0;
+  Object.keys(preset.values).forEach(sec=>{
+    const kv = preset.values[sec] || {};
+    Object.keys(kv).forEach(key=>{
+      const row = document.querySelector(`#params .row[data-section="${sec}"][data-key="${key}"]`);
+      if(!row) return;
+      const inp = row.querySelector('input[type="number"], input[type="checkbox"], select');
+      const slider = row.querySelector('input[type="range"]');
+      if(!inp) return;
+      const val = kv[key];
+      if(row.dataset.type === 'bool'){
+        inp.checked = !!val;
+      } else {
+        inp.value = String(val);
+        if(slider) slider.value = String(val);
+      }
+      inp.dispatchEvent(new Event(row.dataset.type === 'enum' ? 'change' : 'input'));
+      touched++;
+    });
+  });
+  if(touched > 0){
+    toast(`已套用「${preset.label}」到表单（共 ${touched} 项），确认后请保存并重启`);
+  }
 }
 
 function undoParams(){
@@ -2012,6 +2118,9 @@ function markPending(){
     cbf_wheelbase_m:'cbf_wb',
     cbf_horizon_steps:'cbf_h',
     cbf_step_dt_sec:'cbf_dt',
+    enable_sqrt_brake_envelope:'sqrt_brake',
+    enable_closed_loop_brake:'cl_brake',
+    enable_clear_path_speed:'clear_speed',
   };
   document.querySelectorAll('#params .row').forEach(row=>{
     const key = row.dataset.key;
@@ -2171,6 +2280,7 @@ async function pollLogs(){
 $('btnSave').addEventListener('click',()=>saveParams(false));
 $('btnSaveRestart').addEventListener('click',()=>saveParams(true));
 $('btnUndo').addEventListener('click', undoParams);
+$('btnApplyPreset').addEventListener('click', applySelectedPreset);
 
 let prevMapVal = $('mapSel').value;
 $('mapSel').addEventListener('change',()=>{

@@ -51,6 +51,147 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import params_schema  # noqa: E402
 
+# ---------------------------------------------------------------- 双层闭环刹车 & 畅通直道物理包络提速扩展 Schema
+BRAKE_SPEED_DEFAULTS = {
+    # Dual-Layer Closed-Loop Brake
+    'enable_sqrt_brake_envelope': True,
+    'enable_closed_loop_brake': True,
+    'brake_damping_gain': 0.85,
+    'brake_zero_cutoff_mps': 0.025,
+    # Clear-Path Physics-Envelope Adaptive Speed
+    'enable_clear_path_speed': True,
+    'clear_straight_speed': 0.62,
+    'clear_preview_dist_m': 0.95,
+    'max_accel_mps2': 0.90,
+    'max_decel_mps2': 2.20,
+    'active_decel_kp': 0.45,
+}
+
+BRAKE_SPEED_SCHEMA_GROUPS = [
+    {
+        'tier': 'calibration',
+        'section': 'line_follower_node',
+        'group': '双层闭环刹车（平方根减速包络 + 阻尼反拖零倒车）',
+        'desc': '与电池电压前馈及 1 参摩擦自适应联动；闭环阻尼按实时 odom 速度反拖并触底零速截断，杜绝倒车过冲',
+        'default_open': True,
+        'items': [
+            ('enable_sqrt_brake_envelope', '启用平方根物理减速包络', 'bool', 0, 1, 1,
+             '进入黄线预减速区后按 v=√(2·a_eff·Δd) 连续平顺收敛至停点；关闭回退线性斜坡'),
+            ('enable_closed_loop_brake', '启用闭环比例阻尼反拖刹车', 'bool', 0, 1, 1,
+             '按实时 odom 速度线性阻尼反拖，降到截止阈值立即切 0.0 杜绝倒车过冲'),
+            ('brake_damping_gain', '闭环反拖阻尼增益 (1/s)', 'float', 0.2, 2.0, 0.05,
+             '反拖命令 v_brake = -clamp(gain * v_odom, 0, yellow_brake_speed)；默认 0.85'),
+            ('brake_zero_cutoff_mps', '反拖零速截断阈值 (m/s)', 'float', 0.005, 0.08, 0.005,
+             '当 odom 速度 <= 该阈值时反拖立即归零，防止顶成倒车（默认 0.025 m/s）'),
+        ],
+    },
+    {
+        'tier': 'calibration',
+        'section': 'line_follower_node',
+        'group': '畅通直道物理包络提速（Clear-Path 自适应巡航与斜率限幅）',
+        'desc': '仅在无障碍/高置信/小曲率/居中直道段平滑提速，并受运动学安全刹停速帽与非对称加减速斜率约束',
+        'default_open': True,
+        'items': [
+            ('enable_clear_path_speed', '启用畅通直道物理包络提速', 'bool', 0, 1, 1,
+             '开：畅通直道按 clear_path_score 平滑提速至 clear_straight_speed，遇弯/障立即受安全速帽回落'),
+            ('clear_straight_speed', '畅通直道提速上限 (m/s)', 'float', 0.35, 0.95, 0.01,
+             'Run 1 稳健保底推荐 0.62 m/s，Run 2 冲刺可调至 0.78–0.85 m/s'),
+            ('clear_preview_dist_m', '畅通前瞻安全视距 (m)', 'float', 0.45, 1.50, 0.05,
+             '用于计算运动学安全速帽 v_safe_cap 的前瞻停距（默认 0.95 m）'),
+            ('max_accel_mps2', '最大平滑加速度 (m/s²)', 'float', 0.3, 2.5, 0.05,
+             '直道起步与出弯提速的加速度斜率上限，防抬头/打滑（默认 0.90 m/s²）'),
+            ('max_decel_mps2', '最大平滑减速度 (m/s²)', 'float', 0.8, 4.0, 0.1,
+             '入弯与遇障减速的减速度斜率上限（非对称快降慢升，默认 2.20 m/s²）'),
+            ('active_decel_kp', '主动超速减速比例增益', 'float', 0.0, 1.2, 0.05,
+             '实际 odom 车速高于安全速帽时的主动减速率增益（巡线中恒 >= 0，默认 0.45）'),
+        ],
+    },
+]
+
+SPEED_BRAKE_PRESETS = [
+    {
+        'id': 'run1_safe',
+        'label': 'Run 1 稳健保底（双层刹车 + 0.62 畅通直道）',
+        'desc': '推荐初赛/Run 1：闭环零倒车刹车 + 0.62 m/s 畅通直道包络',
+        'values': {
+            'line_follower_node': dict(BRAKE_SPEED_DEFAULTS),
+        },
+    },
+    {
+        'id': 'run2_fast',
+        'label': 'Run 2 畅通提速（0.78 m/s 直道冲刺）',
+        'desc': '在 Run 1 跑通基础上提高直道上限与加减速响应',
+        'values': {
+            'line_follower_node': {
+                'enable_sqrt_brake_envelope': True,
+                'enable_closed_loop_brake': True,
+                'brake_damping_gain': 0.95,
+                'brake_zero_cutoff_mps': 0.025,
+                'enable_clear_path_speed': True,
+                'clear_straight_speed': 0.78,
+                'clear_preview_dist_m': 1.05,
+                'max_accel_mps2': 1.20,
+                'max_decel_mps2': 2.60,
+                'active_decel_kp': 0.55,
+            },
+        },
+    },
+    {
+        'id': 'legacy_compat',
+        'label': '兼容旧版（关闭双层刹车与直道提速）',
+        'desc': '全部回退到旧版线性斜坡刹车与恒定 target_speed 巡航',
+        'values': {
+            'line_follower_node': {
+                'enable_sqrt_brake_envelope': False,
+                'enable_closed_loop_brake': False,
+                'enable_clear_path_speed': False,
+            },
+        },
+    },
+]
+
+
+def get_full_schema():
+    """合并 params_schema.SCHEMA 与双层闭环刹车/畅通直道提速参数分组（去重且不改变既有顺序与 Tier）。"""
+    base = list(params_schema.SCHEMA)
+    existing = {
+        (g['section'], item[0])
+        for g in base
+        for item in g.get('items', ())
+    }
+    extra_groups = []
+    for g in BRAKE_SPEED_SCHEMA_GROUPS:
+        sec = g['section']
+        filtered_items = [it for it in g['items'] if (sec, it[0]) not in existing]
+        if filtered_items:
+            g_copy = dict(g)
+            g_copy['items'] = filtered_items
+            extra_groups.append(g_copy)
+
+    if not extra_groups:
+        return base
+
+    # 插入到第一个 calibration 分组（Tier 1 开关）之后，既醒目又不影响 finals_core 与 B10 组内顺序
+    insert_at = len(base)
+    for idx, g in enumerate(base):
+        if g.get('tier') == 'calibration':
+            insert_at = idx + 1
+            break
+    return base[:insert_at] + extra_groups + base[insert_at:]
+
+
+def find_param_spec(section, key):
+    spec = params_schema.find(section, key)
+    if spec is not None:
+        return spec
+    for g in BRAKE_SPEED_SCHEMA_GROUPS:
+        if g['section'] != section:
+            continue
+        for item in g['items']:
+            if item[0] == key:
+                return item
+    return None
+
 WS = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 TOOLS = os.path.join(WS, 'tools')
 STATE_DIR = '/tmp/rdkx5'
@@ -829,30 +970,123 @@ def read_recent_events(limit=60):
 
 def _parse_kv_tokens(kv_str):
     out = {}
-    for tok in str(kv_str or '').split():
+    for tok in str(kv_str or '').replace(',', ' ').split():
         if '=' in tok:
             k, v = tok.split('=', 1)
-            out[k] = v
+            k = k.strip()
+            if k:
+                out[k] = v.strip()
     return out
 
 
-def _parse_metric_num(raw, as_int=False):
+def _parse_metric_num(raw, as_int=False, digits=2):
     if raw is None:
         return None
-    s = str(raw).strip()
-    if s.endswith('ms'):
-        s = s[:-2]
+    s = str(raw).strip().rstrip(',;')
+    if '->' in s:
+        s = s.split('->', 1)[1].strip()
+    for suf in ('m/s²', 'm/s2', 'mps2', 'm/s', 'mps', 'ms'):
+        if s.endswith(suf):
+            s = s[:-len(suf)].strip()
+            break
     try:
         val = float(s)
     except (TypeError, ValueError):
         return None
     if not math.isfinite(val):
         return None
-    return int(round(val)) if as_int else round(val, 2)
+    return int(round(val)) if as_int else round(val, digits)
+
+
+DEC_TELEMETRY_KEY_MAP = {
+    'v_safe_cap': 'v_safe_cap_mps',
+    'v_safe_cap_mps': 'v_safe_cap_mps',
+    'vsafe': 'v_safe_cap_mps',
+    'clear_score': 'clear_path_score',
+    'clear_path_score': 'clear_path_score',
+    'clr_score': 'clear_path_score',
+    'brake_cmd': 'brake_cmd_mps',
+    'brake_cmd_mps': 'brake_cmd_mps',
+    'v_brake': 'brake_cmd_mps',
+    'a_eff': 'effective_brake_decel_mps2',
+    'effective_brake_decel_mps2': 'effective_brake_decel_mps2',
+    'brake_a_eff': 'effective_brake_decel_mps2',
+}
+
+
+def parse_dec_telemetry_line(line):
+    """解析单条 [DEC] 或 kv 字符串中的双层刹车 / 畅通直道提速遥测字段。
+
+    支持字段映射：
+      - v_safe_cap / v_safe_cap_mps -> v_safe_cap_mps
+      - clear_score / clear_path_score -> clear_path_score
+      - brake_cmd / brake_cmd_mps -> brake_cmd_mps
+      - a_eff / effective_brake_decel_mps2 -> effective_brake_decel_mps2
+    """
+    text = str(line or '').strip()
+    if not text:
+        return {}
+    if '[DEC]' in text:
+        text = text.split('[DEC]', 1)[1]
+    kv_map = _parse_kv_tokens(text)
+    parsed = {}
+    for raw_k, raw_v in kv_map.items():
+        canon = DEC_TELEMETRY_KEY_MAP.get(raw_k)
+        if not canon:
+            continue
+        num = _parse_metric_num(raw_v, digits=3)
+        if num is not None:
+            parsed[canon] = num
+    return parsed
+
+
+def extract_brake_speed_telemetry(lines, require_dec_tag=True):
+    """从日志行序列提取最新的双层刹车 / 畅通直道遥测快照（缺失字段保持 None）。"""
+    out = {
+        'v_safe_cap_mps': None,
+        'clear_path_score': None,
+        'brake_cmd_mps': None,
+        'effective_brake_decel_mps2': None,
+        'last_t': '',
+    }
+    for ln in lines or ():
+        s = str(ln or '')
+        if require_dec_tag and '[DEC]' not in s:
+            continue
+        parsed = parse_dec_telemetry_line(s)
+        if not parsed:
+            continue
+        out.update(parsed)
+    return out
+
+
+def _read_follow_dec_telemetry(rd, tail_bytes=32768):
+    """从当前运行轮次的 follow.log 尾部解析最新 [DEC] 刹车/提速遥测。"""
+    if not rd:
+        return {}
+    path = os.path.join(rd, 'follow.log')
+    if not os.path.isfile(path):
+        return {}
+    try:
+        size = os.path.getsize(path)
+        seg = read_seg('follow')
+        seg_off = int(seg.get('log_off') or 0)
+        start = seg_off if (0 <= seg_off <= size) else 0
+        if size - start > tail_bytes:
+            start = size - tail_bytes
+        if start >= size:
+            return {}
+        with open(path, 'rb') as f:
+            f.seek(start)
+            text = f.read(tail_bytes).decode('utf-8', errors='replace')
+    except OSError:
+        return {}
+    parsed = extract_brake_speed_telemetry(text.splitlines(), require_dec_tag=True)
+    return {k: v for k, v in parsed.items() if k != 'last_t' and v is not None}
 
 
 def read_diagnostics(scan_lines=400, milestone_limit=40):
-    """从 events.csv 剥离高频性能心跳与冗余帧状态，提取结构化健康指标、Tier 1 状态与关键里程碑/故障。"""
+    """从 events.csv 与 follow.log 剥离高频性能心跳，提取健康指标、Tier 1、双层刹车/提速遥测与关键里程碑。"""
     perf = {
         'cam_fps': None, 'cam_read_p95': None, 'cam_fails': None,
         'yolo_fps': None, 'yolo_dropped': None, 'yolo_e2e_p95': None,
@@ -870,25 +1104,40 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
         'brake_vbat': None,
         'brake_last_t': '',
     }
+    brake_speed = {
+        'v_safe_cap_mps': None,
+        'clear_path_score': None,
+        'brake_cmd_mps': None,
+        'effective_brake_decel_mps2': None,
+        'last_t': '',
+    }
     milestones = []
 
     rd = run_dir()
     if not rd:
-        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint, 'tier1': tier1}
+        return {
+            'perf': perf, 'milestones': milestones, 'red_hint': red_hint,
+            'tier1': tier1, 'brake_speed': brake_speed,
+        }
     path = os.path.join(rd, 'events.csv')
-    if not os.path.isfile(path):
-        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint, 'tier1': tier1}
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            rows = f.readlines()
-    except OSError:
-        return {'perf': perf, 'milestones': milestones, 'red_hint': red_hint, 'tier1': tier1}
+    rows = []
+    if os.path.isfile(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                rows = f.readlines()
+        except OSError:
+            rows = []
 
     for line in rows[1:][-scan_lines:]:
         parts = line.rstrip('\r\n').split(',', 5)
         if len(parts) < 6:
             continue
         t_str, source, area, event, kv = parts[1], parts[2], parts[3], parts[4], parts[5]
+
+        bs_parsed = parse_dec_telemetry_line(kv)
+        if bs_parsed:
+            brake_speed.update(bs_parsed)
+            brake_speed['last_t'] = t_str
 
         if area == 'camera' and event == 'perf':
             kv_map = _parse_kv_tokens(kv)
@@ -971,11 +1220,17 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
             't': t_str, 'source': source, 'area': area, 'event': event, 'kv': kv,
         })
 
+    # 补充/刷新来自 follow.log 最新 [DEC] 行的实时刹车与提速遥测
+    follow_bs = _read_follow_dec_telemetry(rd)
+    if follow_bs:
+        brake_speed.update(follow_bs)
+
     return {
         'perf': perf,
         'milestones': milestones[-milestone_limit:],
         'red_hint': red_hint,
         'tier1': tier1,
+        'brake_speed': brake_speed,
     }
 
 
@@ -989,18 +1244,22 @@ def load_params(map_name):
         data = yaml.safe_load(f) or {}
 
     groups = []
-    for g in params_schema.SCHEMA:
+    for g in get_full_schema():
         if g.get('maps') and map_name not in g['maps']:
             continue
         sec = g['section']
         cur = (data.get(sec) or {}).get('ros__parameters') or {}
         items = []
         for key, label, typ, lo, hi, step, helptext in g['items']:
-            if key not in cur:
+            if key in cur:
+                raw_val = cur[key]
+            elif sec == 'line_follower_node' and key in BRAKE_SPEED_DEFAULTS:
+                raw_val = BRAKE_SPEED_DEFAULTS[key]
+            else:
                 continue
             item_obj = {
                 'key': key, 'label': label, 'type': typ,
-                'value': str(cur[key]) if typ == 'enum' else cur[key],
+                'value': str(raw_val) if typ == 'enum' else raw_val,
                 'help': helptext,
             }
             if typ == 'enum':
@@ -1026,6 +1285,7 @@ def load_params(map_name):
         'map': map_name,
         'tiers': params_schema.TIERS,
         'groups': groups,
+        'presets': SPEED_BRAKE_PRESETS,
     }
 
 
@@ -1045,7 +1305,7 @@ def save_params(map_name, values):
         if params is None:
             continue
         for key, val in kv.items():
-            spec = params_schema.find(section, key)
+            spec = find_param_spec(section, key)
             if spec is None:
                 continue
             _, _, typ, lo, hi, _step, _help = spec
@@ -1093,6 +1353,15 @@ def save_params(map_name, values):
 
     print(f'[DEC] panel param_write map={map_name} ' + ' '.join(changed), flush=True)
     return True, '; '.join(changed)
+
+
+def apply_preset(map_name, preset_id):
+    """按预置档位（run1_safe / run2_fast / legacy_compat）安全批量写入参数。"""
+    target = next((p for p in SPEED_BRAKE_PRESETS if p['id'] == str(preset_id or '').strip()), None)
+    if target is None:
+        valid = [p['id'] for p in SPEED_BRAKE_PRESETS]
+        return False, f'未知预设 {preset_id}（可选: {valid}）'
+    return save_params(map_name, target['values'])
 
 
 # ---------------------------------------------------------------- HTTP
@@ -1173,6 +1442,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._err(423, '已发车，参数锁定（赛规禁止赛中调车）')
                 body = self._body()
                 ok, msg = save_params(_resolve_map_name(body.get('map')), body.get('values', {}))
+                return self._json({'ok': ok, 'msg': msg}, 200 if ok else 400)
+
+            if path == '/api/params/preset':
+                if self._is_running():
+                    return self._err(423, '已发车，参数锁定（赛规禁止赛中调车）')
+                body = self._body()
+                ok, msg = apply_preset(_resolve_map_name(body.get('map')), body.get('preset'))
                 return self._json({'ok': ok, 'msg': msg}, 200 if ok else 400)
 
             if path.startswith('/api/restart/'):
@@ -1346,6 +1622,12 @@ class Handler(BaseHTTPRequestHandler):
             ymtime = 0.0
         yaml_stale = bool(started_epoch and ymtime > started_epoch + 1)
         diag = read_diagnostics()
+        brake_speed = dict(diag.get('brake_speed') or {})
+        for raw_k, canon in DEC_TELEMETRY_KEY_MAP.items():
+            if brake_speed.get(canon) is None and raw_k in seg_info:
+                num = _parse_metric_num(seg_info.get(raw_k), digits=3)
+                if num is not None:
+                    brake_speed[canon] = num
 
         self._json({
             'ok': True,
@@ -1373,6 +1655,7 @@ class Handler(BaseHTTPRequestHandler):
             'milestones': diag['milestones'],
             'red_hint': diag['red_hint'],
             'tier1': diag['tier1'],
+            'brake_speed': brake_speed,
             'frames': frames_ok,
             'frame_age': frame_age,
             'voltage': {

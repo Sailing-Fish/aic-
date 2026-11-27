@@ -47,6 +47,12 @@ line_follower_node:
     min_speed: 0.0
     max_yaw_rate: 2.0
     speed_gain_damping: 0.55
+    enable_clear_path_speed: true
+    clear_straight_speed: 0.62
+    clear_preview_dist_m: 0.95
+    max_accel_mps2: 0.90
+    max_decel_mps2: 2.20
+    active_decel_kp: 0.45
     roi_top_ratio: 0.68
     roi_bottom_ratio: 0.22
 
@@ -144,6 +150,10 @@ line_follower_node:
     yellow_control_latency_s: 0.10
     yellow_bumper_margin_m: 0.08
     yellow_rearm_dist_m: 0.35
+    enable_sqrt_brake_envelope: true
+    enable_closed_loop_brake: true
+    brake_damping_gain: 0.85
+    brake_zero_cutoff_mps: 0.025
 
     # ================================
     # GroundProjector (IPM 单应 / 针孔自动回退)

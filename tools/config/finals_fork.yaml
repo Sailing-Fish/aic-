@@ -40,13 +40,19 @@ line_follower_node:
     red_v_min: 70
     red_cone_area_ratio_threshold: 0.0006
 
-    # 基础控制（Run 1 保底稳健巡航 0.44 m/s，Run 2/3 可通过面板提速）
+    # 基础控制（Run 1 保底稳健巡航 0.44 m/s，直道清路自适应提速 0.62 m/s，Run 2/3 可通过面板提速至 0.85）
     track_mode: fork
     target_speed: 0.44
     max_speed: 0.85
     min_speed: 0.0
     max_yaw_rate: 1.6
     speed_gain_damping: 0.45
+    enable_clear_path_speed: true
+    clear_straight_speed: 0.62
+    clear_preview_dist_m: 0.95
+    max_accel_mps2: 0.90
+    max_decel_mps2: 2.20
+    active_decel_kp: 0.45
     roi_top_ratio: 0.68
     roi_bottom_ratio: 0.18
 
@@ -146,6 +152,10 @@ line_follower_node:
     yellow_control_latency_s: 0.10
     yellow_bumper_margin_m: 0.08
     yellow_rearm_dist_m: 0.35
+    enable_sqrt_brake_envelope: true
+    enable_closed_loop_brake: true
+    brake_damping_gain: 0.85
+    brake_zero_cutoff_mps: 0.025
 
     # ================================
     # GroundProjector (IPM 单应 / 针孔自动回退)

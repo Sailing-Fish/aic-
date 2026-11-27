@@ -79,41 +79,283 @@ def point_to_polyline_distance_mm(x_mm: float, y_mm: float, centerline_mm: np.nd
 
 
 class CameraModel:
-    def __init__(self, h_mm=110.0, alpha_deg=12.5, f_px=325.0,
-                 width=640, height=480):
+    """针孔 / 4点单应投影相机模型（默认针孔参数与实测标定 100% 兼容）。
+
+    坐标系约定（与 C++ `GroundProjector` / `tools/finals/calibrate_homography.py` 严格一致）：
+    - 渲染器车体地面系 `(w_mm, d_mm)`：
+        `w_mm` 向右（mm），`d_mm` 从镜头正下方投影点向前（mm）。
+    - ROS REP-103 车头地面系 `(d_bumper_m, y_lat_m)`：
+        `d_bumper_m` 从前防撞条中心向前（m），`y_lat_m` 向左（m）。
+        两者换算：`d_mm = (d_bumper_m + front_overhang_m) * 1000.0`，`w_mm = -y_lat_m * 1000.0`。
+    - 单应矩阵方向约定（`from_homography_matrix`）：
+        - `direction="img_to_ground"`（默认，直接匹配 `GroundProjector` 与 YAML `homography_matrix`）：
+          `H @ [u, v, 1]^T ~ [d_bumper_m, y_lat_m, 1]^T`
+        - `direction="ground_to_img"`：
+          `H @ [d_bumper_m, y_lat_m, 1]^T ~ [u, v, 1]^T`
+    - `pitch_jitter_deg`：俯角扰动（度，正值表示镜头更向下俯视，等效 `alpha_deg + pitch_jitter_deg`），
+      可用于 ±1~2° 交叉验证仿真鲁棒性。
+    """
+
+    def __init__(
+        self,
+        h_mm: float = 110.0,
+        alpha_deg: float = 12.5,
+        f_px: float = 325.0,
+        width: int = 640,
+        height: int = 480,
+        pitch_jitter_deg: float = 0.0,
+        front_overhang_m: float = 0.06,
+    ):
         self.h = float(h_mm)
-        self.alpha = math.radians(alpha_deg)
+        self.alpha_deg = float(alpha_deg)
+        self.pitch_jitter_deg = float(pitch_jitter_deg)
+        self.effective_alpha_deg = self.alpha_deg + self.pitch_jitter_deg
+        self.alpha = math.radians(self.effective_alpha_deg)
         self.f = float(f_px)
         self.w = int(width)
         self.h_img = int(height)
         self.cx = self.w / 2.0
         self.cy = self.h_img / 2.0
         self.tan_a = math.tan(self.alpha)
+        self.front_overhang_mm = float(front_overhang_m) * 1000.0
+        self.use_homography: bool = False
+        self.H_img_to_ground: Optional[np.ndarray] = None
+        self.H_ground_to_img: Optional[np.ndarray] = None
 
-    def wd_to_uv(self, w_mm, d_mm):
-        """车体系地面点 -> 像素。"""
+    @classmethod
+    def _pitch_jitter_homography(
+        cls,
+        pitch_jitter_deg: float,
+        f_px: float,
+        cx: float,
+        cy: float,
+    ) -> np.ndarray:
+        """构造绕相机 X 轴向下俯仰 pitch_jitter_deg 的图像平面 3x3 变换 `J = K @ R_pitch @ K^{-1}`。"""
+        delta = math.radians(float(pitch_jitter_deg))
+        if abs(delta) <= 1e-12:
+            return np.eye(3, dtype=np.float64)
+        c = math.cos(delta)
+        s = math.sin(delta)
+        K = np.array(
+            [[f_px, 0.0, cx], [0.0, f_px, cy], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+        K_inv = np.array(
+            [[1.0 / f_px, 0.0, -cx / f_px], [0.0, 1.0 / f_px, -cy / f_px], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+        # 相机系 +x 右、+y 下、+z 前：向下俯仰 delta>0 使固定地面点向上移动 (y' 减小)
+        R_pitch = np.array(
+            [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]],
+            dtype=np.float64,
+        )
+        return K @ R_pitch @ K_inv
+
+    @classmethod
+    def from_homography_matrix(
+        cls,
+        H_ground_to_img_or_img_to_ground: Union[Sequence[float], np.ndarray],
+        width: int = 640,
+        height: int = 480,
+        pitch_jitter_deg: float = 0.0,
+        *,
+        direction: str = "img_to_ground",
+        front_overhang_m: float = 0.06,
+        h_mm: float = 110.0,
+        alpha_deg: float = 12.5,
+        f_px: float = 325.0,
+    ) -> "CameraModel":
+        """从 4 点标定单应矩阵构造相机模型（支持 image->ground 或 ground->image，含可选俯角扰动）。
+
+        Args:
+            H_ground_to_img_or_img_to_ground: 3x3 矩阵或行主序 9 元素列表。
+            width, height: 图像分辨率（默认 640x480）。
+            pitch_jitter_deg: 交叉验证俯角扰动（度，正值向下俯视，默认 0.0）。
+            direction:
+                - ``"img_to_ground"`` (默认，与 C++ ``GroundProjector`` 和 ``calibrate_homography.py`` 一致):
+                  ``[u, v, 1]^T -> [w * d_bumper_m, w * y_lat_m, w]^T``
+                - ``"ground_to_img"``:
+                  ``[d_bumper_m, y_lat_m, 1]^T -> [w * u, w * v, w]^T``
+            front_overhang_m: 镜头到前防撞条的纵向距离（默认 0.06m，用于换算渲染器车体坐标 `d_mm`）。
+            h_mm, alpha_deg, f_px: 用于 3D 站立道具高度偏移与 `pitch_jitter_deg` 旋转内参的标称值。
+        """
+        arr = np.asarray(H_ground_to_img_or_img_to_ground, dtype=np.float64)
+        if arr.size != 9:
+            raise ValueError(f"Homography matrix must have 9 elements, got shape {arr.shape}")
+        H = arr.reshape(3, 3)
+        if not np.all(np.isfinite(H)):
+            raise ValueError("Homography matrix contains non-finite values")
+        det = float(np.linalg.det(H))
+        if abs(det) < 1e-12:
+            raise ValueError(f"Homography matrix is singular (det={det:.3e})")
+
+        dir_norm = str(direction or "img_to_ground").strip().lower()
+        if dir_norm in ("img_to_ground", "image_to_ground", "img2ground", "pixel_to_ground"):
+            H_i2g = H.copy()
+            H_g2i = np.linalg.inv(H_i2g)
+        elif dir_norm in ("ground_to_img", "ground_to_image", "ground2img", "ground_to_pixel"):
+            H_g2i = H.copy()
+            H_i2g = np.linalg.inv(H_g2i)
+        else:
+            raise ValueError(
+                f"Unknown homography direction '{direction}'; expected 'img_to_ground' or 'ground_to_img'"
+            )
+
+        cam = cls(
+            h_mm=h_mm,
+            alpha_deg=alpha_deg,
+            f_px=f_px,
+            width=width,
+            height=height,
+            pitch_jitter_deg=pitch_jitter_deg,
+            front_overhang_m=front_overhang_m,
+        )
+
+        # 叠加俯角扰动：ground -> 原始图像 -> 扰动图像
+        if abs(cam.pitch_jitter_deg) > 1e-12:
+            J_img = cls._pitch_jitter_homography(cam.pitch_jitter_deg, cam.f, cam.cx, cam.cy)
+            J_inv = np.linalg.inv(J_img)
+            H_g2i = J_img @ H_g2i
+            H_i2g = H_i2g @ J_inv
+
+        # 归一化符号：确保图像底部中心地面点 (cx, height-1) 的齐次分母 > 0，
+        # 从而地平线/消隐线以上天空像素分母 <= 0，可直接干净屏蔽。
+        denom_bot = float(H_i2g[2, 0] * cam.cx + H_i2g[2, 1] * (cam.h_img - 1.0) + H_i2g[2, 2])
+        if denom_bot < 0.0:
+            H_i2g = -H_i2g
+            H_g2i = -H_g2i
+
+        cam.use_homography = True
+        cam.H_img_to_ground = H_i2g
+        cam.H_ground_to_img = H_g2i
+        return cam
+
+    def _pinhole_wd_to_uv(self, w_mm: float, d_mm: float) -> Tuple[float, float]:
         denom = d_mm + self.h * self.tan_a
         u = (self.f * w_mm + self.cx * denom) / denom
         v = ((self.cy - self.f * self.tan_a) * d_mm
              + self.h * (self.cy * self.tan_a + self.f)) / denom
         return u, v
 
-    def wdz_to_uv(self, w_mm, d_mm, z_mm=0.0):
-        """车体系 3D 点 (w_mm 向右, d_mm 向前, z_mm 向上) -> 像素 (u, v)。"""
+    def _pinhole_wdz_to_uv(self, w_mm: float, d_mm: float, z_mm: float = 0.0) -> Tuple[float, float]:
         dz = self.h - float(z_mm)
         denom = d_mm + dz * self.tan_a
         u = self.cx + self.f * w_mm / denom
         v = self.cy + self.f * (dz - d_mm * self.tan_a) / denom
         return u, v
 
-    def distance_at_row(self, row):
-        """图像第 row 行对应的地面距离(mm)；地平线以上返回 inf。"""
+    def wd_to_uv(self, w_mm: float, d_mm: float) -> Tuple[float, float]:
+        """车体系地面点 (w_mm 向右, d_mm 向前) -> 像素 (u, v)。"""
+        if not self.use_homography or self.H_ground_to_img is None:
+            return self._pinhole_wd_to_uv(w_mm, d_mm)
+        d_bumper_m = (float(d_mm) - self.front_overhang_mm) / 1000.0
+        y_lat_m = -float(w_mm) / 1000.0
+        return self.ground_to_pixel_m(d_bumper_m, y_lat_m)
+
+    def wdz_to_uv(self, w_mm: float, d_mm: float, z_mm: float = 0.0) -> Tuple[float, float]:
+        """车体系 3D 点 (w_mm 向右, d_mm 向前, z_mm 向上) -> 像素 (u, v)。"""
+        if not self.use_homography or self.H_ground_to_img is None:
+            return self._pinhole_wdz_to_uv(w_mm, d_mm, z_mm)
+        u0, v0 = self.wd_to_uv(w_mm, d_mm)
+        if abs(float(z_mm)) <= 1e-9:
+            return u0, v0
+        # 地面锚点走精确单应，高度 z_mm 叠加标称针孔透视抬升偏移
+        pu0, pv0 = self._pinhole_wd_to_uv(w_mm, d_mm)
+        puz, pvz = self._pinhole_wdz_to_uv(w_mm, d_mm, z_mm)
+        return u0 + (puz - pu0), v0 + (pvz - pv0)
+
+    def pixel_to_ground_m(self, u: float, v: float) -> Tuple[float, float]:
+        """像素 (u, v) -> 车头地面系 (d_bumper_m 向前, y_lat_m 向左)，与 GroundProjector 一致。"""
+        if self.use_homography and self.H_img_to_ground is not None:
+            vec = self.H_img_to_ground @ np.array([float(u), float(v), 1.0], dtype=np.float64)
+            if not math.isfinite(vec[2]) or vec[2] <= 1e-9:
+                return float("nan"), float("nan")
+            return float(vec[0] / vec[2]), float(vec[1] / vec[2])
+        w_mm, d_mm = self.uv_to_wd(u, v)
+        if not (math.isfinite(w_mm) and math.isfinite(d_mm)):
+            return float("nan"), float("nan")
+        return (d_mm - self.front_overhang_mm) / 1000.0, -w_mm / 1000.0
+
+    def ground_to_pixel_m(self, d_bumper_m: float, y_lat_m: float) -> Tuple[float, float]:
+        """车头地面系 (d_bumper_m 向前, y_lat_m 向左) -> 像素 (u, v)，与 GroundProjector 一致。"""
+        if self.use_homography and self.H_ground_to_img is not None:
+            vec = self.H_ground_to_img @ np.array(
+                [float(d_bumper_m), float(y_lat_m), 1.0], dtype=np.float64
+            )
+            if not math.isfinite(vec[2]) or abs(vec[2]) <= 1e-9:
+                return float("nan"), float("nan")
+            return float(vec[0] / vec[2]), float(vec[1] / vec[2])
+        return self._pinhole_wd_to_uv(
+            w_mm=-float(y_lat_m) * 1000.0,
+            d_mm=float(d_bumper_m) * 1000.0 + self.front_overhang_mm,
+        )
+
+    def uv_to_wd(self, u: float, v: float) -> Tuple[float, float]:
+        """像素 (u, v) -> 车体系地面点 (w_mm 向右, d_mm 向前)；地平线以上返回 (nan, nan)。"""
+        if self.use_homography and self.H_img_to_ground is not None:
+            d_bumper_m, y_lat_m = self.pixel_to_ground_m(u, v)
+            if not (math.isfinite(d_bumper_m) and math.isfinite(y_lat_m)):
+                return float("nan"), float("nan")
+            d_mm = d_bumper_m * 1000.0 + self.front_overhang_mm
+            if d_mm <= 0.0:
+                return float("nan"), float("nan")
+            return -y_lat_m * 1000.0, d_mm
+
+        A = self.cy - self.f * self.tan_a
+        denom_v = float(v) - A
+        if denom_v <= 1e-6:
+            return float("nan"), float("nan")
+        B = self.h * (self.cy * self.tan_a + self.f)
+        d_mm = (B - float(v) * self.h * self.tan_a) / denom_v
+        if d_mm <= 0.0:
+            return float("nan"), float("nan")
+        w_mm = (float(u) - self.cx) * (d_mm + self.h * self.tan_a) / self.f
+        return w_mm, d_mm
+
+    def distance_at_row(self, row: float) -> float:
+        """图像第 row 行中心列对应的地面距离 (mm)；地平线以上返回 inf。"""
+        if self.use_homography and self.H_img_to_ground is not None:
+            _w, d_mm = self.uv_to_wd(self.cx, float(row))
+            if not math.isfinite(d_mm) or d_mm <= 0.0:
+                return float("inf")
+            return d_mm
         horizon = self.cy - self.f * self.tan_a
         if row <= horizon + 1e-6:
             return float("inf")
         A = self.cy - self.f * self.tan_a
         B = self.h * (self.cy * self.tan_a + self.f)
         return (B - row * self.h * self.tan_a) / (row - A)
+
+    def build_ground_grid(self, max_d_mm: float = 5000.0) -> Tuple[np.ndarray, np.ndarray]:
+        """预计算全图像素对应的地面网格 (grid_d_mm, grid_w_mm)，无效像素置为 NaN。"""
+        uu, vv = np.meshgrid(
+            np.arange(self.w, dtype=np.float64),
+            np.arange(self.h_img, dtype=np.float64),
+        )
+        if self.use_homography and self.H_img_to_ground is not None:
+            H = self.H_img_to_ground
+            denom = H[2, 0] * uu + H[2, 1] * vv + H[2, 2]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                d_bumper_m = (H[0, 0] * uu + H[0, 1] * vv + H[0, 2]) / denom
+                y_lat_m = (H[1, 0] * uu + H[1, 1] * vv + H[1, 2]) / denom
+            d = d_bumper_m * 1000.0 + self.front_overhang_mm
+            w = -y_lat_m * 1000.0
+            invalid = (~np.isfinite(denom)) | (denom <= 1e-6) | (~np.isfinite(d)) | (d < 0.0) | (d > max_d_mm)
+            d = np.where(invalid, np.nan, d)
+            w = np.where(invalid, np.nan, w)
+            return d.astype(np.float32), w.astype(np.float32)
+
+        uu32 = uu.astype(np.float32)
+        vv32 = vv.astype(np.float32)
+        A = self.cy - self.f * self.tan_a
+        B = self.h * (self.cy * self.tan_a + self.f)
+        denom_v = vv32 - A
+        with np.errstate(divide="ignore", invalid="ignore"):
+            d = (B - vv32 * self.h * self.tan_a) / denom_v
+        d = np.where(denom_v > 1e-3, d, np.nan)
+        d[(d < 0) | (d > max_d_mm)] = np.nan
+        w = (uu32 - self.cx) * (d + self.h * self.tan_a) / self.f
+        return d.astype(np.float32), w.astype(np.float32)
 
     def preview_table(self, rows):
         return [(r, self.distance_at_row(r)) for r in rows]
@@ -131,6 +373,7 @@ class TrackRenderer:
         cones: int = 0,
         no_entry: int = 0,
         prop_seed: int = 42,
+        pitch_jitter_deg: float = 0.0,
     ):
         with open(track_json, "r", encoding="utf-8") as f:
             self.meta = json.load(f)
@@ -148,7 +391,7 @@ class TrackRenderer:
         self.lane_width_mm = float(self.meta.get("lane_width_mm", 430.0))
         self.centerline_mm = np.asarray(self.meta["centerline_mm"], dtype=np.float64)
         self.s_m = np.asarray(self.meta["s_m"], dtype=np.float64)
-        self.cam = cam or CameraModel()
+        self.cam = cam or CameraModel(pitch_jitter_deg=pitch_jitter_deg)
         self.injected_props: Dict[str, List[dict]] = {
             "random_yellow": [],
             "cones": [],
@@ -163,18 +406,8 @@ class TrackRenderer:
                 seed=prop_seed,
             )
 
-        uu, vv = np.meshgrid(np.arange(self.cam.w, dtype=np.float32),
-                             np.arange(self.cam.h_img, dtype=np.float32))
-        A = self.cam.cy - self.cam.f * self.cam.tan_a
-        B = self.cam.h * (self.cam.cy * self.cam.tan_a + self.cam.f)
-        denom_v = vv - A
-        with np.errstate(divide="ignore", invalid="ignore"):
-            d = (B - vv * self.cam.h * self.cam.tan_a) / denom_v
-        d = np.where(denom_v > 1e-3, d, np.nan)
-        d[(d < 0) | (d > max_d_mm)] = np.nan
-        w = (uu - self.cam.cx) * (d + self.cam.h * self.cam.tan_a) / self.cam.f
-        self.grid_d = d.astype(np.float32)
-        self.grid_w = w.astype(np.float32)
+        self.grid_d, self.grid_w = self.cam.build_ground_grid(max_d_mm=max_d_mm)
+        d, w = self.grid_d, self.grid_w
 
         # 预计算标准化网格供定向眩光叠加
         yy_g, xx_g = np.mgrid[0:self.cam.h_img, 0:self.cam.w].astype(np.float32)

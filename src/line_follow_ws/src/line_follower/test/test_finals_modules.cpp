@@ -27,7 +27,9 @@ namespace
 
 using line_follower::AckermannCbfConfig;
 using line_follower::AckermannCbfShield;
+using line_follower::AdaptiveSpeedResult;
 using line_follower::CbfShieldResult;
+using line_follower::ClearPathInput;
 using line_follower::CorridorPlan;
 using line_follower::CorridorPlanner;
 using line_follower::CorridorPlannerConfig;
@@ -1153,6 +1155,225 @@ void test_tier1_corridor_risk_aware_fork_and_straight_digits()
   CHECK(!oplan.digit_target_active);
 }
 
+void test_dual_layer_brake_and_safe_speed_ceiling()
+{
+  FinishGuardConfig cfg{};
+  cfg.pre_brake_dist_m = 0.70;
+  cfg.creep_speed_mps = 0.55;
+  cfg.yellow_final_ramp_dist_m = 0.35;
+  cfg.yellow_final_creep_speed_mps = 0.14;
+  cfg.brake_decel_mps2 = 1.8;
+  cfg.control_latency_s = 0.10;
+  cfg.bumper_margin_m = 0.08;
+  cfg.voltage_decel_slope = 0.25;
+  cfg.enable_brake_adaptation = true;
+  cfg.enable_sqrt_brake_envelope = true;
+  cfg.enable_closed_loop_brake = true;
+  cfg.brake_damping_gain = 0.85;
+  cfg.brake_zero_cutoff_mps = 0.025;
+  FinishGuard guard(cfg);
+
+  // 1. Sqrt brake envelope: drops smoothly below creep_speed_mps as d -> stop_trigger_dist,
+  //    and tightens when effective decel drops via lower battery voltage!
+  guard.update_battery_voltage(12.0, 1.0);
+  const double d_trig_nom = guard.compute_stop_trigger_dist(0.50, 1.0);
+  const double d_test = d_trig_nom + 0.06;  // inside pre-brake zone -> smoothly below creep_speed_mps
+  const YellowStopAdvice adv_sqrt = guard.evaluate_yellow_stop(true, true, d_test, 0.50, false, 1.0);
+  CHECK(adv_sqrt.pre_brake && !adv_sqrt.trigger_stop);
+  CHECK(adv_sqrt.speed_cap_mps >= cfg.yellow_final_creep_speed_mps - 1e-9);
+  CHECK(adv_sqrt.speed_cap_mps < cfg.creep_speed_mps);
+
+  // Low battery voltage lowers a_eff -> lowers speed cap at the same physical bumper distance
+  guard.update_battery_voltage(10.0, 1.2);  // a_eff = 1.8 - 0.5 = 1.3
+  const YellowStopAdvice adv_low_v = guard.evaluate_yellow_stop(
+    true, true, d_test, 0.50, false, 1.2);
+  CHECK(adv_low_v.speed_cap_mps < adv_sqrt.speed_cap_mps);
+
+  // Legacy fallback when enable_sqrt_brake_envelope = false vs exact sqrt envelope at fixed d_rem
+  FinishGuardConfig cfg_lin = cfg;
+  cfg_lin.yellow_final_ramp_dist_m = 0.0;  // pure flat creep vs sqrt envelope
+  cfg_lin.enable_sqrt_brake_envelope = false;
+  FinishGuard guard_lin(cfg_lin);
+  const double d_lin = guard_lin.compute_stop_trigger_dist(0.50, 1.0) + 0.04;
+  const YellowStopAdvice adv_lin = guard_lin.evaluate_yellow_stop(true, true, d_lin, 0.50, false, 1.0);
+  CHECK(std::abs(adv_lin.speed_cap_mps - cfg_lin.creep_speed_mps) < 1e-6);
+
+  cfg_lin.enable_sqrt_brake_envelope = true;
+  guard_lin.set_config(cfg_lin);
+  const YellowStopAdvice adv_sqrt_pure =
+    guard_lin.evaluate_yellow_stop(true, true, d_lin, 0.50, false, 1.0);
+  const double expected_v_env = std::sqrt(2.0 * 1.8 * 0.04);
+  CHECK(std::abs(adv_sqrt_pure.speed_cap_mps - expected_v_env) < 1e-6);
+
+  // Pure sqrt envelope at fixed remaining distance strictly lowers with lower battery voltage
+  guard_lin.update_battery_voltage(10.0, 1.2);  // a_eff = 1.3
+  const double d_lin_low = guard_lin.compute_stop_trigger_dist(0.50, 1.2) + 0.04;
+  const YellowStopAdvice adv_sqrt_low =
+    guard_lin.evaluate_yellow_stop(true, true, d_lin_low, 0.50, false, 1.2);
+  const double expected_v_env_low = std::sqrt(2.0 * 1.3 * 0.04);
+  CHECK(std::abs(adv_sqrt_low.speed_cap_mps - expected_v_env_low) < 1e-6);
+  CHECK(adv_sqrt_low.speed_cap_mps < adv_sqrt_pure.speed_cap_mps);
+
+  // 2. Closed-loop proportional damping brake & zero-reverse cutoff
+  const double b_high = guard.compute_closed_loop_brake_cmd(0.40, 0.05, 0.25, 0.35);
+  CHECK(std::abs(b_high - (-0.25)) < 1e-9);  // 0.85 * 0.40 = 0.34 -> clamped to -0.25
+  const double b_mid = guard.compute_closed_loop_brake_cmd(0.20, 0.10, 0.25, 0.35);
+  CHECK(std::abs(b_mid - (-0.17)) < 1e-9);   // -0.85 * 0.20 = -0.17
+  const double b_cut = guard.compute_closed_loop_brake_cmd(0.025, 0.12, 0.25, 0.35);
+  CHECK(std::abs(b_cut) < 1e-12);            // snaps cleanly to 0.0 at <= cutoff
+  const double b_neg = guard.compute_closed_loop_brake_cmd(-0.01, 0.12, 0.25, 0.35);
+  CHECK(std::abs(b_neg) < 1e-12);            // never commands reverse when already <= 0
+  const double b_to = guard.compute_closed_loop_brake_cmd(0.20, 0.35, 0.25, 0.35);
+  CHECK(std::abs(b_to) < 1e-12);             // timeout cuts off cleanly
+
+  // 3. Exact kinematic safe speed ceiling: v^2/(2*a_eff) + v*t_lat == max(0, d - margin) + v_end^2/(2*a_eff)
+  guard.update_battery_voltage(12.0, 2.0);
+  const double a_eff = guard.effective_brake_decel_mps2(2.0);
+  const double preview = 0.95;
+  const double v_end = 0.22;
+  const double v_safe = guard.compute_safe_speed_ceiling(preview, v_end, 2.0);
+  CHECK(v_safe >= v_end);
+  const double lhs = (v_safe * v_safe) / (2.0 * a_eff) + v_safe * cfg.control_latency_s;
+  const double rhs = std::max(0.0, preview - cfg.bumper_margin_m) + (v_end * v_end) / (2.0 * a_eff);
+  CHECK(std::abs(lhs - rhs) < 1e-9);
+
+  // Shorter preview or lower friction strictly lowers v_safe
+  const double v_safe_short = guard.compute_safe_speed_ceiling(0.30, 0.0, 2.0);
+  const double v_safe_long = guard.compute_safe_speed_ceiling(0.95, 0.0, 2.0);
+  CHECK(v_safe_short > 0.0 && v_safe_short < v_safe_long);
+
+  // When preview <= margin and v_end > 0, still satisfies v_safe >= v_end
+  CHECK(std::abs(guard.compute_safe_speed_ceiling(0.05, 0.20, 2.0) - 0.20) < 1e-9);
+  CHECK(std::abs(guard.compute_safe_speed_ceiling(0.05, 0.0, 2.0)) < 1e-9);
+}
+
+void test_clear_path_adaptive_speed_and_asymmetric_slew()
+{
+  MotionControllerConfig cfg{};
+  cfg.target_speed = 0.44;
+  cfg.max_speed = 0.85;
+  cfg.min_speed = 0.0;
+  cfg.max_yaw_rate = 1.6;
+  cfg.speed_gain_damping = 0.45;
+  cfg.low_confidence_threshold = 0.55;
+  cfg.low_confidence_speed = 0.24;
+  cfg.enable_clear_path_speed = true;
+  cfg.clear_straight_speed = 0.62;
+  cfg.clear_preview_dist_m = 0.95;
+  cfg.max_accel_mps2 = 0.90;
+  cfg.max_decel_mps2 = 2.20;
+  cfg.active_decel_kp = 0.45;
+
+  MotionController ctrl(cfg);
+  CurveAssistState curve{};
+  curve.near_valid = true;
+  curve.far_valid = true;
+  curve.last_lane_width_ratio = 0.58;
+  MotionState motion{};
+
+  // 1. Clean centered straight -> clear_path_score == 1.0, smoothly ramps from 0.44 -> 0.62
+  ClearPathInput cp{};
+  cp.confidence = 0.95;
+  cp.curvature_proxy = 0.02;
+  cp.heading_proxy = 0.01;
+  cp.lateral_err_m = 0.01;
+  cp.lane_width_ratio = 0.58;
+  cp.v_safe_cap_mps = 1.50;
+  cp.odom_linear_x = 0.44;
+  cp.odom_valid = true;
+  CHECK(std::abs(ctrl.compute_clear_path_score(cp) - 1.0) < 1e-9);
+
+  // First frame starts anchored at base cruise speed (0.44), then ramps at 0.90 m/s^2
+  const AdaptiveSpeedResult r0 = ctrl.step_adaptive_corridor_command(
+    0.0, 0.0, 0.01, 0.02, 0.95, 0.85, curve, motion, cp, 0.0);
+  CHECK(std::abs(r0.clear_path_score - 1.0) < 1e-9);
+  CHECK(r0.command.linear_speed <= 0.45);
+
+  double last_v = r0.command.linear_speed;
+  for (int i = 1; i <= 10; ++i) {
+    cp.odom_linear_x = last_v;
+    const AdaptiveSpeedResult ri = ctrl.step_adaptive_corridor_command(
+      0.0, 0.0, 0.01, 0.02, 0.95, 0.85, curve, motion, cp, i * 0.05);
+    CHECK(ri.command.linear_speed >= last_v - 1e-9);
+    CHECK(ri.command.linear_speed <= last_v + cfg.max_accel_mps2 * 0.05 + 1e-6);
+    last_v = ri.command.linear_speed;
+  }
+  CHECK(last_v > 0.58 && last_v <= 0.62 + 1e-6);
+
+  // 2. Immediate drop to clear_path_score == 0.0 on obstacle, no-entry, yellow, or sharp curve,
+  //    plus asymmetric fast decel (2.20 m/s^2) and non-negative active decel!
+  ClearPathInput cp_obs = cp;
+  cp_obs.has_active_obstacle = true;
+  cp_obs.odom_linear_x = 0.62;
+  CHECK(std::abs(ctrl.compute_clear_path_score(cp_obs)) < 1e-9);
+
+  const AdaptiveSpeedResult r_obs = ctrl.step_adaptive_corridor_command(
+    0.0, 0.0, 0.01, 0.02, 0.95, 0.22, curve, motion, cp_obs, 0.55);
+  CHECK(std::abs(r_obs.clear_path_score) < 1e-9);
+  CHECK(r_obs.command.linear_speed <= 0.22 + 1e-6);
+  CHECK(r_obs.command.linear_speed >= 0.0);  // active decel NEVER commands < 0.0 during tracking!
+
+  // Active decel pulls command below speed_cap when odom overspeeds sharp curve / obstacle
+  ClearPathInput cp_over = cp_obs;
+  cp_over.dt_sec = 0.10;
+  cp_over.prev_speed_cmd_mps = 0.22;
+  cp_over.odom_linear_x = 0.60;
+  const AdaptiveSpeedResult r_over = ctrl.compute_adaptive_corridor_command(
+    0.0, 0.0, 0.0, 0.0, 0.95, 0.22, curve, motion, cp_over);
+  CHECK(r_over.command.linear_speed < 0.22 - 0.05);
+  CHECK(r_over.command.linear_speed >= 0.0);
+
+  // Wide junction & sharp curve drop clear_path_score to 0.0
+  ClearPathInput cp_wide = cp;
+  cp_wide.lane_width_ratio = 0.88;
+  CHECK(std::abs(ctrl.compute_clear_path_score(cp_wide)) < 1e-9);
+  ClearPathInput cp_curve = cp;
+  cp_curve.curvature_proxy = 0.30;
+  CHECK(std::abs(ctrl.compute_clear_path_score(cp_curve)) < 1e-9);
+  ClearPathInput cp_yellow = cp;
+  cp_yellow.has_yellow_ahead = true;
+  CHECK(std::abs(ctrl.compute_clear_path_score(cp_yellow)) < 1e-9);
+
+  // 3. Physics safe ceiling caps clear-path speed below clear_straight_speed
+  ClearPathInput cp_cap = cp;
+  cp_cap.v_safe_cap_mps = 0.48;
+  cp_cap.dt_sec = 0.50;
+  cp_cap.prev_speed_cmd_mps = 0.44;
+  cp_cap.odom_linear_x = 0.44;
+  const AdaptiveSpeedResult r_cap = ctrl.compute_adaptive_corridor_command(
+    0.0, 0.0, 0.0, 0.0, 0.95, 0.85, curve, motion, cp_cap);
+  CHECK(std::abs(r_cap.command.linear_speed - 0.48) < 1e-6);
+
+  // 4. Asymmetric slew check: decel step > accel step for same dt
+  ClearPathInput cp_acc = cp;
+  cp_acc.dt_sec = 0.05;
+  cp_acc.prev_speed_cmd_mps = 0.44;
+  cp_acc.odom_valid = false;
+  const AdaptiveSpeedResult r_acc = ctrl.compute_adaptive_corridor_command(
+    0.0, 0.0, 0.0, 0.0, 0.95, 0.85, curve, motion, cp_acc);
+  const double delta_up = r_acc.command.linear_speed - 0.44;
+
+  ClearPathInput cp_dec = cp;
+  cp_dec.has_active_obstacle = true;
+  cp_dec.dt_sec = 0.05;
+  cp_dec.prev_speed_cmd_mps = 0.62;
+  cp_dec.odom_valid = false;
+  const AdaptiveSpeedResult r_dec = ctrl.compute_adaptive_corridor_command(
+    0.0, 0.0, 0.0, 0.0, 0.95, 0.22, curve, motion, cp_dec);
+  const double delta_dn = 0.62 - r_dec.command.linear_speed;
+  CHECK(std::abs(delta_up - cfg.max_accel_mps2 * 0.05) < 1e-6);
+  CHECK(delta_dn > delta_up * 2.0);
+
+  // 5. Backward compatibility when enable_clear_path_speed = false
+  MotionControllerConfig cfg_off = cfg;
+  cfg_off.enable_clear_path_speed = false;
+  MotionController ctrl_off(cfg_off);
+  const AdaptiveSpeedResult r_off = ctrl_off.compute_adaptive_corridor_command(
+    0.0, 0.0, 0.0, 0.0, 0.95, 0.85, curve, motion, cp_acc);
+  CHECK(std::abs(r_off.clear_path_score) < 1e-9);
+  CHECK(std::abs(r_off.command.linear_speed - cfg_off.target_speed) < 1e-6);
+}
+
 }  // namespace
 
 int main()
@@ -1174,6 +1395,8 @@ int main()
   test_tier1_obb_yaw_and_ackermann_cbf_shield();
   test_tier1_finish_guard_ramp_voltage_and_adaptation();
   test_tier1_corridor_risk_aware_fork_and_straight_digits();
+  test_dual_layer_brake_and_safe_speed_ceiling();
+  test_clear_path_adaptive_speed_and_asymmetric_slew();
   std::cout << "ALL_FINALS_CPP_TESTS_PASSED" << std::endl;
   return 0;
 }

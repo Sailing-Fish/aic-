@@ -152,6 +152,10 @@ struct BrainStepOutput
   double total_arc_m;
   double friction_scale;
   double effective_brake_decel;
+  double v_safe_cap_mps;
+  double clear_path_score;
+  double brake_cmd_mps;
+  double effective_brake_decel_mps2;
 
   int32_t corridor_left_px;
   int32_t corridor_right_px;
@@ -236,6 +240,12 @@ struct BrainInstance
   double min_speed{0.0};
   double max_yaw_rate{1.6};
   double speed_gain_damping{0.45};
+  bool enable_clear_path_speed{true};
+  double clear_straight_speed{0.62};
+  double clear_preview_dist_m{0.95};
+  double max_accel_mps2{0.90};
+  double max_decel_mps2{2.20};
+  double active_decel_kp{0.45};
   double roi_top_ratio{0.68};
   double roi_bottom_ratio{0.18};
   double yellow_roi_bottom_ratio{0.0};
@@ -350,6 +360,10 @@ struct BrainInstance
   double yellow_control_latency_s{0.10};
   double yellow_bumper_margin_m{0.08};
   double yellow_rearm_dist_m{0.35};
+  bool enable_sqrt_brake_envelope{true};
+  bool enable_closed_loop_brake{true};
+  double brake_damping_gain{0.85};
+  double brake_zero_cutoff_mps{0.025};
 
   // The 7 pure C++17 modules
   line_follower::GroundProjector ground_projector{};
@@ -463,6 +477,12 @@ struct BrainInstance
     motion_cfg.lost_line_safe_stop_time = lost_line_safe_stop_time;
     motion_cfg.corridor_kp_y = corridor_kp_y;
     motion_cfg.corridor_heading_gain = corridor_heading_gain;
+    motion_cfg.enable_clear_path_speed = enable_clear_path_speed;
+    motion_cfg.clear_straight_speed = clear_straight_speed;
+    motion_cfg.clear_preview_dist_m = clear_preview_dist_m;
+    motion_cfg.max_accel_mps2 = max_accel_mps2;
+    motion_cfg.max_decel_mps2 = max_decel_mps2;
+    motion_cfg.active_decel_kp = active_decel_kp;
     motion_controller.set_config(motion_cfg);
 
     // 4. ObstacleMemory
@@ -538,6 +558,10 @@ struct BrainInstance
     fg_cfg.control_latency_s = yellow_control_latency_s;
     fg_cfg.bumper_margin_m = yellow_bumper_margin_m;
     fg_cfg.rearm_travel_dist_m = yellow_rearm_dist_m;
+    fg_cfg.enable_sqrt_brake_envelope = enable_sqrt_brake_envelope;
+    fg_cfg.enable_closed_loop_brake = enable_closed_loop_brake;
+    fg_cfg.brake_damping_gain = brake_damping_gain;
+    fg_cfg.brake_zero_cutoff_mps = brake_zero_cutoff_mps;
     finish_guard.set_config(fg_cfg);
 
     params_dirty = false;
@@ -552,6 +576,7 @@ struct BrainInstance
     track_state_machine.reset(now_sec);
     curve_assist = line_follower::CurveAssistState{};
     motion_state = line_follower::MotionState{};
+    motion_controller.reset();
     obstacle_memory.reset();
     corridor_planner.reset();
     finish_guard.reset();
@@ -893,7 +918,9 @@ struct BrainInstance
       yellow_brake_measure_pending = true;
 
       const bool entry_fast_enough_for_brake =
-        !sm_state.odom_seen || (sm_state.odom_linear_x > yellow_brake_release_speed);
+        finish_guard.config().enable_closed_loop_brake ?
+        (!sm_state.odom_seen || (sm_state.odom_linear_x > finish_guard.config().brake_zero_cutoff_mps)) :
+        (!sm_state.odom_seen || (sm_state.odom_linear_x > yellow_brake_release_speed));
       yellow_brake_active = (yellow_brake_speed > 0.0) && entry_fast_enough_for_brake;
       yellow_brake_start_sec = now_sec;
     } else if (yellow_brake_measure_pending) {
@@ -940,6 +967,11 @@ struct BrainInstance
     double cbf_min_clearance_m = 0.0;
     std::string cbf_limiting_source = "none";
 
+    const double a_eff_now = finish_guard.effective_brake_decel_mps2(now_sec);
+    double v_safe_cap_mps = 0.0;
+    double clear_path_score = 0.0;
+    double brake_cmd_mps = 0.0;
+
     if (step_events.yellow_hold_stop) {
       current_state = TrackState::YELLOW_LINE_DETECTED;
       linear_speed = 0.0;
@@ -950,24 +982,41 @@ struct BrainInstance
 
       if (yellow_brake_active) {
         const double brake_elapsed = now_sec - yellow_brake_start_sec;
-        // Signed velocity zero-reverse guard (matching line_follower_node.cpp lines 1517-1525)
-        const bool reverse_guard =
-          sm_state.odom_seen && sm_state.odom_linear_x <= 0.01;
-        const bool slow_enough =
-          yellow_brake_release_speed > 0.0 &&
-          brake_elapsed >= 0.04 &&
-          sm_state.odom_seen &&
-          sm_state.odom_linear_x <= yellow_brake_release_speed;
-        const bool timeout =
-          yellow_brake_max_time_s > 0.0 && brake_elapsed >= yellow_brake_max_time_s;
-
-        if (reverse_guard || slow_enough || timeout) {
-          yellow_brake_active = false;
+        if (finish_guard.config().enable_closed_loop_brake && sm_state.odom_seen) {
+          const double cl_cmd = finish_guard.compute_closed_loop_brake_cmd(
+            sm_state.odom_linear_x,
+            brake_elapsed,
+            yellow_brake_speed,
+            yellow_brake_max_time_s);
+          if (cl_cmd < -1e-9) {
+            publish_stop_cmd = false;
+            linear_speed = cl_cmd;
+            brake_cmd_mps = cl_cmd;
+          } else {
+            yellow_brake_active = false;
+          }
         } else {
-          publish_stop_cmd = false;
-          linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed : 0.0;
+          // Signed velocity zero-reverse guard (matching line_follower_node.cpp)
+          const bool reverse_guard =
+            sm_state.odom_seen && sm_state.odom_linear_x <= 0.01;
+          const bool slow_enough =
+            yellow_brake_release_speed > 0.0 &&
+            brake_elapsed >= 0.04 &&
+            sm_state.odom_seen &&
+            sm_state.odom_linear_x <= yellow_brake_release_speed;
+          const bool timeout =
+            yellow_brake_max_time_s > 0.0 && brake_elapsed >= yellow_brake_max_time_s;
+
+          if (reverse_guard || slow_enough || timeout) {
+            yellow_brake_active = false;
+          } else {
+            publish_stop_cmd = false;
+            linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed : 0.0;
+            brake_cmd_mps = linear_speed;
+          }
         }
       }
+      motion_controller.notify_external_speed(0.0, now_sec);
     } else if (line_detected) {
       current_state = TrackState::TRACKING;
 
@@ -1183,16 +1232,77 @@ struct BrainInstance
         now_sec,
         eff_curve_lvl);
 
-      double eff_speed_cap = plan.speed_cap_mps;
+      const bool corridor_event_active =
+        plan.has_blocking_obstacle ||
+        plan.near_obstacle_count > 0 ||
+        plan.far_obstacle_count > 0 ||
+        plan.digit_target_active ||
+        plan.preferred_branch != 0 ||
+        plan.active_mode_tag != "cruise";
+
+      double eff_speed_cap = corridor_event_active ?
+        plan.speed_cap_mps :
+        (motion_controller.config().enable_clear_path_speed ?
+          std::max(target_speed, motion_controller.config().clear_straight_speed) :
+          plan.speed_cap_mps);
       if (finish_guard.is_yellow_rearmed() &&
         yellow_advice.pre_brake &&
         !yellow_advice.trigger_stop)
       {
         eff_speed_cap = std::min(eff_speed_cap, yellow_advice.speed_cap_mps);
       }
-      plan.speed_cap_mps = eff_speed_cap;
 
-      const MotionCommand cmd = motion_controller.compute_corridor_command(
+      double eff_preview_m = motion_controller.config().clear_preview_dist_m;
+      if (!curve_assist.far_valid) {
+        eff_preview_m = std::min(eff_preview_m, 0.50 * motion_controller.config().clear_preview_dist_m);
+      }
+      if (in.confidence < 0.70) {
+        eff_preview_m *= clamp_value(in.confidence / 0.70, 0.35, 1.0);
+      }
+      if (has_metric_dist && yellow_d_bumper_m > 0.0 && finish_guard.is_yellow_rearmed()) {
+        eff_preview_m = std::min(eff_preview_m, yellow_d_bumper_m);
+      }
+      v_safe_cap_mps = finish_guard.compute_safe_speed_ceiling(eff_preview_m, 0.0, now_sec);
+      bool has_no_entry_ahead = false;
+      for (const auto & loc : local_obstacles) {
+        if (loc.type == SemanticObjectType::RED_NO_ENTRY &&
+          loc.d_max_m >= -corridor_planner.config().obstacle_rear_keep_m &&
+          loc.d_min_m <= corridor_planner.config().obstacle_lookahead_m)
+        {
+          has_no_entry_ahead = true;
+        }
+        if (loc.d_min_m > 0.0 && loc.d_min_m <= eff_preview_m) {
+          const double obs_end_v = (loc.type == SemanticObjectType::RED_NO_ENTRY) ?
+            corridor_planner.config().no_entry_speed_mps :
+            corridor_planner.config().obstacle_speed_mps;
+          v_safe_cap_mps = std::min(
+            v_safe_cap_mps,
+            finish_guard.compute_safe_speed_ceiling(loc.d_min_m, obs_end_v, now_sec));
+        }
+      }
+
+      ClearPathInput cp_in{};
+      cp_in.has_active_obstacle =
+        plan.has_blocking_obstacle ||
+        plan.near_obstacle_count > 0 ||
+        plan.far_obstacle_count > 0;
+      cp_in.has_no_entry_ahead = has_no_entry_ahead;
+      cp_in.has_yellow_ahead =
+        finish_guard.is_yellow_rearmed() &&
+        (raw_yellow_detected || yellow_advice.pre_brake || yellow_advice.trigger_stop);
+      cp_in.has_digit_target = plan.digit_target_active;
+      cp_in.has_fork_context = (plan.preferred_branch != 0) || has_fork_split;
+      cp_in.confidence = in.confidence;
+      cp_in.curvature_proxy = curvature_proxy;
+      cp_in.heading_proxy = in.heading_error;
+      cp_in.lateral_err_m = plan.target_y_m;
+      cp_in.lane_width_ratio = lane_width_ratio;
+      cp_in.reverse_curve_active = curve_assist.reverse_curve_active;
+      cp_in.v_safe_cap_mps = v_safe_cap_mps;
+      cp_in.odom_linear_x = sm_state.odom_linear_x;
+      cp_in.odom_valid = sm_state.odom_seen;
+
+      const AdaptiveSpeedResult adaptive_res = motion_controller.step_adaptive_corridor_command(
         plan.target_y_m,
         0.0,
         in.heading_error,
@@ -1200,7 +1310,13 @@ struct BrainInstance
         in.confidence,
         eff_speed_cap,
         curve_assist,
-        motion_state);
+        motion_state,
+        cp_in,
+        now_sec);
+
+      const MotionCommand & cmd = adaptive_res.command;
+      clear_path_score = adaptive_res.clear_path_score;
+      plan.speed_cap_mps = adaptive_res.effective_speed_cap_mps;
 
       linear_speed = cmd.linear_speed;
       yaw_rate = cmd.yaw_rate;
@@ -1246,20 +1362,32 @@ struct BrainInstance
       publish_stop_cmd = cmd.publish_stop;
       plan.active_mode_tag = "lost";
       plan.speed_cap_mps = linear_speed;
+      v_safe_cap_mps = linear_speed;
+      motion_controller.notify_external_speed(linear_speed, now_sec);
     }
 
     const bool yellow_stop_now = step_events.yellow_stop_now;
 
-    // Final safety lock (matching line_follower_node.cpp lines 1727-1738)
+    // Final safety lock (matching line_follower_node.cpp)
     if (step_events.yellow_hold_stop) {
       current_state = TrackState::YELLOW_LINE_DETECTED;
       yaw_rate = 0.0;
       if (yellow_brake_active) {
         const double brake_elapsed = now_sec - yellow_brake_start_sec;
-        linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed : 0.0;
-        publish_stop_cmd = false;
+        if (finish_guard.config().enable_closed_loop_brake && sm_state.odom_seen) {
+          linear_speed = finish_guard.compute_closed_loop_brake_cmd(
+            sm_state.odom_linear_x,
+            brake_elapsed,
+            yellow_brake_speed,
+            yellow_brake_max_time_s);
+        } else {
+          linear_speed = brake_pulse_on(brake_elapsed) ? -yellow_brake_speed : 0.0;
+        }
+        brake_cmd_mps = linear_speed;
+        publish_stop_cmd = (linear_speed >= -1e-9);
       } else {
         linear_speed = 0.0;
+        brake_cmd_mps = 0.0;
         publish_stop_cmd = true;
       }
     }
@@ -1303,7 +1431,11 @@ struct BrainInstance
 
     out.total_arc_m = finish_guard.total_arc_m();
     out.friction_scale = finish_guard.friction_scale();
-    out.effective_brake_decel = finish_guard.effective_brake_decel_mps2(now_sec);
+    out.effective_brake_decel = a_eff_now;
+    out.v_safe_cap_mps = v_safe_cap_mps;
+    out.clear_path_score = clear_path_score;
+    out.brake_cmd_mps = brake_cmd_mps;
+    out.effective_brake_decel_mps2 = a_eff_now;
 
     std::string yphase = "none";
     if (step_events.yellow_hold_stop) {
@@ -1541,6 +1673,20 @@ BRAIN_API int32_t brain_set_param_double(void * handle, const char * name, doubl
     inst->yellow_bumper_margin_m = value;
   } else if (k == "yellow_rearm_dist_m") {
     inst->yellow_rearm_dist_m = value;
+  } else if (k == "brake_damping_gain") {
+    inst->brake_damping_gain = value;
+  } else if (k == "brake_zero_cutoff_mps") {
+    inst->brake_zero_cutoff_mps = value;
+  } else if (k == "clear_straight_speed") {
+    inst->clear_straight_speed = value;
+  } else if (k == "clear_preview_dist_m") {
+    inst->clear_preview_dist_m = value;
+  } else if (k == "max_accel_mps2") {
+    inst->max_accel_mps2 = value;
+  } else if (k == "max_decel_mps2") {
+    inst->max_decel_mps2 = value;
+  } else if (k == "active_decel_kp") {
+    inst->active_decel_kp = value;
   } else {
     return 0;
   }
@@ -1615,6 +1761,12 @@ BRAIN_API int32_t brain_set_param_bool(void * handle, const char * name, int32_t
     inst->enable_continuous_curve_assist = b;
   } else if (k == "enable_width_adaptive_fusion") {
     inst->enable_width_adaptive_fusion = b;
+  } else if (k == "enable_sqrt_brake_envelope") {
+    inst->enable_sqrt_brake_envelope = b;
+  } else if (k == "enable_closed_loop_brake") {
+    inst->enable_closed_loop_brake = b;
+  } else if (k == "enable_clear_path_speed") {
+    inst->enable_clear_path_speed = b;
   } else {
     return 0;
   }
