@@ -98,6 +98,14 @@ class CameraModel:
              + self.h * (self.cy * self.tan_a + self.f)) / denom
         return u, v
 
+    def wdz_to_uv(self, w_mm, d_mm, z_mm=0.0):
+        """车体系 3D 点 (w_mm 向右, d_mm 向前, z_mm 向上) -> 像素 (u, v)。"""
+        dz = self.h - float(z_mm)
+        denom = d_mm + dz * self.tan_a
+        u = self.cx + self.f * w_mm / denom
+        v = self.cy + self.f * (dz - d_mm * self.tan_a) / denom
+        return u, v
+
     def distance_at_row(self, row):
         """图像第 row 行对应的地面距离(mm)；地平线以上返回 inf。"""
         horizon = self.cy - self.f * self.tan_a
