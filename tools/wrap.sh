@@ -51,6 +51,7 @@ echo "[wrap] $name start pid=$$ at $(date '+%F %T')"
 
 # tee 默认会攒一大块才写文件，面板看到的就是“慢半拍”的日志。
 # stdbuf -oL 强制行缓冲，日志落盘和窗口输出同步（R18）。
+# 用进程替换而非管道，确保交互节点（⑤发车）始终留在前台进程组并完整持有 TTY。
 TEE="tee"
 command -v stdbuf >/dev/null 2>&1 && TEE="stdbuf -oL tee"
-eval "$cmd" 2>&1 | $TEE -a "$log"
+eval "$cmd" > >($TEE -a "$log") 2>&1

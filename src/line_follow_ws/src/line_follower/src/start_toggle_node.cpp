@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -24,8 +25,10 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "Publishing start signal on '%s' at 10Hz. Press Space to toggle (false<->true).",
-      topic_.c_str());
+      "Publishing start signal on '%s' at 10Hz (tty_raw=%d). Press Space to toggle (false<->true).",
+      topic_.c_str(),
+      stdin_raw_.active ? 1 : 0);
+    std::fflush(stdout);
   }
 
   ~StartToggleNode()
@@ -56,6 +59,13 @@ private:
       if (c == ' ') {
         started_ = !started_;
         RCLCPP_INFO(get_logger(), "Start signal toggled to %s", started_ ? "true" : "false");
+        std::fflush(stdout);
+      } else if (c == '\r' || c == '\n') {
+        RCLCPP_INFO(
+          get_logger(),
+          "Received Enter (not Space); current start=%s. Switch Windows IME to ENG and press Space.",
+          started_ ? "true" : "false");
+        std::fflush(stdout);
       }
     }
   }

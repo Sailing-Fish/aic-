@@ -222,7 +222,7 @@ launch_proc() {
 
   if [[ "${WINDOWED[$i]}" == "1" && $HEADLESS -eq 0 ]]; then
     RDK_NAME="$n" RDK_CMD="$cmd" RDK_RUN_DIR="$RUN_DIR" RDK_STATE_DIR="$STATE" \
-      xterm -T "${TITLES[$i]}" -geometry 104x26 -e "$TOOLS/wrap.sh" &
+      xterm -bg '#1e1e2e' -fg '#cdd6f4' -T "${TITLES[$i]}" -geometry 104x26 -e "$TOOLS/wrap.sh" &
     XTERM_PID[i]=$!
     log "弹出窗口 ${TITLES[$i]}  ($n)"
   else
@@ -344,6 +344,7 @@ launch_proc follow
 wait_for_log follow "Line follower (finals) subscribing" 20
 
 launch_proc start
+wait_for_log start "Press Space to toggle" 15
 
 FOLLOW_GRACE_UNTIL=$(( $(date +%s) + FOLLOW_GRACE ))
 
