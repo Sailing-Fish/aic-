@@ -1107,6 +1107,21 @@ def _read_follow_dec_telemetry(rd, tail_bytes=32768):
     return {k: v for k, v in parsed.items() if k != 'last_t' and v is not None}
 
 
+def _read_run_elapsed_sec(rd):
+    """返回相对本次 start.sh 启动的已运行秒数（与 events.csv 的 t_rel 对齐）。"""
+    if not rd:
+        return None
+    meta = os.path.join(rd, 'meta.json')
+    try:
+        with open(meta, 'r', encoding='utf-8') as f:
+            dt = datetime.datetime.fromisoformat(json.load(f)['started_iso'])
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return max(0.0, (datetime.datetime.now() - dt).total_seconds())
+    except Exception:
+        return None
+
+
 def read_diagnostics(scan_lines=400, milestone_limit=40):
     """从 events.csv 与 follow.log 剥离高频性能心跳，提取健康指标、Tier 1、双层刹车/提速遥测与关键里程碑。"""
     perf = {
@@ -1652,6 +1667,7 @@ class Handler(BaseHTTPRequestHandler):
             ymtime = 0.0
         yaml_stale = bool(started_epoch and ymtime > started_epoch + 1)
         diag = read_diagnostics()
+        run_elapsed = _read_run_elapsed_sec(run_dir())
         brake_speed = dict(diag.get('brake_speed') or {})
         for raw_k, canon in DEC_TELEMETRY_KEY_MAP.items():
             if brake_speed.get(canon) is None and raw_k in seg_info:
@@ -1687,6 +1703,7 @@ class Handler(BaseHTTPRequestHandler):
             'tier1': diag['tier1'],
             'brake_speed': brake_speed,
             'safety_active': bool(diag.get('safety_active', False)),
+            'run_elapsed_sec': round(run_elapsed, 2) if run_elapsed is not None else None,
             'frames': frames_ok,
             'frame_age': frame_age,
             'voltage': {

@@ -1583,12 +1583,21 @@ function updateCompanions(d){
   const lastDigit = milestones.slice().reverse().find(e => e.area === 'digit');
   const lastSafety = milestones.slice().reverse().find(e => e.area === 'safety' && e.event === 'deadman_on');
 
+  const runElapsed = (typeof d.run_elapsed_sec === 'number' && Number.isFinite(d.run_elapsed_sec)) ? d.run_elapsed_sec : null;
+  const isRecentRel = (tVal, winSec) => {
+    if(runElapsed === null) return false;
+    const tNum = Number(tVal);
+    if(!Number.isFinite(tNum)) return false;
+    const age = runElapsed - tNum;
+    return age >= -1.0 && age < winSec;
+  };
+
   let gCls = 'gem', gMood = '待命', gText = '双路画面准备就绪中…';
   if(recActive){
     gCls = 'gem warn'; gMood = '录制中'; gText = '正在认真录制，请稳住画面～';
   } else if(d.started && redHint.active){
     gCls = 'gem alert'; gMood = '发现红障'; gText = '前方看到红色目标啦，已通知避让！';
-  } else if(lastDigit && (d.timer.elapsed - Number(lastDigit.t || 0) < 6)){
+  } else if(lastDigit && isRecentRel(lastDigit.t, 6)){
     const m = /best=(\d+)/.exec(lastDigit.kv || '');
     gCls = 'gem ok'; gMood = '锁定数字'; gText = `抓拍到数字 ${m ? m[1] : '?'}，已转交领航！`;
   } else if(frames.debug && frames.yolo){
@@ -1602,7 +1611,7 @@ function updateCompanions(d){
 
   let dsCls = 'ds', dsMoodTxt = '待命', dsText = '系统安静待命，空格即可发车';
   const t1 = d.tier1 || {};
-  const cbfRecent = t1.cbf_count > 0 && t1.cbf_last_t !== '' && (d.timer.elapsed - Number(t1.cbf_last_t || -99) < 4);
+  const cbfRecent = t1.cbf_count > 0 && t1.cbf_last_t !== '' && isRecentRel(t1.cbf_last_t, 4);
   const safetyActive = !!d.safety_active;
   if(safetyActive){
     dsCls = 'ds alert'; dsMoodTxt = '兜底接管'; dsText = '上游静默了，我已自动刹车保安全！';

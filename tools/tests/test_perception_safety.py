@@ -503,6 +503,24 @@ class TestBPUYoloV8PostProcessAndTracker(unittest.TestCase):
         self.assertIn('rmw_qos_profile_sensor_data', lf_src)
         self.assertIn('debug_image_max_fps', lf_src)
 
+    def test_windowed_perf_counters_async_v4l2_and_start_toggle_eof(self):
+        cam_src = (WS_ROOT / 'src' / 'camera' / 'camera.py').read_text(encoding='utf-8')
+        yolo_src = (WS_ROOT / 'src' / 'yolov8' / 'bpu_yolov8_node.py').read_text(encoding='utf-8')
+        st_src = (
+            WS_ROOT / 'src' / 'line_follow_ws' / 'src' / 'line_follower'
+            / 'src' / 'start_toggle_node.cpp'
+        ).read_text(encoding='utf-8')
+        self.assertIn('camera_v4l2_worker', cam_src)
+        self.assertIn('fail_delta = self.fail_count - self._last_stats_fails', cam_src)
+        self.assertIn('dropped_delta = self.frame_slot.dropped_count - self._last_stats_dropped_count', yolo_src)
+        self.assertIn('dropped_total=', yolo_src)
+        self.assertIn('stdin_eof_', st_src)
+        self.assertIn('rclcpp::shutdown()', st_src)
+
+        tr = yolo_mod.StageLatencyTracker(window_size=10)
+        rep = tr.format_report(proc_fps=30.0, rx_fps=30.0, dropped_frames=0, debug_pub_frames=12, dropped_total=18)
+        self.assertIn('dropped=0 dropped_total=18', rep)
+
 
 class TestSafetyWatchdogLogic(unittest.TestCase):
     def test_upstream_topics_exclude_detection_channel(self):

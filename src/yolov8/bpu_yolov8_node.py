@@ -384,14 +384,16 @@ class StageLatencyTracker:
             out[name] = self.percentiles(name)
         return out
 
-    def format_report(self, proc_fps, rx_fps, dropped_frames, debug_pub_frames):
+    def format_report(self, proc_fps, rx_fps, dropped_frames, debug_pub_frames, dropped_total=None):
         stats = self.summary_dict()
         parts = [
             f'proc_fps={proc_fps:.1f}',
             f'rx_fps={rx_fps:.1f}',
             f'dropped={dropped_frames}',
-            f'dbg_pub={debug_pub_frames}',
         ]
+        if dropped_total is not None:
+            parts.append(f'dropped_total={dropped_total}')
+        parts.append(f'dbg_pub={debug_pub_frames}')
         for name in self.STAGE_NAMES:
             p50, p95 = stats[name]
             parts.append(f'{name}_p50={p50:.2f}ms {name}_p95={p95:.2f}ms')
@@ -811,6 +813,7 @@ class BPUYoloV8DigitNode(Node):
         self._last_stats_log_ts = time.perf_counter()
         self._last_stats_frame_count = 0
         self._last_stats_rx_count = 0
+        self._last_stats_dropped_count = 0
 
         window_size = int(self.get_parameter('stats_window_size').value)
         self.latency_tracker = StageLatencyTracker(window_size=window_size)
@@ -1119,20 +1122,23 @@ class BPUYoloV8DigitNode(Node):
             dt = t_frame_end - self._last_stats_log_ts
             proc_delta = self.frame_count - self._last_stats_frame_count
             rx_delta = self.frame_slot.rx_count - self._last_stats_rx_count
+            dropped_delta = self.frame_slot.dropped_count - self._last_stats_dropped_count
             proc_fps = proc_delta / dt if dt > 0 else 0.0
             rx_fps = rx_delta / dt if dt > 0 else 0.0
 
             report = self.latency_tracker.format_report(
                 proc_fps=proc_fps,
                 rx_fps=rx_fps,
-                dropped_frames=self.frame_slot.dropped_count,
+                dropped_frames=dropped_delta,
                 debug_pub_frames=self.debug_pub_count,
+                dropped_total=self.frame_slot.dropped_count,
             )
             self.get_logger().info(report)
 
             self._last_stats_log_ts = t_frame_end
             self._last_stats_frame_count = self.frame_count
             self._last_stats_rx_count = self.frame_slot.rx_count
+            self._last_stats_dropped_count = self.frame_slot.dropped_count
 
     def destroy_node(self):
         self._stop_worker = True

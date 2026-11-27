@@ -42,23 +42,25 @@ private:
     msg.data = started_;
     pub_->publish(msg);
 
-    // Non-blocking check: if stdin有空格就切换
-    if (_kbhit()) {
+    // Non-blocking check: drain buffered stdin, toggle on Space, exit cleanly on EOF (window closed)
+    while (_kbhit()) {
       auto c_opt = _read_char();
       if (!c_opt.has_value()) {
+        if (stdin_eof_) {
+          RCLCPP_WARN(get_logger(), "stdin EOF detected (terminal closed); shutting down start_toggle_node.");
+          rclcpp::shutdown();
+        }
         return;
       }
       int c = c_opt.value();
       if (c == ' ') {
         started_ = !started_;
         RCLCPP_INFO(get_logger(), "Start signal toggled to %s", started_ ? "true" : "false");
-      } else {
-        // 清空其他输入
       }
     }
   }
 
-  // Simple cross-platform kbhit using std::cin.rdbuf()->in_avail()
+  // Simple cross-platform kbhit using select()
   bool _kbhit()
   {
     fd_set rfds;
@@ -77,6 +79,9 @@ private:
     ssize_t n = ::read(STDIN_FILENO, &c, 1);
     if (n == 1) {
       return static_cast<int>(c);
+    }
+    if (n == 0) {
+      stdin_eof_ = true;
     }
     return std::nullopt;
   }
@@ -103,6 +108,7 @@ private:
 
   std::string topic_;
   bool started_{false};
+  bool stdin_eof_{false};
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_;
   rclcpp::TimerBase::SharedPtr timer_;
   StdinGuard stdin_raw_;

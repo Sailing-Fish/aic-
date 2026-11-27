@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 import cv2
@@ -419,18 +420,36 @@ class CameraPublisher(Node):
         self.fail_count = 0
         self._last_stats_ts = time.perf_counter()
         self._last_stats_frames = 0
+        self._last_stats_fails = 0
         self._read_ms_window = deque(maxlen=150)
         self._pub_ms_window = deque(maxlen=150)
+
+        # V4L2 lock_on_start 异步执行，避免发车瞬间 v4l2-ctl 子进程阻塞 30fps 采集主线程
+        self._v4l2_lock = threading.Lock()
+        self._last_dispatched_start = False
 
         # 创建定时器，循环采集并发布图像（略快于硬件帧间隔，由 V4L2 read() 硬件节拍精准同步）
         timer_period = 0.85 / max(1.0, framerate)
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
+    def _apply_start_cmd_async(self, started):
+        with self._v4l2_lock:
+            try:
+                self.v4l2_policy.on_start_cmd(started)
+            except Exception as exc:
+                self.get_logger().warn(f'[DEC] camera v4l2 start_cb_err={exc}')
+
     def _on_start_cmd(self, msg):
-        try:
-            self.v4l2_policy.on_start_cmd(bool(msg.data))
-        except Exception as exc:
-            self.get_logger().warn(f'[DEC] camera v4l2 start_cb_err={exc}')
+        started = bool(msg.data)
+        if started == self._last_dispatched_start:
+            return
+        self._last_dispatched_start = started
+        threading.Thread(
+            target=self._apply_start_cmd_async,
+            args=(started,),
+            name='camera_v4l2_worker',
+            daemon=True,
+        ).start()
 
     def timer_callback(self):
         t0 = time.perf_counter()
@@ -462,14 +481,16 @@ class CameraPublisher(Node):
             read_p50, read_p95 = np.percentile(read_arr, [50.0, 95.0]) if len(read_arr) else (0.0, 0.0)
             pub_p50, pub_p95 = np.percentile(pub_arr, [50.0, 95.0]) if len(pub_arr) else (0.0, 0.0)
 
+            fail_delta = self.fail_count - self._last_stats_fails
             self.get_logger().info(
                 f"[DEC] camera perf fps={measured_fps:.1f} "
                 f"read_p50={read_p50:.2f}ms read_p95={read_p95:.2f}ms "
                 f"pub_p50={pub_p50:.2f}ms pub_p95={pub_p95:.2f}ms "
-                f"fails={self.fail_count}"
+                f"fails={fail_delta} fails_total={self.fail_count}"
             )
             self._last_stats_ts = t_pub
             self._last_stats_frames = self.frame_count
+            self._last_stats_fails = self.fail_count
 
     def destroy_node(self):
         # 节点退出时释放摄像头资源

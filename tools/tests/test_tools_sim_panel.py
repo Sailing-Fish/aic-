@@ -643,6 +643,20 @@ class TestPanelAndTelemetry(unittest.TestCase):
                 with open(log_dir / "events.csv", "a", encoding="utf-8") as ef:
                     ef.write("221.0,121.0,safety,safety,deadman_off,last_src=/cmd_vel_stop upstream_silence=0.02s\n")
                 self.assertFalse(panel_server.read_diagnostics()["safety_active"])
+
+                # 6. run_elapsed_sec aligns with meta.json started_iso and HTML uses run_elapsed_sec (not lap timer)
+                import datetime as _dt
+                (log_dir / "meta.json").write_text(
+                    json.dumps({"started_iso": (_dt.datetime.now() - _dt.timedelta(seconds=25)).isoformat()}),
+                    encoding="utf-8",
+                )
+                elapsed_val = panel_server._read_run_elapsed_sec(str(log_dir))
+                self.assertIsNotNone(elapsed_val)
+                self.assertGreaterEqual(elapsed_val, 20.0)
+                html_txt = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
+                self.assertIn("d.run_elapsed_sec", html_txt)
+                self.assertNotIn("d.timer.elapsed - Number(lastDigit.t", html_txt)
+                self.assertNotIn("d.timer.elapsed - Number(t1.cbf_last_t", html_txt)
             finally:
                 panel_server.LOGROOT = orig_logroot
                 panel_server.STATE_DIR = orig_state_dir
