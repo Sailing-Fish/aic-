@@ -352,8 +352,10 @@ FOLLOW_GRACE_UNTIL=$(( $(date +%s) + FOLLOW_GRACE ))
 if [[ $NO_PANEL -eq 0 ]]; then
   if pgrep -f "tools/panel/server.py" > /dev/null 2>&1; then
     log "清理残留 panel 进程"
-    pkill -f "tools/panel/server.py" 2>/dev/null || true
+    pkill -TERM -f "tools/panel/server.py" 2>/dev/null || true
     sleep 1
+    # 旧面板有时会忽略 SIGTERM，必须升级到 KILL，否则会继续占用 8080/8081
+    pkill -KILL -f "tools/panel/server.py" 2>/dev/null || true
   fi
   launch_proc panel
 fi

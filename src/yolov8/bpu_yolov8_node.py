@@ -461,12 +461,20 @@ def decode_yolov8_outputs(
     tensors = []
     for out in outputs:
         data = out.buffer.astype(np.float32)
+        # 统一成 NHWC，类别/回归通道固定在最后一轴，便于按通道反量化
         if len(data.shape) == 4 and (data.shape[1] == num_classes or data.shape[1] == 64):
             if data.shape[-1] != num_classes and data.shape[-1] != 64:
                 data = np.transpose(data, (0, 2, 3, 1))
+
         if hasattr(out.properties, 'scale_data') and len(out.properties.scale_data) > 0:
-            scale = np.array(out.properties.scale_data, dtype=np.float32)
-            data *= scale[0] if len(scale) == 1 else scale
+            scale = np.asarray(out.properties.scale_data, dtype=np.float32)
+            if len(scale) == 1:
+                data *= float(scale[0])
+            elif data.ndim == 4 and len(scale) == data.shape[-1]:
+                # BPU 可为每个类别/每个 DFL bin 单独给 scale，(C,) 必须广播到通道轴
+                data *= scale.reshape(1, 1, 1, -1)
+            else:
+                data *= scale
         tensors.append(data)
 
     cls_heads = sorted(
