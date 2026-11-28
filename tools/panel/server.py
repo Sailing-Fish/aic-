@@ -1085,6 +1085,36 @@ class PanelNode(Node):
         msg.data = bool(desired)
         self.start_cmd_fallback_pub.publish(msg)
 
+    def apply_local_start_state(self, desired):
+        """面板主动发车/停车时立刻同步本地状态，不等 ROS 回环。
+
+        原来只依赖 _on_start 的 ROS 回环：start_toggle 若没及时回发，
+        SH.started 一直是 False，前端按钮就一直显示「发车」，无法再点它停车。
+        这里按与 _on_start 上升沿完全一致的逻辑同步，并把 _last_started
+        一起更新，后续回环到达时会被短路，不会重复加轮次/清计时。
+        """
+        val = bool(desired)
+        self._last_started = val
+        self._last_start_rx_ts = time.time()
+        with SH.lock:
+            SH.start_cmd = val
+            if val:
+                if not SH.started:
+                    SH.timer_start = time.time()
+                    SH.timer_stop = None
+                    SH.final_stopped = False
+                    SH.yellow_count = 0
+                    SH.last_yellow_ts = 0.0
+                    SH.track_state = 'unknown'
+                    SH.segment = {}
+                    SH.round += 1
+                SH.started = True
+                SH.locked = True
+            else:
+                SH.started = False
+                SH.locked = False
+        _write_state_file('started', '1' if val else '0')
+
     def set_start_cmd(self, desired):
         """通知 start_toggle_node 切换发车状态；若 start 进程未存活则启用兜底直发。"""
         val = bool(desired)
@@ -2036,11 +2066,9 @@ class Handler(BaseHTTPRequestHandler):
                     if rs and rs.get('state') in ('queued', 'killing', 'starting'):
                         return self._err(409, '巡线节点正在重启/切换地图，请等就绪后再发车')
                 NODE.set_start_cmd(desired)
-                if not desired:
-                    with SH.lock:
-                        SH.started = False
-                        SH.locked = False
-                    _write_state_file('started', '0')
+                # 立即同步本地状态，不等 ROS 回环：保证按钮立刻变成「⏸ 停止发车」，
+                # 再点一次就能真正停车；重复回环因 _last_started 已同步不会重入。
+                NODE.apply_local_start_state(desired)
                 print(f"[DEC] panel start_cmd val={'true' if desired else 'false'}", flush=True)
                 return self._json({
                     'ok': True,

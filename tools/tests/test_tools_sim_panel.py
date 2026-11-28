@@ -443,7 +443,7 @@ class TestPanelAndTelemetry(unittest.TestCase):
         self.assertIn('data-tier="bev_core"', html)
         self.assertIn('data-tier="legacy_core"', html)
         self.assertIn('data-tier="calibration"', html)
-        self.assertIn("btpPhase", html)
+        self.assertNotIn("bevTopPill", html)
         self.assertIn("bevHud", html)
         self.assertNotIn('id="estop"', html)
         self.assertNotIn("segSel", html)
@@ -679,6 +679,13 @@ class TestPanelAndTelemetry(unittest.TestCase):
 
                     def estop(self):
                         self.start_calls.append(False)
+
+                    def apply_local_start_state(self, desired):
+                        self.start_calls.append(bool(desired))
+                        with panel_server.SH.lock:
+                            panel_server.SH.start_cmd = bool(desired)
+                            panel_server.SH.started = bool(desired)
+                            panel_server.SH.locked = bool(desired)
 
                 def _invoke_post(path_str, payload):
                     import io as _io
@@ -1348,6 +1355,53 @@ class TestPanelWifi(unittest.TestCase):
             self.assertIn(hook, html, f"Missing WiFi UI hook: {hook}")
 
 
+class TestPanelStartToggleState(unittest.TestCase):
+    def test_apply_local_start_state_syncs_immediately_and_guards_reentry(self):
+        import tempfile
+        node = panel_server.PanelNode.__new__(panel_server.PanelNode)
+        node._last_started = False
+        node._last_start_rx_ts = 0.0
+        orig_state_dir = panel_server.STATE_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            panel_server.STATE_DIR = tmp
+            try:
+                with panel_server.SH.lock:
+                    panel_server.SH.started = False
+                    panel_server.SH.start_cmd = False
+                    panel_server.SH.locked = False
+                    panel_server.SH.round = 1
+                    panel_server.SH.timer_start = None
+                node.apply_local_start_state(True)
+                with panel_server.SH.lock:
+                    self.assertTrue(panel_server.SH.started)
+                    self.assertTrue(panel_server.SH.start_cmd)
+                    self.assertTrue(panel_server.SH.locked)
+                    self.assertEqual(panel_server.SH.round, 2)
+                    self.assertIsNotNone(panel_server.SH.timer_start)
+                self.assertTrue(node._last_started)
+
+                # 模拟 ROS 回环重复到达：_last_started 已同步，旧逻辑会短路不重复加轮次
+                with panel_server.SH.lock:
+                    snapped_round = panel_server.SH.round
+                node.apply_local_start_state(True)
+                with panel_server.SH.lock:
+                    self.assertEqual(panel_server.SH.round, snapped_round)
+
+                node.apply_local_start_state(False)
+                with panel_server.SH.lock:
+                    self.assertFalse(panel_server.SH.started)
+                    self.assertFalse(panel_server.SH.start_cmd)
+                    self.assertFalse(panel_server.SH.locked)
+            finally:
+                panel_server.STATE_DIR = orig_state_dir
+
+    def test_ui_map_pill_tracks_running_map(self):
+        html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("const activeMap = runningMap ||", html)
+        self.assertIn("if(rf && !restarting) runningMap = rf", html)
+        self.assertIn("runningMap = targetMap;", html)
+
+
 class TestPanelBevWhitebox(unittest.TestCase):
     SUMMARY_KV = (
         "phase=RB1_APPROACH br=-1 k=+0.38 L=0.72 score=+2.14 "
@@ -1420,7 +1474,7 @@ class TestPanelBevWhitebox(unittest.TestCase):
     def test_ui_hooks_bev_and_term(self):
         html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
         for hook in (
-            'id="bevTopPill"', 'id="bevHud"', 'id="bevHudPhase"',
+            'id="bevHud"', 'id="bevHudPhase"',
             'id="bevHudFlags"', 'id="bevCostBars"', 'id="btnLogFollowHud"',
             'data-lvl="bev"', 'data-tier="bev_core"', 'data-tier="legacy_core"',
             "applyViewLoadPolicy", "area=bev", "setStreamActive",
