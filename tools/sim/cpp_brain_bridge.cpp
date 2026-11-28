@@ -233,7 +233,7 @@ struct BrainInstance
   double crc_no_entry_pad_y_px{0.0};
   double crc_cone_pad_y_px{0.0};
   double crc_yellow_pad_y_px{0.0};
-  double detection_timeout_sec{0.35};
+  double detection_timeout_sec{0.22};
 
   // Motion & ROI
   double target_speed{0.44};
@@ -317,7 +317,7 @@ struct BrainInstance
   // CorridorPlanner params
   double car_width_m{0.191};
   double default_lane_width_m{0.430};
-  double border_margin_m{0.025};
+  double border_margin_m{0.020};
   double cone_margin_m{0.025};
   double no_entry_margin_m{0.030};
   double obstacle_lookahead_m{1.10};
@@ -2032,6 +2032,10 @@ struct BevDwaStepOutC
   int32_t yellow_rearmed;
   int32_t goal_yaw_active;
   char mode_tag[32];
+  double chosen_kappa2;
+  double chosen_s_split_m;
+  int32_t feasible_arc_count;
+  int32_t _pad_k2;
 };
 
 BRAIN_API int32_t bev_dwa_reset_c(
@@ -2070,6 +2074,45 @@ BRAIN_API int32_t bev_dwa_notify_yellow_stop_c(void * handle)
   }
   inst->bev_dwa_planner.notify_yellow_stop_triggered();
   inst->bev_dwa_planner.clear_fork_votes();
+  return 0;
+}
+
+BRAIN_API int32_t bev_dwa_notify_yellow_stop_at_c(void * handle, double now_sec)
+{
+  auto * inst = static_cast<BrainInstance *>(handle);
+  if (inst == nullptr) {
+    return -1;
+  }
+  inst->bev_dwa_planner.notify_yellow_stop_triggered(now_sec);
+  inst->bev_dwa_planner.clear_fork_votes();
+  return 0;
+}
+
+BRAIN_API int32_t bev_dwa_update_fork_votes_c(
+  void * handle,
+  const double * digits_5,
+  int32_t num_digits,
+  int32_t is_stationary)
+{
+  auto * inst = static_cast<BrainInstance *>(handle);
+  if (inst == nullptr) {
+    return -1;
+  }
+  std::vector<line_follower::GroundDetection> dets;
+  if (digits_5 != nullptr && num_digits > 0) {
+    dets.reserve(static_cast<size_t>(num_digits));
+    for (int32_t i = 0; i < num_digits; ++i) {
+      line_follower::GroundDetection gd{};
+      gd.type = line_follower::SemanticObjectType::BONUS_DIGIT;
+      gd.d_bumper_m = digits_5[i * 5 + 0];
+      gd.y_lat_m = digits_5[i * 5 + 1];
+      gd.digit = static_cast<int>(std::lround(digits_5[i * 5 + 2]));
+      gd.confidence = digits_5[i * 5 + 3];
+      gd.stamp_sec = digits_5[i * 5 + 4];
+      dets.push_back(gd);
+    }
+  }
+  inst->bev_dwa_planner.update_fork_votes(dets, is_stationary != 0);
   return 0;
 }
 
@@ -2148,6 +2191,10 @@ BRAIN_API int32_t bev_dwa_step_c(
   out->yellow_rearmed = inst->bev_dwa_planner.is_yellow_rearmed() ? 1 : 0;
   out->goal_yaw_active = r.goal_yaw_active ? 1 : 0;
   copy_str(out->mode_tag, sizeof(out->mode_tag), r.mode_tag);
+  out->chosen_kappa2 = r.chosen_kappa2;
+  out->chosen_s_split_m = r.chosen_s_split_m;
+  out->feasible_arc_count = r.feasible_arc_count;
+  out->_pad_k2 = 0;
 
   if (fused_grid_out != nullptr) {
     std::memcpy(fused_grid_out, inst->bev_dwa_planner.fused_grid().data(), line_follower::kBevCells);

@@ -303,6 +303,44 @@ class TestSynthTier1Upgrades(unittest.TestCase):
         self.assertTrue(saw_warm, "LED color temp drift should produce warm casts")
         self.assertTrue(saw_cool, "LED color temp drift should produce cool casts")
 
+    def test_v4_homography_wide_yaw_roi_crop_and_disc_interference(self):
+        rng = random.Random(314)
+        # 1) 蓝圆盘干扰（底噪/纹理/彩斑）可正常合成且保持 BGRA 形状与非零数字内容
+        noisy_disc = synth_mod.make_official_sticker_bgra(
+            "7", rng, handwritten=True, glossy_pvc=True, size=160,
+            disc_interference_prob=1.0, interference_strength="heavy",
+        )
+        self.assertEqual(noisy_disc.shape, (160, 160, 4))
+        self.assertGreater(int((noisy_disc[:, :, 3] > 128).sum()), 3000)
+
+        # 2) 单应投影 + allow_wide_yaw 支持地面圆盘 ±180° 旋转，仍严禁翻转
+        bg = np.full((480, 640, 3), 230, dtype=np.uint8)
+        with self.assertRaises(ValueError):
+            synth_mod.project_ground_prop_bgra(
+                bg, noisy_disc, d_m=0.35, y_m=0.0, phys_w_m=0.12, phys_h_m=0.12,
+                rot_deg=120.0, allow_flip=True, use_homography=True, allow_wide_yaw=True,
+            )
+        box = synth_mod.project_ground_prop_bgra(
+            bg, noisy_disc, d_m=0.35, y_m=0.0, phys_w_m=0.12, phys_h_m=0.12,
+            rot_deg=120.0, allow_flip=False, use_homography=True, allow_wide_yaw=True,
+        )
+        self.assertIsNotNone(box)
+        x1, y1, x2, y2 = box
+        self.assertGreater(x2 - x1, 20)
+        self.assertGreater(y2 - y1, 5)
+        self.assertGreaterEqual(y1, 160)
+
+        # 3) roi_crop_top_px=160 将 640x480 裁成 640x640，并把归一化坐标精确重映射（高度翻倍）
+        # 原图 [280..360, 300..340] -> cy_orig=320/480, bh_orig=40/480 -> crop 后 [140..180]/320 -> cy=0.50, bh=0.125
+        lbl_in = ["6 0.500000 0.666667 0.125000 0.083333"]
+        crop_img, remapped = synth_mod.apply_roi_crop_remap(bg, lbl_in, roi_crop_top_px=160)
+        self.assertEqual(crop_img.shape, (640, 640, 3))
+        self.assertEqual(len(remapped), 1)
+        parts = remapped[0].split()
+        self.assertEqual(parts[0], "6")
+        self.assertAlmostEqual(float(parts[2]), 0.50, places=3)
+        self.assertAlmostEqual(float(parts[4]), 0.125, places=3)
+
 
 class TestTier1ConfigAndSchemaParity(unittest.TestCase):
     TIER1_EXPECTED_DEFAULTS = {

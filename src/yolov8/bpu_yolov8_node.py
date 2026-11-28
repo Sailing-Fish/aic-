@@ -2,6 +2,7 @@
 # coding=utf-8
 
 from collections import deque
+import hashlib
 import json
 import math
 import os
@@ -94,6 +95,32 @@ def letterbox(img, target_shape=(640, 640), color=(114, 114, 114)):
     )
 
     return padded_img, r, (pad_w, pad_h)
+
+
+def prepare_model_input(orig_frame, model_w, model_h, roi_crop_top_px=0):
+    """
+    准备 BPU 模型输入图像与逆映射参数：
+    - roi_crop_top_px <= 0: 保持经典 letterbox 等比例填充。
+    - roi_crop_top_px > 0 : 裁剪地平线以上无关顶部区域 [roi_top:orig_h, :] 后垂直拉伸到 (model_w, model_h)，
+      对远距离地面贴纸实现 ~2x 垂直去压扁而不引入额外 BPU 耗时。
+    返回: (input_frame, scale_x, scale_y, pad_w, pad_h, offset_y)
+    """
+    orig_h, orig_w = orig_frame.shape[:2]
+    crop_top = int(roi_crop_top_px or 0)
+    if crop_top <= 0:
+        input_frame, r, (pad_w, pad_h) = letterbox(orig_frame, (model_w, model_h))
+        return input_frame, float(r), float(r), float(pad_w), float(pad_h), 0.0
+
+    roi_top = max(0, min(crop_top, orig_h - 32))
+    crop = orig_frame[roi_top:orig_h, :]
+    roi_h = max(1, orig_h - roi_top)
+    if crop.shape[1] != model_w or crop.shape[0] != model_h:
+        input_frame = cv2.resize(crop, (model_w, model_h), interpolation=cv2.INTER_LINEAR)
+    else:
+        input_frame = crop
+    scale_x = float(model_w) / float(max(1, orig_w))
+    scale_y = float(model_h) / float(roi_h)
+    return input_frame, scale_x, scale_y, 0.0, 0.0, float(roi_top)
 
 
 def load_class_list(cls_list_path):
@@ -452,6 +479,9 @@ def decode_yolov8_outputs(
     orig_w,
     orig_h,
     class_conf_thresholds=None,
+    scale_x=None,
+    scale_y=None,
+    offset_y=0.0,
 ):
     """
     YOLOv8 BPU 输出反量化、Pre-sigmoid Logit 预过滤与 DFL 解码。
@@ -544,11 +574,14 @@ def decode_yolov8_outputs(
         x2 = (valid_grid[:, 0] + dfl[:, 2]) * stride
         y2 = (valid_grid[:, 1] + dfl[:, 3]) * stride
 
-        # 映射回原始图像坐标
-        x1 = np.clip((x1 - pad_w) / scale_r, 0, orig_w)
-        y1 = np.clip((y1 - pad_h) / scale_r, 0, orig_h)
-        x2 = np.clip((x2 - pad_w) / scale_r, 0, orig_w)
-        y2 = np.clip((y2 - pad_h) / scale_r, 0, orig_h)
+        # 映射回原始图像坐标（兼容等比例 letterbox 与 ROI 顶部裁剪垂直去压扁）
+        sx = float(scale_r) if scale_x is None else float(scale_x)
+        sy = float(scale_r) if scale_y is None else float(scale_y)
+        oy = float(offset_y)
+        x1 = np.clip((x1 - pad_w) / sx, 0, orig_w)
+        y1 = np.clip((y1 - pad_h) / sy + oy, 0, orig_h)
+        x2 = np.clip((x2 - pad_w) / sx, 0, orig_w)
+        y2 = np.clip((y2 - pad_h) / sy + oy, 0, orig_h)
 
         all_boxes.append(np.stack([x1, y1, x2 - x1, y2 - y1], axis=1))
         all_scores.append(valid_scores)
@@ -724,6 +757,7 @@ class BPUYoloV8DigitNode(Node):
         self.declare_parameter('iou_thresh', 0.55)
         self.declare_parameter('nms_top_k', 20)
         self.declare_parameter('min_box_size', 6)
+        self.declare_parameter('roi_crop_top_px', 0)
         self.declare_parameter('class_agnostic_nms', False)
         self.declare_parameter('class_conf_overrides', '{}')
 
@@ -776,12 +810,21 @@ class BPUYoloV8DigitNode(Node):
             if dnn is None:
                 raise RuntimeError('未检测到 hobot_dnn (pyeasy_dnn)，无法加载 BPU 模型')
 
-            self.get_logger().info(f'模型文件: {model_path}')
+            model_size = os.path.getsize(model_path)
+            h = hashlib.sha256()
+            with open(model_path, 'rb') as mf:
+                for chunk in iter(lambda: mf.read(65536), b''):
+                    h.update(chunk)
+            self.get_logger().info(
+                f'模型文件: {model_path} (size={model_size}B, sha256={h.hexdigest()[:12]})'
+            )
             self.bpu_model = dnn.load(model_path)[0]
 
         validate_model_classes(self.bpu_model, self.classes)
+        roi_crop_top_px = int(self.get_parameter('roi_crop_top_px').value)
         self.get_logger().info(
-            f'RDK X5 BPU YOLOv8 视觉检测节点就绪 (num_classes={len(self.classes)})'
+            f'RDK X5 BPU YOLOv8 视觉检测节点就绪 '
+            f'(num_classes={len(self.classes)}, roi_crop_top_px={roi_crop_top_px})'
         )
 
         # =====================================================
@@ -972,7 +1015,10 @@ class BPUYoloV8DigitNode(Node):
             return
 
         orig_h, orig_w = orig_frame.shape[:2]
-        input_frame, r, (pad_w, pad_h) = letterbox(orig_frame, (self.model_w, self.model_h))
+        roi_crop_top_px = int(self.get_parameter('roi_crop_top_px').value)
+        input_frame, scale_x, scale_y, pad_w, pad_h, offset_y = prepare_model_input(
+            orig_frame, self.model_w, self.model_h, roi_crop_top_px=roi_crop_top_px
+        )
         nv12 = bgr2nv12_fast(input_frame)
         t_preprocess_end = time.perf_counter()
 
@@ -998,10 +1044,13 @@ class BPUYoloV8DigitNode(Node):
             conf_thresh=conf_thresh,
             pad_w=pad_w,
             pad_h=pad_h,
-            scale_r=r,
+            scale_r=scale_x,
             orig_w=orig_w,
             orig_h=orig_h,
             class_conf_thresholds=cls_thresholds,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            offset_y=offset_y,
         )
         t_postprocess_end = time.perf_counter()
 

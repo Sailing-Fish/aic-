@@ -101,7 +101,7 @@ struct BevDwaConfig
   double lookahead_time_s{0.65};
   double curv_ff_gain{0.55};
   double stanley_k_y{1.20};
-  double border_margin_m{0.025};
+  double border_margin_m{0.020};
   double cone_margin_m{0.025};
   double no_entry_margin_m{0.035};
 
@@ -197,12 +197,15 @@ struct BevCorridorSlice
 struct BevArcCandidate
 {
   double kappa{0.0};
+  double kappa2{0.0};
+  double s_split_m{0.32};
+  double progress_m{0.0};
   double safe_len_m{0.0};
   double min_wall_clr_m{0.0};
   double min_obs_clr_m{0.0};
   double score{-1e9};
   bool hard_feasible{false};
-  // 白盒控制分解（面板 HUD 用：kr/pp/lt/ff/dg/ey/dk 严格同源）
+  // 白盒控制分解（面板 HUD 用：sa/so/hd/br/di/cl/sm 严格同源）
   double cost_safe_len{0.0};
   double cost_soft{0.0};
   double cost_heading{0.0};
@@ -217,6 +220,8 @@ struct BevDwaPlanResult
   double linear_speed_mps{0.0};
   double yaw_rate_rps{0.0};
   double chosen_kappa{0.0};
+  double chosen_kappa2{0.0};
+  double chosen_s_split_m{0.32};
   double chosen_safe_len_m{0.0};
   double min_wall_clearance_m{0.0};
   double min_obs_clearance_m{0.0};
@@ -314,7 +319,7 @@ public:
   int finalize_fork_decision();
 
   // Notify yellow stop lifecycle (dual visual+distance rearm)
-  void notify_yellow_stop_triggered();
+  void notify_yellow_stop_triggered(double now_sec = -1e9);
   void update_yellow_visual_state(bool yellow_visible, bool yellow_dist_valid, double d_yellow_m);
   bool is_yellow_rearmed() const;
 
@@ -415,6 +420,36 @@ private:
     double & out_heading_err_rad,
     double & out_corridor_len_m) const;
 
+  void compute_geodesic_progress_field(
+    int branch_bias,
+    double goal_yaw,
+    bool goal_yaw_active,
+    bool forbid_reverse_yaw,
+    double reverse_yaw);
+
+  void evaluate_two_stage_candidate(
+    double kappa_init,
+    double kappa1,
+    double kappa2,
+    double s_split,
+    double s_lag,
+    bool allow_digit_bonus,
+    const std::vector<GroundDetection> & straight_digits,
+    bool clean_straight,
+    bool forbid_reverse_yaw,
+    double reverse_yaw,
+    int branch_bias,
+    double goal_yaw,
+    bool goal_yaw_active,
+    BevArcCandidate & out_cand,
+    int & out_hit_digit,
+    double & out_near_min_clr,
+    double & out_clr_start,
+    double & out_clr_near_end,
+    double & out_soft_ne,
+    double & out_soft_wall,
+    double & out_soft_cone) const;
+
   void check_chosen_arc_clearance(
     double x0,
     double y0,
@@ -437,6 +472,8 @@ private:
   std::array<float, kBevCells> dist_free_m_{};
   std::array<float, kBevCells> dist_cone_m_{};
   std::array<float, kBevCells> dist_no_entry_m_{};
+  std::array<float, kBevCells> road_progress_m_{};
+  std::array<uint8_t, kBevCells> blocked_branch_grid_{};
 
   // Straight digit multi-frame lock (prevents 60ms YOLO flicker twitching)
   std::vector<GroundDetection> filter_and_lock_straight_digits(
@@ -462,14 +499,17 @@ private:
   double dist_since_yellow_m_{1e6};
   int yellow_absent_frames_{10};
   bool yellow_visual_exited_{true};
+  double yellow_stop_begin_sec_{-1e9};
 
   // Topology state & fork votes
   TopologyPhase phase_{TopologyPhase::CRUISE_START};
   int committed_branch_{0};
   double phase_arc_m_{0.0};
   double phase_abs_yaw_rad_{0.0};
-  std::array<int, 9> left_digit_votes_{};
-  std::array<int, 9> right_digit_votes_{};
+  std::array<double, 9> left_digit_votes_{};
+  std::array<double, 9> right_digit_votes_{};
+  std::array<int, 9> left_digit_hits_{};
+  std::array<int, 9> right_digit_hits_{};
   int best_left_digit_{0};
   int best_left_votes_{0};
   int best_right_digit_{0};

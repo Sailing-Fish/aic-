@@ -525,6 +525,64 @@ class TestBPUYoloV8PostProcessAndTracker(unittest.TestCase):
         rep = tr.format_report(proc_fps=30.0, rx_fps=30.0, dropped_frames=0, debug_pub_frames=12, dropped_total=18)
         self.assertIn('dropped=0 dropped_total=18', rep)
 
+    def test_prepare_model_input_roi_crop_and_inverse_decode(self):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame[160:, :, :] = 200  # mark active ground ROI
+
+        # roi_crop_top_px=0 -> classical letterbox (640x480 -> scale=1.0, pad_h=80.0, offset_y=0.0)
+        inp0, sx0, sy0, pw0, ph0, oy0 = yolo_mod.prepare_model_input(frame, 640, 640, roi_crop_top_px=0)
+        self.assertEqual(inp0.shape, (640, 640, 3))
+        self.assertAlmostEqual(sx0, 1.0, places=6)
+        self.assertAlmostEqual(sy0, 1.0, places=6)
+        self.assertAlmostEqual(pw0, 0.0, places=6)
+        self.assertAlmostEqual(ph0, 80.0, places=6)
+        self.assertAlmostEqual(oy0, 0.0, places=6)
+
+        # roi_crop_top_px=160 -> [160:480, :] stretched 2x vertically (sx=1.0, sy=2.0, pad=0, offset_y=160)
+        inp160, sx1, sy1, pw1, ph1, oy1 = yolo_mod.prepare_model_input(frame, 640, 640, roi_crop_top_px=160)
+        self.assertEqual(inp160.shape, (640, 640, 3))
+        self.assertTrue(np.all(inp160 == 200))
+        self.assertAlmostEqual(sx1, 1.0, places=6)
+        self.assertAlmostEqual(sy1, 2.0, places=6)
+        self.assertAlmostEqual(pw1, 0.0, places=6)
+        self.assertAlmostEqual(ph1, 0.0, places=6)
+        self.assertAlmostEqual(oy1, 160.0, places=6)
+
+        # Verify decode inverse mapping:
+        # At stride=16 (grid 40x40), cell (gx=20, gy=10) -> center (328.0, 168.0) in 640x640 model space.
+        # With dfl_dist=(2, 2, 2, 2), model coords are x in [296, 360], y in [136, 200].
+        # Inverse to original 640x480: x in [296, 360], y in [160 + 68, 160 + 100] = [228, 260].
+        grids = _make_grids()
+        dfl_w = np.arange(16, dtype=np.float32)
+        outputs = _build_synthetic_outputs(
+            8,
+            [{'stride_idx': 1, 'gy': 10, 'gx': 20, 'cls_id': 2, 'logit': 5.0, 'dfl_dist': (2, 2, 2, 2)}],
+            layout='NHWC',
+        )
+        boxes, scores, cls_ids, ok, cls_cnt, reg_cnt = yolo_mod.decode_yolov8_outputs(
+            outputs=outputs,
+            grids=grids,
+            dfl_weights=dfl_w,
+            num_classes=8,
+            conf_thresh=0.25,
+            pad_w=pw1,
+            pad_h=ph1,
+            scale_r=sx1,
+            orig_w=640,
+            orig_h=480,
+            scale_x=sx1,
+            scale_y=sy1,
+            offset_y=oy1,
+        )
+        self.assertTrue(ok)
+        self.assertEqual((cls_cnt, reg_cnt), (3, 3))
+        self.assertEqual(len(boxes), 1)
+        bx, by, bw, bh = boxes[0][0]
+        self.assertAlmostEqual(float(bx), 296.0, places=3)
+        self.assertAlmostEqual(float(by), 228.0, places=3)
+        self.assertAlmostEqual(float(bw), 64.0, places=3)
+        self.assertAlmostEqual(float(bh), 32.0, places=3)
+
 
 class TestSafetyWatchdogLogic(unittest.TestCase):
     def test_upstream_topics_exclude_detection_channel(self):

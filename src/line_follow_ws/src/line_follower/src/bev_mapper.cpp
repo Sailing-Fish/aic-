@@ -206,6 +206,10 @@ void BevMapper::build_live_grid(
     }
   }
 
+  // Save latest road_span for YOLO digit ground-base footprint gating
+  last_road_span_ = road_span.clone();
+  last_roi_top_ = r_top;
+
   // 2) Fast LUT projection of FREE (road_span) and WALL_BLUE (blue_mask + outer black border) into 160x160 BEV!
   for (int i = 0; i < kBevCells; ++i) {
     const size_t idx = static_cast<size_t>(i);
@@ -360,8 +364,8 @@ void BevMapper::build_live_grid(
       const cv::Rect & cone = classified_blobs[j].r_roi;
       const double cone_u = static_cast<double>(cone.x) + 0.5 * static_cast<double>(cone.width);
       const int cone_bot = cone.y + cone.height;
-      const bool horiz_aligned = std::abs(sub_u - cone_u) <= std::max(28.0, 0.70 * cone.width);
-      const bool directly_below = (sub.y >= cone.y) && (sub.y <= cone_bot + 30);
+      const bool horiz_aligned = std::abs(sub_u - cone_u) <= std::max(36.0, 0.85 * cone.width);
+      const bool directly_below = (sub.y >= cone.y) && (sub.y <= cone_bot + 45);
       if (horiz_aligned && directly_below) {
         classified_blobs[j].r_roi = cone | sub;
         classified_blobs.erase(classified_blobs.begin() + static_cast<std::ptrdiff_t>(i));
@@ -496,6 +500,13 @@ bool BevMapper::validate_yolo_digit(
   // 2) Ground projection & physical size check
   const double u_c = static_cast<double>(clipped.x) + 0.5 * static_cast<double>(clipped.width);
   const double v_b = static_cast<double>(clipped.y + clipped.height - 1);
+  if (!last_road_span_.empty()) {
+    const int vx = std::clamp(static_cast<int>(std::round(u_c)), 0, last_road_span_.cols - 1);
+    const int vy = static_cast<int>(std::round(v_b)) - last_roi_top_;
+    if (vy >= 0 && vy < last_road_span_.rows && last_road_span_.at<uint8_t>(vy, vx) == 0) {
+      return false;
+    }
+  }
   if (!projector.pixel_to_ground(u_c, v_b, out_d_m, out_y_m)) {
     return false;
   }
@@ -592,8 +603,10 @@ cv::Mat BevMapper::render_bev_inset(
     }
   }
 
-  // Draw chosen Ackermann predicted arc (yellow) + Pure Pursuit lookahead target (magenta dot)
-  auto draw_arc = [&](double kappa, double len_m, const cv::Scalar & color, int thick) {
+  // Draw sampled feasible 2-stage lattice candidates + winning trajectory (gold) + lookahead marker
+  auto draw_two_stage_arc = [&](
+    double k1, double k2, double s_split, double len_m, const cv::Scalar & color, int thick)
+  {
     if (len_m < 0.03) {
       return;
     }
@@ -601,7 +614,8 @@ cv::Mat BevMapper::render_bev_inset(
     const double ds = 0.04;
     cv::Point prev = to_px(x, y);
     for (double s = ds; s <= len_m + 1e-4; s += ds) {
-      const double dth = kappa * ds;
+      const double ks = (s <= s_split) ? k1 : k2;
+      const double dth = ks * ds;
       x += ds * std::cos(th + 0.5 * dth);
       y += ds * std::sin(th + 0.5 * dth);
       th += dth;
@@ -611,8 +625,23 @@ cv::Mat BevMapper::render_bev_inset(
     }
   };
 
-  draw_arc(plan.chosen_kappa, std::max(0.25, std::min(0.65, plan.lookahead_m + 0.10)), cv::Scalar(0, 220, 255), 2);
-  if (plan.valid_slice_count >= 3) {
+  if (!plan.candidates.empty()) {
+    const size_t stride = std::max<size_t>(1U, plan.candidates.size() / 16U);
+    for (size_t i = 0; i < plan.candidates.size(); i += stride) {
+      const auto & cand = plan.candidates[i];
+      if (!cand.hard_feasible) {
+        continue;
+      }
+      draw_two_stage_arc(
+        cand.kappa, cand.kappa2, cand.s_split_m,
+        std::min(0.65, cand.safe_len_m), cv::Scalar(85, 130, 110), 1);
+    }
+  }
+
+  draw_two_stage_arc(
+    plan.chosen_kappa, plan.chosen_kappa2, plan.chosen_s_split_m,
+    std::max(0.25, std::min(0.75, plan.chosen_safe_len_m)), cv::Scalar(0, 220, 255), 2);
+  if (plan.lookahead_x_m > 0.05) {
     const cv::Point la_pt = to_px(plan.lookahead_x_m, plan.lookahead_y_m);
     cv::circle(vis, la_pt, 4, cv::Scalar(255, 60, 255), -1, cv::LINE_AA);
     cv::circle(vis, la_pt, 5, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
@@ -641,14 +670,14 @@ cv::Mat BevMapper::render_bev_inset(
   // Compact HUD text inside BEV inset
   char txt1[64];
   std::snprintf(
-    txt1, sizeof(txt1), "BEV %s k=%+.2f",
-    topology_phase_to_string(plan.phase), plan.chosen_kappa);
-  cv::putText(vis, txt1, cv::Point(44, 15), cv::FONT_HERSHEY_SIMPLEX, 0.34, cv::Scalar(255, 255, 255), 1);
+    txt1, sizeof(txt1), "BEV %s k=%.2f/%.2f",
+    topology_phase_to_string(plan.phase), plan.chosen_kappa, plan.chosen_kappa2);
+  cv::putText(vis, txt1, cv::Point(44, 15), cv::FONT_HERSHEY_SIMPLEX, 0.33, cv::Scalar(255, 255, 255), 1);
 
   char txt2[64];
   std::snprintf(
-    txt2, sizeof(txt2), "kr=%+.2f ey=%+.2f Ld=%.2f",
-    plan.road_kappa_fit, plan.lat_err_m, plan.lookahead_m);
+    txt2, sizeof(txt2), "kr=%+.2f ey=%+.2f arc=%d",
+    plan.road_kappa_fit, plan.lat_err_m, plan.feasible_arc_count);
   cv::putText(vis, txt2, cv::Point(44, 29), cv::FONT_HERSHEY_SIMPLEX, 0.32, cv::Scalar(200, 245, 255), 1);
 
   if (preflight.checked && !preflight.homography_ok) {

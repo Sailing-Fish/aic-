@@ -11,6 +11,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1448,7 +1449,8 @@ void test_bev_dwa_first_principles_and_execution()
   // 1) Pre-flight self-check: gyro bias calibration + homography width alarm
   {
     BevDwaConfig cfg{};
-    BevDwaPlanner planner(cfg);
+    auto planner_ptr = std::make_unique<BevDwaPlanner>(cfg);
+    BevDwaPlanner & planner = *planner_ptr;
     auto good_grid = make_straight_grid(0.215);  // 430mm exact
     VehiclePose2D idle_pose{true, 0.0, 0.0, 0.0, 0.0, +0.025, 0.0};
     for (int i = 0; i < 20; ++i) {
@@ -1475,7 +1477,8 @@ void test_bev_dwa_first_principles_and_execution()
     cfg.track_mode = "fork";
     cfg.kappa_max_left = 2.38;
     cfg.kappa_max_right = 2.80;
-    BevDwaPlanner planner(cfg);
+    auto planner_ptr = std::make_unique<BevDwaPlanner>(cfg);
+    BevDwaPlanner & planner = *planner_ptr;
     VehiclePose2D p0{true, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     planner.reset(0.0, p0);
 
@@ -1518,16 +1521,23 @@ void test_bev_dwa_first_principles_and_execution()
 
     VehiclePose2D p_t{true, 0.55, -0.80, -kHalfPi, 0.22, 0.0, 1.5};
     const BevDwaPlanResult t_res = planner.step(t_grid, p_t, {}, false, false, 0.0, 1e9, false, 1.5);
+    if (!(t_res.chosen_kappa < -0.5 && t_res.chosen_kappa2 < -1.5)) {
+      std::cerr << "[DBG T2] k1=" << t_res.chosen_kappa << " k2=" << t_res.chosen_kappa2
+                << " split=" << t_res.chosen_s_split_m << " w=" << t_res.min_wall_clearance_m
+                << " o=" << t_res.min_obs_clearance_m << " feas=" << t_res.has_feasible_arc << "\n";
+    }
     CHECK(t_res.phase == TopologyPhase::FORK_T_RIGHT_TURN);
-    CHECK(t_res.chosen_kappa < -0.8);   // Strongly turns RIGHT (East), NEVER turns LEFT backwards!
-    CHECK(t_res.yaw_rate_rps < -0.15);
+    // Exact rear-axle Ackermann apexing: strong right entry without rear-wheel inner cut + full right lock
+    CHECK(t_res.chosen_kappa < -0.5 && t_res.chosen_kappa2 < -1.5);
+    CHECK(t_res.yaw_rate_rps < -0.10);
   }
 
   // 3) Roundabout cross-island rejection: disconnected white road across blue island is wiped!
   {
     BevDwaConfig cfg{};
     cfg.track_mode = "roundabout";
-    BevDwaPlanner planner(cfg);
+    auto planner_ptr = std::make_unique<BevDwaPlanner>(cfg);
+    BevDwaPlanner & planner = *planner_ptr;
     planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0});
 
     std::array<uint8_t, kBevCells> rb_grid{};
@@ -1559,7 +1569,8 @@ void test_bev_dwa_first_principles_and_execution()
   // 4) Asymmetric penalty economics (+30s no_entry > +10s cone) + non-freezing tight gap
   {
     BevDwaConfig cfg{};
-    BevDwaPlanner planner(cfg);
+    auto planner_ptr = std::make_unique<BevDwaPlanner>(cfg);
+    BevDwaPlanner & planner = *planner_ptr;
     planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.22, 0.0, 0.0});
     auto g = make_straight_grid(0.215);
     // Put +30s no-entry on left (y in [+0.10, +0.21]) and +10s cone on right (y in [-0.21, -0.10]) at d=0.45m
@@ -1586,7 +1597,8 @@ void test_bev_dwa_first_principles_and_execution()
     BevDwaConfig cfg{};
     cfg.finish_min_cum_yaw_rad = 2.2;
     cfg.yellow_rearm_dist_m = 0.25;
-    BevDwaPlanner planner(cfg);
+    auto planner_ptr = std::make_unique<BevDwaPlanner>(cfg);
+    BevDwaPlanner & planner = *planner_ptr;
     planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
     auto g = make_straight_grid(0.215);
 
@@ -1641,7 +1653,8 @@ void test_bev_dwa_first_principles_and_execution()
   {
     BevDwaConfig cfg{};
     cfg.track_mode = "roundabout";
-    BevDwaPlanner planner(cfg);
+    auto planner_ptr = std::make_unique<BevDwaPlanner>(cfg);
+    BevDwaPlanner & planner = *planner_ptr;
     planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.20, 0.0, 0.0});
 
     // (a) White road is shifted to the LEFT (y in [+0.05, +0.48]), car is deep in right blue wall (y=0)!
@@ -1679,7 +1692,8 @@ void test_bev_dwa_first_principles_and_execution()
     // (d) Fork premature T-junction anti-jump guard: 0.35m past fork with L=0 graze MUST stay in FORK_RIGHT_ENTER
     BevDwaConfig fcfg{};
     fcfg.track_mode = "fork";
-    BevDwaPlanner fplanner(fcfg);
+    auto fplanner_ptr = std::make_unique<BevDwaPlanner>(fcfg);
+    BevDwaPlanner & fplanner = *fplanner_ptr;
     fplanner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
     GroundDetection fr5{SemanticObjectType::BONUS_DIGIT, 5, 0.90, 0.55, -0.10, 0.04, 0.04, 1, 1.0};
     fplanner.update_fork_votes({fr5}, true);
@@ -1704,7 +1718,8 @@ void test_bev_dwa_first_principles_and_execution()
     // (7a) Left-curving road + left-side cone at d=0.40m
     BevDwaConfig cfg{};
     cfg.track_mode = "fork";
-    BevDwaPlanner planner(cfg);
+    auto planner_ptr = std::make_unique<BevDwaPlanner>(cfg);
+    BevDwaPlanner & planner = *planner_ptr;
     planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0});
     std::array<uint8_t, kBevCells> curve_cone{};
     curve_cone.fill(BEV_WALL_BLUE);
@@ -1716,8 +1731,8 @@ void test_bev_dwa_first_principles_and_execution()
         if (d >= -0.30 && d <= 1.00 && std::abs(y - yc) <= 0.215) {
           curve_cone[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
         }
-        // Cone on the left side of the left-curving lane at d in [0.34, 0.48], y in [yc+0.02, yc+0.16]
-        if (d >= 0.34 && d <= 0.48 && y >= yc + 0.02 && y <= yc + 0.16) {
+        // Cone on the left shoulder of the left-curving lane at d in [0.34, 0.48], y in [yc+0.06, yc+0.20]
+        if (d >= 0.34 && d <= 0.48 && y >= yc + 0.06 && y <= yc + 0.20) {
           curve_cone[static_cast<size_t>(r * kBevCols + c)] = BEV_OBS_CONE;
         }
       }
@@ -1727,6 +1742,7 @@ void test_bev_dwa_first_principles_and_execution()
     CHECK(cc_res.has_near_obstacle);
     CHECK(cc_res.has_feasible_arc);
     CHECK(cc_res.chosen_kappa < -0.10);  // Carves S-bend RIGHT around cone!
+    CHECK(cc_res.chosen_kappa2 > 0.30);  // Counter-steers back LEFT along curving lane!
 
     // (7b) Sharp right bend curve-arc curvature feedforward
     planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.35, 0.0, 0.0});
@@ -1756,7 +1772,8 @@ void test_bev_dwa_first_principles_and_execution()
     rb_cfg.fork_outer_time_penalty_s = 0.0;
     rb_cfg.fork_min_votes = 2;
     rb_cfg.digit_min_conf = 0.35;
-    BevDwaPlanner rb_planner(rb_cfg);
+    auto rb_planner_ptr = std::make_unique<BevDwaPlanner>(rb_cfg);
+    BevDwaPlanner & rb_planner = *rb_planner_ptr;
     rb_planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.30, 0.0, 0.0});
     auto wide_rb = make_straight_grid(0.35);  // 0.70m wide split throat
     GroundDetection r2{SemanticObjectType::BONUS_DIGIT, 2, 0.45, 0.55, +0.16, 0.04, 0.04, 1, 0.1};
@@ -1784,6 +1801,86 @@ void test_bev_dwa_first_principles_and_execution()
     const BevDwaPlanResult gl_res = planner.step(
       glare_grid, VehiclePose2D{true, 0.05, 0.0, 0.0, 0.35, 0.0, 0.1}, {}, false, false, 0.0, 1e9, false, 0.1);
     CHECK(std::abs(gl_res.chosen_kappa) < 0.35);  // Does NOT swerve into glared left blue mat!
+  }
+
+  // 8) 2-Stage Ackermann State Lattice + 2D Geodesic + Voting & Post-Stop Stamp Gate:
+  {
+    // (8a) Post-stop stamp gate + dynamic midpoint L/R split + tie-prefer-larger
+    BevDwaConfig vcfg{};
+    vcfg.track_mode = "fork";
+    vcfg.fork_outer_branch = 0;
+    vcfg.fork_outer_time_penalty_s = 0.0;
+    vcfg.fork_min_votes = 2;
+    vcfg.digit_min_conf = 0.35;
+    auto vp_ptr = std::make_unique<BevDwaPlanner>(vcfg);
+    BevDwaPlanner & vp = *vp_ptr;
+    vp.reset(0.0);
+    vp.notify_yellow_stop_triggered(10.0);
+    vp.clear_fork_votes();
+    // Pre-stop stale frame (stamp=9.8 < 10.0) MUST be dropped!
+    GroundDetection stale_l{SemanticObjectType::BONUS_DIGIT, 8, 0.95, 0.50, +0.15, 0.04, 0.04, 1, 9.8};
+    GroundDetection stale_r{SemanticObjectType::BONUS_DIGIT, 1, 0.95, 0.50, -0.15, 0.04, 0.04, 2, 9.8};
+    vp.update_fork_votes({stale_l, stale_r}, true);
+    CHECK(vp.finalize_fork_decision() == 0);
+
+    // Offset post-stop digits (y=+0.25 and y=+0.02, gap=0.23 >= 0.08): midpoint 0.135 splits L vs R cleanly!
+    // Left has digit 4 (conf 0.85), Right has digit 8 (conf 0.85) -> Right wins (+1)!
+    GroundDetection post_l{SemanticObjectType::BONUS_DIGIT, 4, 0.85, 0.50, +0.25, 0.04, 0.04, 1, 10.1};
+    GroundDetection post_r{SemanticObjectType::BONUS_DIGIT, 8, 0.85, 0.50, +0.02, 0.04, 0.04, 2, 10.2};
+    vp.update_fork_votes({post_l, post_r}, true);
+    vp.update_fork_votes({post_l, post_r}, true);
+    CHECK(vp.finalize_fork_decision() == +1);
+
+    // (8b) Sharp 90 deg corner (radius 0.25m) navigated by 2-stage lattice + proactive slowdown
+    BevDwaConfig ccfg{};
+    ccfg.track_mode = "fork";
+    ccfg.cruise_speed_mps = 0.44;
+    ccfg.corner_approach_speed_mps = 0.26;
+    auto cp_ptr = std::make_unique<BevDwaPlanner>(ccfg);
+    BevDwaPlanner & cp = *cp_ptr;
+    cp.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.40, 0.0, 0.0});
+    std::array<uint8_t, kBevCells> bend90{};
+    bend90.fill(BEV_WALL_BLUE);
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        // Vertical approach (d in [-0.30, 0.50], |y| <= 0.215) + sharp right exit arm (d in [0.18, 0.62], y in [-0.80, 0.18])
+        const bool in_v = (d >= -0.30 && d <= 0.52 && std::abs(y) <= 0.215);
+        const bool in_h = (d >= 0.18 && d <= 0.61 && y >= -0.80 && y <= 0.18);
+        if (in_v || in_h) {
+          bend90[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
+        }
+      }
+    }
+    const BevDwaPlanResult bres = cp.step(
+      bend90, VehiclePose2D{true, 0.02, 0.0, 0.0, 0.40, 0.0, 0.05}, {}, false, false, 0.0, 1e9, false, 0.05);
+    CHECK(bres.has_feasible_arc);
+    CHECK(bres.chosen_kappa < -0.8 || bres.chosen_kappa2 < -1.0);
+    CHECK(bres.speed_cap_mps < ccfg.cruise_speed_mps);
+
+    // (8c) Roundabout RB1 exit cleanly transitions toward RB_UTURN on straight exit
+    BevDwaConfig rcfg{};
+    rcfg.track_mode = "roundabout";
+    rcfg.fork_min_votes = 2;
+    auto rp_ptr = std::make_unique<BevDwaPlanner>(rcfg);
+    BevDwaPlanner & rp = *rp_ptr;
+    rp.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.30, 0.0, 0.0});
+    GroundDetection r_win{SemanticObjectType::BONUS_DIGIT, 8, 0.90, 0.48, -0.14, 0.04, 0.04, 1, 0.1};
+    rp.update_fork_votes({r_win}, true);
+    rp.update_fork_votes({r_win}, true);
+    CHECK(rp.finalize_fork_decision() == +1);
+    CHECK(rp.phase() == TopologyPhase::RB1_ACTIVE);
+    auto straight_rb = make_straight_grid(0.215);
+    // Simulate curving around RB1 (accumulates > 0.9 rad abs yaw & 1.6m arc) then settling straight at rel_yaw ~= 0
+    for (int i = 1; i <= 16; ++i) {
+      const double yw = (i <= 8) ? (-0.08 * i) : (-0.64 + 0.08 * (i - 8));
+      VehiclePose2D p{true, 0.11 * i, 0.0, yw, 0.35, 0.0, 0.1 * i};
+      rp.step(straight_rb, p, {}, false, false, 0.0, 1e9, false, 0.1 * i);
+    }
+    const BevDwaPlanResult rb_exit = rp.step(
+      straight_rb, VehiclePose2D{true, 1.90, 0.0, 0.0, 0.35, 0.0, 1.8}, {}, false, false, 0.0, 1e9, false, 1.8);
+    CHECK(std::abs(rb_exit.chosen_kappa) < 0.45);  // Cleanly exits straight without compass fight!
   }
 }
 

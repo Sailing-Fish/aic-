@@ -37,20 +37,34 @@ FORCED_TRAIN_AUG_KWARGS = {
 
 LOCAL_PRETRAINED_FALLBACKS = (
     Path("yolov8n.pt"),
+    Path("weights/yolov8n.pt"),
+    Path("yolov8s.pt"),
+    Path("weights/yolov8s.pt"),
     Path(r"d:\ultralytics-main\ultralytics-main\yolov8n.pt"),
 )
 
 
 def resolve_model_path(model_arg: str) -> str:
-    """优先使用用户指定路径或本地预置 yolov8n.pt 权重。"""
+    """优先使用用户指定路径或本地预置 yolov8 权重。"""
     p = Path(model_arg)
     if p.is_file():
         return str(p)
-    if model_arg == "yolov8n.pt":
-        for cand in LOCAL_PRETRAINED_FALLBACKS:
-            if cand.is_file():
-                return str(cand)
+    name = p.name
+    for cand in LOCAL_PRETRAINED_FALLBACKS:
+        if cand.name == name and cand.is_file():
+            return str(cand)
     return model_arg
+
+
+def _crop_roi_for_infer(img: np.ndarray, roi_crop_top_px: int, target_sz: int = 640) -> tuple[np.ndarray, float, float, float]:
+    H, W = img.shape[:2]
+    if roi_crop_top_px <= 0:
+        return img, 1.0, 1.0, 0.0
+    roi_top = max(0, min(int(roi_crop_top_px), H - 32))
+    crop = img[roi_top:H, :]
+    roi_h = float(max(1, H - roi_top))
+    resized = cv2.resize(crop, (target_sz, target_sz), interpolation=cv2.INTER_LINEAR)
+    return resized, float(target_sz) / float(W), float(target_sz) / roi_h, float(roi_top)
 
 
 def build_prediction_collage(
@@ -63,8 +77,9 @@ def build_prediction_collage(
     max_images: int = 9,
     cols: int = 3,
     cell_size: tuple[int, int] = (640, 480),
+    roi_crop_top_px: int = 0,
 ) -> Path:
-    """对给定图片列表运行 YOLO predict 并拼成网格对比图保存。"""
+    """对给定图片列表运行 YOLO predict 并拼成网格对比图保存（支持 roi_crop_top_px 原图坐标回绘）。"""
     selected = list(image_paths)[:max_images]
     if not selected:
         raise ValueError("image_paths is empty; cannot build prediction collage")
@@ -72,28 +87,62 @@ def build_prediction_collage(
     cells: List[np.ndarray] = []
     cw, ch = cell_size
     for img_p in selected:
-        results = model.predict(
-            source=str(img_p),
-            imgsz=imgsz,
-            conf=conf,
-            device=device,
-            verbose=False,
-        )
-        plotted = results[0].plot() if results else cv2.imdecode(np.fromfile(str(img_p), dtype=np.uint8), cv2.IMREAD_COLOR)
-        if plotted is None:
-            plotted = np.zeros((ch, cw, 3), dtype=np.uint8)
+        orig = cv2.imdecode(np.fromfile(str(img_p), dtype=np.uint8), cv2.IMREAD_COLOR)
+        if orig is None:
+            cells.append(np.zeros((ch, cw, 3), dtype=np.uint8))
+            continue
+
+        if roi_crop_top_px > 0:
+            inp, sx, sy, oy = _crop_roi_for_infer(orig, roi_crop_top_px, target_sz=imgsz)
+            results = model.predict(
+                source=inp,
+                imgsz=imgsz,
+                conf=conf,
+                device=device,
+                verbose=False,
+            )
+            plotted = orig.copy()
+            cv2.line(plotted, (0, int(oy)), (orig.shape[1], int(oy)), (0, 220, 220), 1)
+            if results and results[0].boxes is not None:
+                names = results[0].names
+                for bx in results[0].boxes:
+                    x1, y1, x2, y2 = bx.xyxy[0].tolist()
+                    ox1, oy1 = int(round(x1 / sx)), int(round(y1 / sy + oy))
+                    ox2, oy2 = int(round(x2 / sx)), int(round(y2 / sy + oy))
+                    cid = int(bx.cls[0].item())
+                    sc = float(bx.conf[0].item())
+                    cname = names.get(cid, str(cid)) if isinstance(names, dict) else str(cid)
+                    cv2.rectangle(plotted, (ox1, oy1), (ox2, oy2), (40, 240, 60), 2)
+                    cv2.putText(
+                        plotted,
+                        f"{cname} {sc:.2f}",
+                        (max(2, ox1), max(16, oy1 - 4)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (40, 240, 60),
+                        2,
+                        cv2.LINE_AA,
+                    )
         else:
-            # 保持比例缩放并填充黑边到统一格子大小，方便拼接横竖不同比例的实拍图
-            ih, iw = plotted.shape[:2]
-            scale = min(cw / max(1, iw), ch / max(1, ih))
-            nw, nh = max(1, int(round(iw * scale))), max(1, int(round(ih * scale)))
-            resized = cv2.resize(plotted, (nw, nh), interpolation=cv2.INTER_LINEAR)
-            canvas_cell = np.full((ch, cw, 3), 24, dtype=np.uint8)
-            ox = (cw - nw) // 2
-            oy = (ch - nh) // 2
-            canvas_cell[oy:oy + nh, ox:ox + nw] = resized
-            plotted = canvas_cell
-        cv2.putText(plotted, img_p.name[:32], (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2, cv2.LINE_AA)
+            results = model.predict(
+                source=str(img_p),
+                imgsz=imgsz,
+                conf=conf,
+                device=device,
+                verbose=False,
+            )
+            plotted = results[0].plot() if results else orig
+
+        ih, iw = plotted.shape[:2]
+        scale = min(cw / max(1, iw), ch / max(1, ih))
+        nw, nh = max(1, int(round(iw * scale))), max(1, int(round(ih * scale)))
+        resized = cv2.resize(plotted, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        canvas_cell = np.full((ch, cw, 3), 24, dtype=np.uint8)
+        ox = (cw - nw) // 2
+        oy = (ch - nh) // 2
+        canvas_cell[oy:oy + nh, ox:ox + nw] = resized
+        plotted = canvas_cell
+        cv2.putText(plotted, img_p.name[:34], (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 255), 2, cv2.LINE_AA)
         cells.append(plotted)
 
     n = len(cells)
@@ -125,11 +174,41 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     ap.add_argument("--project", default="runs/digits8", help="Ultralytics 输出根目录")
     ap.add_argument("--name", default="yolov8n_digits8", help="本次实验名称")
     ap.add_argument("--opset", type=int, choices=[11, 12], default=11, help="ONNX opset 版本（RDK X5 推荐 11 或 12）")
+    ap.add_argument("--optimizer", default="AdamW", help="优化器（如 AdamW / SGD / auto）")
+    ap.add_argument("--lr0", type=float, default=0.002, help="初始学习率")
+    ap.add_argument("--patience", type=int, default=20, help="早停耐心轮数")
+    ap.add_argument("--cos-lr", action="store_true", help="启用余弦学习率衰减")
+    ap.add_argument("--roi-crop-top", type=int, default=0, help="推理实拍盲测图时使用的顶部 ROI 裁剪像素")
+    ap.add_argument("--real-val-yaml", default=None, help="可选：独立实拍留出验证集 YAML")
+    ap.add_argument("--stress-val-yaml", default=None, help="可选：换人换笔+重度蓝盘干扰压测集 YAML")
     ap.add_argument("--val-pred-out", default=None, help="可选：保存验证集预测拼图路径")
     ap.add_argument("--real-images", nargs="*", default=None, help="可选：实拍验证图路径列表")
     ap.add_argument("--real-pred-out", default=None, help="可选：实拍图预测拼图输出路径")
     ap.add_argument("--conf", type=float, default=0.25, help="预测可视化置信度阈值")
     return ap.parse_args(argv)
+
+
+def _eval_and_report_yaml(best_model, yaml_path: Path, tag: str, imgsz: int, device: str) -> None:
+    if not yaml_path.is_file():
+        print(f"[{tag}] skipped (not found): {yaml_path}")
+        return
+    m = best_model.val(data=str(yaml_path), imgsz=imgsz, device=device, verbose=False)
+    box = getattr(m, "box", None)
+    if box is None:
+        return
+    print(
+        f"[{tag}] P={float(box.mp):.4f} R={float(box.mr):.4f} "
+        f"mAP50={float(box.map50):.4f} mAP50-95={float(box.map):.4f}"
+    )
+    ap50 = getattr(box, "ap50", None)
+    ap_class_index = getattr(box, "ap_class_index", None)
+    names = getattr(best_model, "names", {})
+    if ap50 is not None and ap_class_index is not None:
+        per_cls = []
+        for idx, val_ap in zip(ap_class_index, ap50):
+            cname = names.get(int(idx), str(int(idx))) if isinstance(names, dict) else str(int(idx))
+            per_cls.append(f"{cname}:{float(val_ap):.3f}")
+        print(f"[{tag}] per-class mAP50: " + " | ".join(per_cls))
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -156,6 +235,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         workers=args.workers,
         project=args.project,
         name=args.name,
+        optimizer=args.optimizer,
+        lr0=args.lr0,
+        patience=args.patience,
+        cos_lr=args.cos_lr,
+        translate=0.12,
+        scale=0.35,
+        mosaic=0.8,
         exist_ok=True,
         **FORCED_TRAIN_AUG_KWARGS,
     )
@@ -174,6 +260,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     map50_95 = float(getattr(box_metrics, "map", 0.0)) if box_metrics is not None else 0.0
     mp = float(getattr(box_metrics, "mp", 0.0)) if box_metrics is not None else 0.0
     mr = float(getattr(box_metrics, "mr", 0.0)) if box_metrics is not None else 0.0
+    _eval_and_report_yaml(best_model, data_yaml, "MAIN_VAL", args.imgsz, args.device)
+    if args.real_val_yaml:
+        _eval_and_report_yaml(best_model, Path(args.real_val_yaml).resolve(), "REAL_UNSEEN_VAL", args.imgsz, args.device)
+    if args.stress_val_yaml:
+        _eval_and_report_yaml(best_model, Path(args.stress_val_yaml).resolve(), "FINALS_STRESS_VAL", args.imgsz, args.device)
 
     onnx_exported = best_model.export(
         format="onnx",
@@ -195,6 +286,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             vp_out = build_prediction_collage(
                 best_model, sample_vals, Path(args.val_pred_out),
                 imgsz=args.imgsz, conf=args.conf, device=args.device,
+                roi_crop_top_px=0,  # 验证集图片已是 ROI 裁剪图
             )
             print(f"[VAL_PRED] saved: {vp_out}")
 
@@ -204,6 +296,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             rp_out = build_prediction_collage(
                 best_model, real_paths, Path(args.real_pred_out),
                 imgsz=args.imgsz, conf=args.conf, device=args.device, max_images=len(real_paths), cols=2,
+                roi_crop_top_px=args.roi_crop_top,
             )
             print(f"[REAL_PRED] saved: {rp_out}")
 

@@ -30,7 +30,7 @@ struct BevMapperConfig
 
   // Physical YOLO digit gate thresholds
   double digit_max_red_ratio{0.08};
-  double digit_max_blue_ratio{0.45};
+  double digit_max_blue_ratio{0.68};
   double digit_min_ground_w_m{0.035};
   double digit_max_ground_w_m{0.30};
 };
@@ -94,6 +94,8 @@ private:
   std::array<double, 9> lut_h_{};
   std::array<int32_t, kBevCells> lut_u_{};
   std::array<int32_t, kBevCells> lut_v_{};
+  cv::Mat last_road_span_{};
+  int last_roi_top_{0};
 };
 
 }  // namespace line_follower

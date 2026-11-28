@@ -1,0 +1,2102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>从零看懂新版 BEV+DWA 智能车 · AIC 2026 第一性原理互动白盒指南</title>
+<style>
+  :root {
+    /* 暖米白纸张底色体系（延续 finals_whitebox_guide.html） */
+    --paper: #fbf8f2;
+    --paper-deep: #f3ede2;
+    --card: #ffffff;
+    --border: #e7dfd1;
+    --border-strong: #d6cab6;
+    --ink: #24211d;
+    --ink-soft: #534c43;
+    --ink-muted: #857c6f;
+
+    /* 5 套语义重点色 */
+    --blue-bg: #eef5ff;   --blue-bd: #bfd8fe;   --blue-fg: #1d4ed8;   --blue-hl: #dbeafe;
+    --green-bg: #ecfdf5;  --green-bd: #a7f3d0;  --green-fg: #047857;  --green-hl: #d1fae5;
+    --amber-bg: #fffbeb;  --amber-bd: #fde68a;  --amber-fg: #b45309;  --amber-hl: #fef3c7;
+    --red-bg: #fef2f2;    --red-bd: #fecaca;    --red-fg: #b91c1c;    --red-hl: #fee2e2;
+    --purple-bg: #f5f3ff; --purple-bd: #ddd6fe; --purple-fg: #6d28d9; --purple-hl: #ede9fe;
+
+    --radius: 14px;
+    --shadow: 0 6px 24px rgba(72, 56, 32, 0.05);
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
+    --sans: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.85 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 顶部阅读进度条 */
+  .progress-bar {
+    position: fixed; top: 0; left: 0; height: 3px; width: 0%;
+    background: linear-gradient(90deg, #1d4ed8, #047857, #d97706);
+    z-index: 100; transition: width 0.08s linear;
+  }
+
+  /* 两栏布局：左侧轻目录 + 中间宽裕流式正文 */
+  .layout {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    max-width: 1220px;
+    margin: 0 auto;
+    padding: 0 24px;
+    gap: 44px;
+  }
+
+  .toc {
+    position: sticky;
+    top: 28px;
+    width: 242px;
+    flex-shrink: 0;
+    padding: 20px 18px;
+    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(8px);
+    max-height: calc(100vh - 56px);
+    overflow-y: auto;
+  }
+  .toc-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--ink-muted);
+    text-transform: uppercase;
+    margin: 0 0 12px;
+  }
+  .toc a {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 10px;
+    margin: 2px 0;
+    border-radius: 8px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 13.5px;
+    line-height: 1.45;
+    transition: all 0.15s;
+  }
+  .toc a .num {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-muted);
+    flex-shrink: 0;
+  }
+  .toc a:hover { background: var(--paper-deep); color: var(--ink); }
+  .toc a.active {
+    background: var(--blue-bg);
+    color: var(--blue-fg);
+    font-weight: 600;
+  }
+  .toc a.active .num { color: var(--blue-fg); }
+
+  .article {
+    flex: 1;
+    min-width: 0;
+    max-width: 820px;
+    padding: 44px 0 120px;
+  }
+
+  /* 封面区 */
+  .hero {
+    padding-bottom: 32px;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 40px;
+  }
+  .hero-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--green-bg);
+    border: 1px solid var(--green-bd);
+    color: var(--green-fg);
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .hero h1 {
+    font-size: 33px;
+    line-height: 1.28;
+    margin: 0 0 14px;
+    letter-spacing: -0.02em;
+    color: #1a1714;
+  }
+  .hero-lead {
+    font-size: 16.5px;
+    color: var(--ink-soft);
+    margin: 0 0 22px;
+    line-height: 1.82;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    padding: 14px 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 13px;
+  }
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--ink-soft);
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot-blue { background: var(--blue-fg); }
+  .dot-green { background: var(--green-fg); }
+  .dot-amber { background: #d97706; }
+  .dot-red { background: var(--red-fg); }
+  .dot-purple { background: var(--purple-fg); }
+
+  /* 章节标题 */
+  section.chapter {
+    margin: 62px 0 0;
+    padding-top: 12px;
+  }
+  .chapter-eyebrow {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--blue-fg);
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+  }
+  .chapter-eyebrow .file-pill {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: var(--purple-bg);
+    border: 1px solid var(--purple-bd);
+    color: var(--purple-fg);
+  }
+  section.chapter h2 {
+    font-size: 24.5px;
+    line-height: 1.35;
+    margin: 0 0 16px;
+    color: #191613;
+  }
+  section.chapter h3 {
+    font-size: 18px;
+    margin: 28px 0 10px;
+    color: #2c2721;
+  }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin-bottom: 8px; }
+
+  /* 荧光笔高亮 */
+  mark {
+    padding: 1px 6px;
+    border-radius: 5px;
+    color: inherit;
+    font-weight: 600;
+  }
+  mark.hl-blue { background: var(--blue-hl); color: #1e3a8a; }
+  mark.hl-green { background: var(--green-hl); color: #065f46; }
+  mark.hl-amber { background: var(--amber-hl); color: #92400e; }
+  mark.hl-red { background: var(--red-hl); color: #991b1b; }
+  mark.hl-purple { background: var(--purple-hl); color: #5b21b6; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.87em;
+    background: var(--paper-deep);
+    padding: 2px 6px;
+    border-radius: 5px;
+    color: #3c352c;
+  }
+  .param {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    background: var(--amber-bg);
+    border: 1px solid var(--amber-bd);
+    color: var(--amber-fg);
+    padding: 1px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .param-retired {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: #f3f1ec;
+    border: 1px dashed var(--border-strong);
+    color: var(--ink-muted);
+    padding: 1px 7px;
+    border-radius: 6px;
+    text-decoration: line-through;
+    white-space: nowrap;
+  }
+  .code-ref {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: var(--purple-bg);
+    border: 1px solid var(--purple-bd);
+    color: var(--purple-fg);
+    padding: 1px 7px;
+    border-radius: 6px;
+  }
+
+  /* 提示卡片 */
+  .callout {
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 22px 0;
+    border: 1px solid;
+  }
+  .callout-title {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .callout p:last-child, .callout ul:last-child { margin-bottom: 0; }
+  .callout.green { background: var(--green-bg); border-color: var(--green-bd); }
+  .callout.green .callout-title { color: var(--green-fg); }
+  .callout.blue { background: var(--blue-bg); border-color: var(--blue-bd); }
+  .callout.blue .callout-title { color: var(--blue-fg); }
+  .callout.amber { background: var(--amber-bg); border-color: var(--amber-bd); }
+  .callout.amber .callout-title { color: var(--amber-fg); }
+  .callout.red { background: var(--red-bg); border-color: var(--red-bd); }
+  .callout.red .callout-title { color: var(--red-fg); }
+  .callout.purple { background: var(--purple-bg); border-color: var(--purple-bd); }
+  .callout.purple .callout-title { color: var(--purple-fg); }
+
+  /* 公式卡片 */
+  .formula-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--blue-fg);
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin: 22px 0;
+    box-shadow: var(--shadow);
+  }
+  .formula-eq {
+    font-family: var(--mono);
+    font-size: 14.5px;
+    font-weight: 700;
+    color: #1e3a8a;
+    background: var(--blue-bg);
+    padding: 10px 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin-bottom: 12px;
+    line-height: 1.65;
+  }
+  .formula-glossary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px 16px;
+    font-size: 14px;
+    color: var(--ink-soft);
+  }
+
+  /* 流水线卡片 */
+  .pipeline-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+    gap: 12px;
+    margin: 24px 0;
+  }
+  .pipe-step {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    text-decoration: none;
+    color: inherit;
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  }
+  .pipe-step:hover {
+    transform: translateY(-2px);
+    border-color: var(--blue-bd);
+    box-shadow: 0 8px 22px rgba(29, 78, 216, 0.08);
+  }
+  .pipe-step .step-tag {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--blue-fg);
+    margin-bottom: 4px;
+  }
+  .pipe-step .step-name {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 4px;
+    color: var(--ink);
+  }
+  .pipe-step .step-desc {
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.5;
+  }
+
+  /* 3列/2列对比卡片 */
+  .three-col {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px;
+    margin: 20px 0;
+  }
+  .two-col {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin: 20px 0;
+  }
+  .mini-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .mini-card h4 { margin: 0 0 8px; font-size: 15.5px; }
+  .mini-card p:last-child, .mini-card ul:last-child { margin-bottom: 0; }
+  .mini-card.card-amber { border-color: var(--amber-bd); background: #fffdf7; }
+  .mini-card.card-blue { border-color: var(--blue-bd); background: #f8fbff; }
+  .mini-card.card-green { border-color: var(--green-bd); background: #f6fef9; }
+  .mini-card.card-muted { border-style: dashed; background: #faf7f1; }
+
+  /* 表格 */
+  table.clean-tbl {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 18px 0 22px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    font-size: 14px;
+  }
+  table.clean-tbl th, table.clean-tbl td {
+    text-align: left;
+    padding: 10px 13px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.clean-tbl th {
+    background: var(--paper-deep);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    font-weight: 700;
+  }
+  table.clean-tbl tr:last-child td { border-bottom: none; }
+
+  /* 内嵌交互实验室 */
+  .widget {
+    background: var(--card);
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    padding: 22px 24px;
+    margin: 28px 0;
+    box-shadow: var(--shadow);
+  }
+  .widget-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .widget-title {
+    font-weight: 700;
+    font-size: 16.5px;
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .widget-badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--green-bg);
+    border: 1px solid var(--green-bd);
+    color: var(--green-fg);
+  }
+  .widget-intro {
+    font-size: 14px;
+    color: var(--ink-soft);
+    margin: 0 0 16px;
+  }
+
+  .controls-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 14px 20px;
+    margin-bottom: 16px;
+  }
+  .ctrl { display: flex; flex-direction: column; gap: 4px; }
+  .ctrl-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+  }
+  .ctrl-val {
+    font-family: var(--mono);
+    font-weight: 700;
+    color: var(--blue-fg);
+    background: var(--blue-bg);
+    padding: 1px 7px;
+    border-radius: 5px;
+    font-size: 12.5px;
+  }
+  input[type="range"] { width: 100%; accent-color: #1d4ed8; cursor: pointer; }
+
+  .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .pill-btn {
+    border: 1px solid var(--border-strong);
+    background: var(--paper);
+    color: var(--ink-soft);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 13.5px;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .pill-btn:hover { background: var(--paper-deep); color: var(--ink); }
+  .pill-btn.active {
+    background: var(--blue-fg);
+    border-color: var(--blue-fg);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .canvas-frame {
+    background: #1b1e24;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+  .canvas-frame.light { background: #fcfaf6; }
+  canvas { display: block; width: 100%; height: auto; }
+
+  .readout-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .readout {
+    background: var(--paper);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .readout .rk { font-size: 12px; color: var(--ink-muted); }
+  .readout .rv { font-family: var(--mono); font-size: 16.5px; font-weight: 700; color: var(--ink); margin-top: 2px; }
+  .readout.good { background: var(--green-bg); border-color: var(--green-bd); }
+  .readout.good .rv { color: var(--green-fg); }
+  .readout.warn { background: var(--amber-bg); border-color: var(--amber-bd); }
+  .readout.warn .rv { color: var(--amber-fg); }
+  .readout.bad { background: var(--red-bg); border-color: var(--red-bd); }
+  .readout.bad .rv { color: var(--red-fg); }
+
+  /* 折叠源码抽屉 */
+  details.code-drawer {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 18px;
+    margin: 18px 0;
+  }
+  details.code-drawer summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14.5px;
+    color: var(--purple-fg);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  details.code-drawer summary::before {
+    content: "▸";
+    display: inline-block;
+    transition: transform 0.15s;
+  }
+  details.code-drawer[open] summary::before { transform: rotate(90deg); }
+  details.code-drawer .drawer-body {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border);
+    font-size: 14.5px;
+    color: var(--ink-soft);
+  }
+
+  /* 调参搜索急救卡 */
+  .search-bar { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+  .search-input {
+    flex: 1;
+    min-width: 220px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--card);
+    font: 15px var(--sans);
+    color: var(--ink);
+  }
+  .search-input:focus { outline: 2px solid var(--blue-bd); border-color: var(--blue-fg); }
+
+  .faq-list { display: grid; gap: 14px; }
+  .faq-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    box-shadow: 0 2px 10px rgba(72, 56, 32, 0.03);
+  }
+  .faq-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .faq-q { font-weight: 700; font-size: 16px; color: var(--ink); }
+  .faq-tab {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: var(--amber-bg);
+    border: 1px solid var(--amber-bd);
+    color: var(--amber-fg);
+  }
+  .faq-body { font-size: 14.5px; color: var(--ink-soft); margin: 0; }
+
+  /* 命令行卡片 */
+  pre.cmd {
+    background: #2b2723;
+    color: #f6efe4;
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.65;
+    padding: 16px 18px;
+    border-radius: 12px;
+    overflow-x: auto;
+    margin: 16px 0;
+  }
+  pre.cmd .c { color: #a79e90; }
+
+  /* 状态流图 */
+  .phase-flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 14px 0 20px;
+    padding: 14px 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .phase-pill {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 8px;
+    background: var(--blue-bg);
+    border: 1px solid var(--blue-bd);
+    color: var(--blue-fg);
+  }
+  .phase-pill.key {
+    background: var(--red-bg);
+    border-color: var(--red-bd);
+    color: var(--red-fg);
+  }
+  .phase-pill.ok {
+    background: var(--green-bg);
+    border-color: var(--green-bd);
+    color: var(--green-fg);
+  }
+  .phase-arrow { color: var(--ink-muted); font-weight: 700; }
+
+  /* 第 7 站：问题定性徽章与宽对照表 */
+  .tag-badge {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .tag-logic { background: var(--red-bg); border: 1px solid var(--red-bd); color: var(--red-fg); }
+  .tag-param { background: var(--amber-bg); border: 1px solid var(--amber-bd); color: var(--amber-fg); }
+  .tag-hw    { background: var(--purple-bg); border: 1px solid var(--purple-bd); color: var(--purple-fg); }
+
+  .tbl-wrap {
+    overflow-x: auto;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    box-shadow: var(--shadow);
+    margin: 16px 0 24px;
+  }
+  table.diag-tbl {
+    width: 100%;
+    min-width: 720px;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  table.diag-tbl th, table.diag-tbl td {
+    text-align: left;
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.diag-tbl th {
+    background: var(--paper-deep);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  table.diag-tbl tbody tr:hover { background: #fdfbf7; }
+  table.diag-tbl tr:last-child td { border-bottom: none; }
+  .dont-line { color: var(--red-fg); font-size: 12.5px; margin-top: 4px; display: block; }
+  .do-line   { color: var(--green-fg); font-weight: 600; display: block; }
+  .ev-code   { font-family: var(--mono); font-size: 12px; color: var(--blue-fg); background: var(--blue-bg); padding: 1px 5px; border-radius: 4px; }
+
+  @media (max-width: 1060px) {
+    .layout { flex-direction: column; padding: 0 16px; gap: 0; }
+    .toc {
+      position: static;
+      width: 100%;
+      margin-top: 18px;
+      display: flex;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      gap: 6px;
+      padding: 10px 12px;
+    }
+    .toc-title { display: none; }
+    .toc a { white-space: nowrap; flex-shrink: 0; }
+    .article { padding-top: 24px; }
+    .hero h1 { font-size: 26px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress-bar" id="progressBar"></div>
+
+<div class="layout">
+  <!-- 左侧目录 -->
+  <nav class="toc" id="toc">
+    <div class="toc-title">新版 BEV+DWA 白盒全景</div>
+    <a href="#s0"><span class="num">00</span>先答核心：还要调 v 和 kp 吗？</a>
+    <a href="#s1"><span class="num">01</span>造地图：160×160 鸟瞰栅格</a>
+    <a href="#s2"><span class="num">02</span>防迷路：零黄线计数拓扑指南针</a>
+    <a href="#s3"><span class="num">03</span>大一统：正负权重场 + 29 条圆弧</a>
+    <a href="#s4"><span class="num">04</span>真落地：速度包络 + IMU 闭环执行</a>
+    <a href="#s5"><span class="num">05</span>稳停与自检：黄线刹停与三级保底</a>
+    <a href="#s6"><span class="num">06</span>上实车：4 颗旋钮急救与指令清单</a>
+    <a href="#s7"><span class="num">07</span>排雷总表：调参 vs 算法逻辑对照</a>
+  </nav>
+
+  <!-- 中间流式正文 -->
+  <main class="article">
+    <!-- ==================== 封面 ==================== -->
+    <header class="hero">
+      <div class="hero-kicker">AIC 2026 全国决赛 · 第一性原理架构白盒教程（分支 feat/finals-modular-refactor @ 533ecde）</div>
+      <h1>彻底看懂新版 BEV + 阿克曼 DWA：<br>为什么不再靠“近远带 + 调 kp”，而是一张权重地图统管全场？</h1>
+      <p class="hero-lead">
+        这份指南完全对照当前已推送到分支的实车代码（<code>bev_mapper.cpp</code> + <code>bev_dwa_planner.cpp</code> + <code>line_follower_node.cpp</code>）编写，延续了老版白盒指南的阅读风格。读完之后，你不仅能完全看懂<strong>你设想的“正负权重场大一统”是如何真正在 C++ 里跑起来的</strong>，还能一眼分清：<strong>哪些老参数已经退休、哪些已经按你实测底盘锁死、上实车到底只需要拧哪 4 颗旋钮</strong>。
+      </p>
+      <div class="legend">
+        <span class="legend-item"><i class="dot dot-green"></i><strong>绿色</strong> = 物理直觉 / 生活类比</span>
+        <span class="legend-item"><i class="dot dot-blue"></i><strong>蓝色</strong> = 核心算法 / 真实公式</span>
+        <span class="legend-item"><i class="dot dot-amber"></i><strong>琥珀黄</strong> = 实车真正生效的可调参数</span>
+        <span class="legend-item"><i class="dot dot-red"></i><strong>红色</strong> = 比赛罚时红线 / 必须盯紧的实车风险</span>
+        <span class="legend-item"><i class="dot dot-purple"></i><strong>紫色</strong> = 精确源码位置</span>
+      </div>
+    </header>
+
+    <!-- ==================== 00 调参减负总览 ==================== -->
+    <section class="chapter" id="s0">
+      <div class="chapter-eyebrow">第 0 站 · 先回答你最关心的问题</div>
+      <h2>新版算法还要我手动调 <code>v</code>、<code>kp</code> 那些一堆参数吗？</h2>
+
+      <div class="callout green">
+        <div class="callout-title">✅ 一句话结论：老版转向 <code>kp</code> 彻底退休了！你只需要管 4 颗物理旋钮</div>
+        <p>
+          老算法之所以调到崩溃，是因为<strong>“转向全靠经验凑出来的 <code>corridor_kp_y</code> / <code>heading_gain</code> / 弯道补丁”</strong>——车速一变、弯度一变、换个地垫，<code>kp</code> 就得重新试。
+          新版 <code>bev_dwa</code> 直接在<strong>真实地面米制坐标</strong>里算出“几何上刚好不撞墙的那条圆弧曲率 <code>κ*</code>”，再乘以车速 <code>v</code> 直接得到理论角速度 <code>ω = v · κ*</code>——<strong>这是一个精确的物理等式，不需要你凑转向 <code>kp</code></strong>！
+        </p>
+      </div>
+
+      <h3>把全部参数分成 3 堆：退休的、锁死的、真正要你管的</h3>
+      <div class="three-col">
+        <div class="mini-card card-muted">
+          <h4>🗑️ 彻底退休（不用管了）</h4>
+          <p style="font-size:13.5px;color:var(--ink-soft)">在 <code>bev_planner_mode: bev_dwa</code> 下，这些老参数<strong>完全不生效</strong>：</p>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+            <span class="param-retired">corridor_kp_y</span>
+            <span class="param-retired">corridor_heading_gain</span>
+            <span class="param-retired">near/far_band_*</span>
+            <span class="param-retired">speed_gain_damping</span>
+            <span class="param-retired">active_decel_kp</span>
+            <span class="param-retired">enable_cbf_shield</span>
+            <span class="param-retired">obstacle_steer_horizon_m</span>
+            <span class="param-retired">curve_assist_*</span>
+          </div>
+        </div>
+
+        <div class="mini-card card-blue">
+          <h4>🔒 已按你实测锁死（别乱动）</h4>
+          <p style="font-size:13.5px;color:var(--ink-soft)">用你跑出来的 <code>steer_probe.py</code> 真车数据写入 YAML，代表底盘物理事实：</p>
+          <ul style="font-size:13.5px;margin-top:8px;padding-left:18px">
+            <li><code>bev_wheelbase_m: 0.1395</code></li>
+            <li><code>bev_kappa_max_left: 2.38</code> (+18.0°)</li>
+            <li><code>bev_kappa_max_right: 2.80</code> (-21.4°)</li>
+            <li><code>bev_control_latency_s: 0.09</code></li>
+          </ul>
+        </div>
+
+        <div class="mini-card card-amber">
+          <h4>🎛️ 上实车只需盯这 4 颗旋钮</h4>
+          <ol style="font-size:13.5px;margin-top:8px;padding-left:18px">
+            <li><strong>跑多快</strong>：<span class="param">target_speed</span>（Run1 稳妥 <code>0.42</code>）与过弯稳度 <span class="param">bev_max_lat_accel_mps2</span></li>
+            <li><strong>黄线停哪</strong>：<span class="param">yellow_bumper_margin_m</span>（留白）与 <span class="param">brake_min_cmd_mps</span>（越死区）</li>
+            <li><strong>转向发软/发抖</strong>：<span class="param">bev_imu_yaw_kp</span>（默认 <code>0.35</code>，IMU 内环，不是视觉 kp）</li>
+            <li><strong>换灯光看色</strong>：蓝/红 HSV 阈值（只看鸟瞰小窗准不准）</li>
+          </ol>
+        </div>
+      </div>
+
+      <h3>一帧画面（33ms）在新版里的 6 站流水线</h3>
+      <p>点击任意卡片直接跳到对应章节；你可以发现，整条链路比老版短得多、也直得多——没有多层互相打架的补丁：</p>
+      <div class="pipeline-strip">
+        <a class="pipe-step" href="#s1"><div class="step-tag">第 1 站 · 造地图</div><div class="step-name">BevMapper</div><div class="step-desc">把 640×480 图像直接查表投成 160×160 地面鸟瞰栅格（1cm/格）</div></a>
+        <a class="pipe-step" href="#s2"><div class="step-tag">第 2 站 · 防迷路</div><div class="step-name">拓扑指南针</div><div class="step-desc">IMU 航向+视觉自动归零，不数黄线，T 字口必右转、环岛不逆行</div></a>
+        <a class="pipe-step" href="#s3"><div class="step-tag">第 3 站 · 大一统</div><div class="step-name">29 弧 DWA 打分</div><div class="step-desc">正负代价场 + 三圆车身扫掠 29 条实车可拐圆弧，选综合最高分</div></a>
+        <a class="pipe-step" href="#s4"><div class="step-tag">第 4 站 · 真执行</div><div class="step-name">物理包络 + IMU 闭环</div><div class="step-desc">单一限速曲线 + 几何前馈 + 大角非线性增益 + 陀螺仪内环纠偏</div></a>
+        <a class="pipe-step" href="#s5"><div class="step-tag">第 5 站 · 稳停保底</div><div class="step-name">黄线刹车 + 自检</div><div class="step-desc">越死区反拖急停、双条件重武装、起跑前 2 秒标定自检、防卡死脱困</div></a>
+        <a class="pipe-step" href="#s6"><div class="step-tag">第 6 站 · 上实车</div><div class="step-name">4 旋钮急救表</div><div class="step-desc">怎么看右上角 210×210 鸟瞰小窗、怎么读日志、1 秒切回 legacy</div></a>
+      </div>
+    </section>
+
+    <!-- ==================== 01 BEV 鸟瞰地图 ==================== -->
+    <section class="chapter" id="s1">
+      <div class="chapter-eyebrow">第 1 站 · 从“横切两刀”升级到“上帝视角” <span class="file-pill">bev_mapper.cpp + bev_dwa_planner.cpp</span></div>
+      <h2>造一张真实的地面鸟瞰地图：<code>160×160</code> 栅格（每格 1 厘米）</h2>
+
+      <div class="callout green">
+        <div class="callout-title">💡 一句话生活类比</div>
+        <p>老算法的“近带/远带”，就像开车时把前挡风玻璃全部糊上黑纸，只留两条细缝偷看路面——直道能凑合，一进 T 字口、S 弯或面对前后错位的两个红锥，细缝里的白色宽度瞬间就乱了。新算法把整片地面还原成一张<strong>从正上方俯视的 1:1 迷你地图</strong>，弯就是弯、岛就是岛、红锥在哪占多大地方一目了然。</p>
+      </div>
+
+      <h3>1. 这张鸟瞰地图覆盖多大？每个格子里存什么？</h3>
+      <ul>
+        <li><strong>坐标系（以车头前保险杠中心为原点）</strong>：前后覆盖 <code>d ∈ [-0.35 m, +1.25 m]</code>（含车尾后面 35 cm，专门保护后轮内轮差！），左右覆盖 <code>y ∈ [-0.80 m, +0.80 m]</code>（<code>+y</code> 为左，<code>-y</code> 为右），分辨率 <code>0.01 m/格</code>，一共 <code>160 × 160 = 25,600</code> 字节。</li>
+        <li><strong>极速查表（Static LUT）</strong>：启动时只算一次 <code>160×160</code> 每个地面点对应相机画面的 <code>(u, v)</code> 像素坐标；运行时每帧只做数组查表，零矩阵求逆，RDK X5 上耗时不到 1 毫秒。</li>
+        <li><strong>每格 5 种语义标签</strong>：<code>0=未知</code>、<code>1=白道/黄线/白道内数字(正分)</code>、<code>2=蓝色出界墙+白道外侧黑边线(负分)</code>、<code>3=红色锥桶(负分)</code>、<code>4=红色禁行区(极重负分)</code>。</li>
+        <li><strong>全域带符号距离场（SDF）</strong>：不仅计算白道内到蓝墙的正距离，也计算蓝墙内到最近白道的负距离——哪怕半台车蹭进蓝海，依然有精确指向白道中心的连续恢复梯度，绝不失明、绝不平局锁死满舵。</li>
+      </ul>
+
+      <h3>2. 专门堵死 4 个实车感知大坑</h3>
+      <ol>
+        <li><strong>3D 红路锥“去彗星拖影”</strong>：22 cm 高的立体红锥如果直接做地面单应投影，锥顶会被拉成一条 1 米长的假红墙，把整条路堵死！<code>BevMapper</code> 先按长宽比和顶部出界特征区分<strong>立体红锥</strong>与<strong>平铺红禁区</strong>：红锥只投<strong>底边触地点</strong>，在地图上画一个真实大小的圆（半径 <code>6~8.5 cm</code>）；红禁区则完整投影成地面多边形，且<strong>绝不允许 YOLO 把红禁区误当数字涂白</strong>。</li>
+        <li><strong>车头连通性 BFS（一刀砍掉环岛“隔岛假白道”）</strong>：环岛里隔着蓝色中岛的对面白道也是白色。如果不清理，车会被对面的白道吸向蓝岛。我们从车头出发做一次四邻域泛洪（BFS），<strong>凡是不与车头脚下白道连通的孤立白块，瞬间清零</strong>。</li>
+        <li><strong>保住白道里的深色数字贴纸（不挖洞！）</strong>：你的大一统设想里提到“黑线/深色当负分”，但赛道上的加分数字贴纸本身就是黑字或深蓝底。所以 <code>BevMapper</code> 先把白道左右白边之间的非蓝暗区填回白道，再由 <code>BevDwaPlanner</code> 把面积 <code>&lt; 120</code> 格（约 <code>12 cm²</code>）的封闭小蓝点自动治愈回白道——既不把数字当障碍躲开，也绝不会填掉 2000+ 格的真正蓝色中岛。</li>
+        <li><strong><code>0.55 秒</code> 车底短时记忆（专治后轮内轮差）</strong>：车头开过弯心或红锥后，镜头就看不见车尾旁边的蓝墙和锥桶了。我们用里程计/EKF 把上一帧的蓝墙和红障平移旋转到车身后方保留 <span class="param">bev_memory_ttl_sec: 0.55</span> 秒——让后轮始终记得“身旁刚擦过去一个锥桶”；但只要当前帧实时看见那里是白道，<strong>立刻用新白道把旧记忆擦掉</strong>，绝不留“幽灵残影”。</li>
+      </ol>
+
+      <!-- 交互实验 ①：老近远带 vs 新 BEV 地图 -->
+      <div class="widget">
+        <div class="widget-head">
+          <div class="widget-title">👁️ 交互对比：为什么“近带/远带”在这些弯里会糊涂，而 BEV 一眼看穿？</div>
+          <span class="widget-badge">交互体验 ①</span>
+        </div>
+        <p class="widget-intro">点击切换 4 个决赛最容易翻车的场景，对比左侧“老算法只在两条横带里看世界”和右侧“新算法 160×160 鸟瞰地面地图”看到的区别：</p>
+        <div class="btn-row" id="sc1Btns">
+          <button class="pill-btn active" data-sc="t_junc">顶部 T 字口（右转进 S 弯）</button>
+          <button class="pill-btn" data-sc="rb_island">环岛蓝中岛 + 3D 红锥</button>
+          <button class="pill-btn" data-sc="stagger">前后错位双红障（S 缝）</button>
+          <button class="pill-btn" data-sc="s_bend">急 S 弯大斜角</button>
+        </div>
+        <div class="canvas-frame"><canvas id="cvCmp" width="760" height="300"></canvas></div>
+        <div class="readout-strip">
+          <div class="readout bad" id="cmpOldBox"><div class="rk">老算法（近/远双带）看到的</div><div class="rv" id="cmpOldTxt" style="font-size:13.5px;font-family:var(--sans)">近带正常、远带突然炸宽</div></div>
+          <div class="readout good" id="cmpNewBox"><div class="rk">新算法（BEV 鸟瞰 + 连通滤波）</div><div class="rv" id="cmpNewTxt" style="font-size:13.5px;font-family:var(--sans)">完整还原 2D T 字几何 + 提前右拐</div></div>
+        </div>
+      </div>
+
+      <details class="code-drawer">
+        <summary>查看第 1 站源码落点（点我展开）</summary>
+        <div class="drawer-body">
+          <ul>
+            <li>LUT 建表、非蓝暗字保留、3D 红锥底边投影 vs 红禁区多边形：<span class="code-ref">src/bev_mapper.cpp</span>（<code>build_live_grid</code>, <code>validate_yolo_digit</code>）。</li>
+            <li>EKF 0.55s 短时记忆融合、车头连通性 BFS、小蓝点治愈、两遍 Chamfer 距离变换：<span class="code-ref">src/bev_dwa_planner.cpp</span>（<code>warp_and_fuse_bev</code>, <code>filter_connected_free_space</code>, <code>compute_distance_fields</code>）。</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- ==================== 02 拓扑指南针 ==================== -->
+    <section class="chapter" id="s2">
+      <div class="chapter-eyebrow">第 2 站 · 为什么纯颜色权重会在 T 字口走反？ <span class="file-pill">bev_dwa_planner.cpp</span></div>
+      <h2>零黄线计数的“拓扑指南针”：抗随机黄线、抗 ±20% 里程飘移</h2>
+
+      <div class="callout amber">
+        <div class="callout-title">⚠️ 两个真实赛道痛点，把老版“数黄线 + 算里程”彻底打废</div>
+        <ul>
+          <li><strong>裁判会随机加黄线</strong>：一旦多贴一条黄线，靠“第 3 条黄线 = 终点”就会在半路提前永久停死！</li>
+          <li><strong>实车里程计误差高达 ±20%</strong>：我们对比你真车日志和 PDF 图纸发现，同一段路真车里程计有时少算 22%、有时多算 22%——绝对不能用“走到 5.8 米就切弯”这种死距离判断。</li>
+        </ul>
+      </div>
+
+      <h3>1. 指南针怎么做到跑一整圈不飘？（双重自归零）</h3>
+      <ol>
+        <li><strong>发车前 2 秒静置校准零偏</strong>：车停在起点没按 Start 前，系统自动采集陀螺仪静止输出求均值 <code>gyro_bias_rps</code>，发车后每帧减掉它，消除陀螺仪先天温漂。</li>
+        <li><strong>直道 &amp; 黄线停车时“视觉把指南针拉回正北”</strong>：每当鸟瞰图测出当前是一段干净直道（宽度 <code>0.34~0.52 m</code>、无急弯）或正在黄线前静止，就用白道左右边缘拟合出真实道路倾角，把相对航向角 <code>rel_yaw_rad</code> 轻轻拉向最近的物理坐标轴（<code>0° / ±90° / 180°</code>），把陀螺仪累积漂移死死按在 <strong><code>&lt; 2°</code></strong> 以内！</li>
+      </ol>
+
+      <h3>2. 指南针只管 3 件“纯颜色分不清的事”</h3>
+      <p>以起点车头朝西为 <code>0°</code>（逆时针为正：南 <code>+90°</code>、东 <code>±180°</code>、北 <code>-90°</code>）：</p>
+
+      <div class="phase-flow">
+        <span style="font-size:13px;font-weight:700;color:var(--ink-soft)">岔路 S 图（走右捷径时）：</span>
+        <span class="phase-pill">CRUISE_START (0°)</span>
+        <span class="phase-arrow">→</span>
+        <span class="phase-pill">FORK_RIGHT_ENTER (-90°)</span>
+        <span class="phase-arrow">→</span>
+        <span class="phase-pill">FORK_RIGHT_STEM (朝北)</span>
+        <span class="phase-arrow">→</span>
+        <span class="phase-pill key">FORK_T_RIGHT_TURN (强制右转东 ±180°!)</span>
+        <span class="phase-arrow">→</span>
+        <span class="phase-pill ok">FORK_S_CURVE → 终点</span>
+      </div>
+
+      <ul>
+        <li><strong>岔路 S 图顶部 T 字口绝不走反</strong>：当车走右侧数字大捷径朝北（<code>-90°</code>）冲到顶边时，左右白道一样宽。指南针检测到 <code>FORK_RIGHT_STEM</code> 前方封顶且右侧开口，立刻切到 <code>FORK_T_RIGHT_TURN</code>：<strong>给朝东（右转进 S 弯）加高分，给朝西（左转倒回外圈）施加 <code>-4.5</code> 巨额逆行惩罚</strong>！</li>
+        <li><strong>环岛 1 / 环岛 2 绝不倒转</strong>：进入环岛后禁止朝反方向（<code>reverse_yaw</code>）绕回入口，顺着选定分支绕完半圈自然切出。</li>
+        <li><strong>终点判定绝不数黄线</strong>：只要同时满足 <strong>① 鸟瞰图看到黄线前面没白道了（视觉死胡同）</strong> 且 <strong>② 累计绝对转角 <code>cum_abs_yaw_rad ≥ 2.2 rad</code>（约 126°，确认已绕过半场）</strong>，直接判定终点永久停稳！哪怕途中多出 5 条随机黄线也完全不受影响。</li>
+        <li><strong>分岔净值投票</strong>：停黄线 2 秒期间，综合左右两边 YOLO 认出的数字面值，按比赛真实时间账比较：<code>净收益 = 5 × (外道数字 − 内道数字) − 外道多花时间(3.0s)</code>；如果一侧数字被遮挡没看到，用期望值 <code>4.5</code> 自动兜底决策。</li>
+      </ul>
+    </section>
+
+    <!-- ==================== 03 大一统正负权重场 + 29 条圆弧 ==================== -->
+    <section class="chapter" id="s3">
+      <div class="chapter-eyebrow">第 3 站 · 你设想的“正负权重场大一统”真正落地 <span class="file-pill">bev_dwa_planner.cpp:962-1198</span></div>
+      <h2>一张距离代价场 + 29 条实车可拐圆弧：避障、过弯、吃数字合而为一</h2>
+
+      <div class="callout green">
+        <div class="callout-title">💡 和你的“正负权重直觉”完全同源，但多加了“阿克曼三圆车身扫掠”</div>
+        <p>
+          你昨天说：<em>“白道是正权重，蓝边、红锥、红禁区是负权重，转弯时为了拿回更多正权重自然就拐过去了。”</em>
+          这里就是它最精准的数学实现：我们不在像素图里数点，而是在鸟瞰图上先算出每个格子离蓝墙、红锥、红禁区的<strong>精确厘米距离（Chamfer 距离场）</strong>，然后从当前车位出发，一口气撒出 <strong>29 条实车真正拐得出来的等曲率圆弧</strong>（覆盖实测左极限 <code>+2.38 m⁻¹</code> 到右极限 <code>-2.80 m⁻¹</code>），用覆盖车头到车尾的 <strong>3 个圆盘</strong>（<code>-4, -14, -24 cm</code>，半径 <code>9.55 cm</code>）沿着每条弧线往前扫 <code>0.85 m</code>，统一算出每条弧的综合得分：
+        </p>
+      </div>
+
+      <div class="formula-box">
+        <div class="formula-eq">Score(κ) = 4.2 · L_safe − MeanSoftPen(禁区35 &gt; 蓝墙20 &gt; 红锥12) + 指南针航向 + 分岔偏置 + 数字加分/防双压 + 0.25·余量 − 0.12·(Δκ)²</div>
+        <div class="formula-glossary">
+          <div><mark class="hl-green">4.2 · L_safe（白道正权重）</mark>：这条弧能在白道里无碰撞跑多远（最高 <code>0.85 m</code>），弯道时直行 <code>L_safe</code> 骤降，贴弯弧 <code>L_safe</code> 最长，自然触发入弯！</div>
+          <div><mark class="hl-red">非对称负权重（对齐罚时！）</mark>：贴近红禁区扣 <strong><code>35</code></strong>（+30s），贴近蓝边扣 <strong><code>20</code></strong>（+15s/s），贴近红锥扣 <strong><code>12</code></strong>（+10s）——真被逼进死角也按经济账保大舍小。</div>
+          <div><mark class="hl-blue">指南针 &amp; 分岔项</mark>：T 字口/环岛时把大方向折算成加减分，融入同一个打分式，绝不和避障打架。</div>
+          <div><mark class="hl-green">直道吃大数字 + 防双压</mark>：无障碍直道上对最大数字给正吸引（<code>+0.90</code>）；对同一排较小的数字给 <code>−2.50</code> 排斥，防止 <code>19.1 cm</code> 宽的车身一脚踩俩不计分！</div>
+          <div><mark class="hl-amber">延迟预测（Smith Predictor）</mark>：起点不是 <code>(0,0)</code>，而是按 <code>τ = 0.09 s</code> 先把车往前推演 90 毫秒再撒弧，提前抵消相机+通讯+舵机延迟。</div>
+          <div><mark class="hl-purple">平滑项 −0.12·(κ−κ_prev)²</mark>：左右对称时防止在两个等价路径之间来回摇头震荡。</div>
+        </div>
+      </div>
+
+      <!-- 交互实验 ②：真正的 29 弧 BEV+DWA 正负权重场模拟器 -->
+      <div class="widget">
+        <div class="widget-head">
+          <div class="widget-title">🎮 动手玩一下新版大脑：实时拖拽正负权重与障碍，看 29 条圆弧怎么挑最高分绿线</div>
+          <span class="widget-badge">交互体验 ② · 真实公式</span>
+        </div>
+        <p class="widget-intro">这里直接用 C++ 源码里的同一套 3 圆车身 + 非对称负权重公式在浏览器实时跑 29 条圆弧！试试把红锥拖到路中间，或者调高红禁区权重、对比左转 <code>18.0°</code> vs <code>19.7°</code> 的区别：</p>
+
+        <div class="btn-row" id="dwaScBtns">
+          <button class="pill-btn active" data-dwa="cone_ne">红锥 + 红禁区夹击</button>
+          <button class="pill-btn" data-dwa="t_right">Fork S 顶部 T 字口</button>
+          <button class="pill-btn" data-dwa="curve_l">左急弯（检验 18.0° 极限）</button>
+          <button class="pill-btn" data-dwa="digits">直道双数字（8 vs 3 防双压）</button>
+        </div>
+
+        <div class="controls-grid">
+          <div class="ctrl">
+            <div class="ctrl-label"><span>主障碍/目标横向位置</span><span class="ctrl-val" id="dwaObsYV">+0.04 m</span></div>
+            <input type="range" id="dwaObsY" min="-0.18" max="0.18" step="0.01" value="0.04">
+          </div>
+          <div class="ctrl">
+            <div class="ctrl-label"><span>红禁区负权重（默认 35）</span><span class="ctrl-val" id="dwaNeWV">35</span></div>
+            <input type="range" id="dwaNeW" min="5" max="60" step="1" value="35">
+          </div>
+          <div class="ctrl">
+            <div class="ctrl-label"><span>蓝墙 / 红锥负权重（20 / 12）</span><span class="ctrl-val" id="dwaConeWV">12</span></div>
+            <input type="range" id="dwaConeW" min="2" max="40" step="1" value="12">
+          </div>
+          <div class="ctrl">
+            <div class="ctrl-label"><span>实车左转上限 <code>κ_max_L</code></span><span class="ctrl-val" id="dwaKapLV">2.38 (18.0°)</span></div>
+            <input type="range" id="dwaKapL" min="1.80" max="2.80" step="0.02" value="2.38">
+          </div>
+        </div>
+
+        <div class="canvas-frame"><canvas id="cvDwa" width="760" height="360"></canvas></div>
+
+        <div class="readout-strip">
+          <div class="readout good"><div class="rk">选中最优曲率 κ*</div><div class="rv" id="dwaOutK">+0.00 m⁻¹</div></div>
+          <div class="readout"><div class="rk">安全前瞻长度 L_safe</div><div class="rv" id="dwaOutL">0.85 m</div></div>
+          <div class="readout"><div class="rk">可行弧数量 / 29</div><div class="rv" id="dwaOutFeas">21 / 29</div></div>
+          <div class="readout"><div class="rk">建议执行速度 v_cmd</div><div class="rv" id="dwaOutV">0.34 m/s</div></div>
+        </div>
+      </div>
+
+      <details class="code-drawer">
+        <summary>查看第 3 站源码落点与硬/软安全边距（点我展开）</summary>
+        <div class="drawer-body">
+          <ul>
+            <li>三圆车身偏移 <code>{-0.04, -0.14, -0.24} m</code>、车身半宽 <code>r_car = 0.0955 m</code>：<span class="code-ref">bev_dwa_planner.cpp:981-991</span>。</li>
+            <li>硬安全余量（撞到即截断 <code>L_safe</code>）：蓝墙 <code>0.8 cm</code>、红锥 <code>1.0 cm</code>、红禁区 <code>1.5 cm</code>；近墙 7 步内若余量在持续变大则允许脱困（防刚蹭边就锁死）：<span class="code-ref">:1076-1084</span>。</li>
+            <li>软代价渐变区（离障碍 <code>5.0~6.5 cm</code> 内按二次方柔和扣分）：<span class="code-ref">:1100-1114</span>。</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- ==================== 04 速度包络 + 实车执行层 ==================== -->
+    <section class="chapter" id="s4">
+      <div class="chapter-eyebrow">第 4 站 · 决策算对了，车轮真能执行到位吗？ <span class="file-pill">bev_dwa_planner.cpp:1526-1598</span></div>
+      <h2>单一物理速度包络 + 实车阿克曼执行层（带 IMU 闭环）</h2>
+
+      <p>
+        你之前一针见血地问：<em>“决策层算对了，执行层到底能不能执行到位？会不会有死区、欠转向、舵机歪了？”</em>
+        这就是我们让你专门跑 <code>steer_probe.py</code> 的原因——拿到你那台 Wheeltec <code>mini_akm</code> 的真实体检数据后，我们把执行层做成了<strong>不靠经验猜的 4 重物理闭环</strong>：
+      </p>
+
+      <table class="clean-tbl">
+        <thead>
+          <tr>
+            <th>你实测到的底盘真相</th>
+            <th>老算法为什么吃亏</th>
+            <th>新版执行层怎么物理化解</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>线速度极准（99%）</strong>，但老版开了 <code>active_decel_kp</code> 会抽搐</td>
+            <td>把里程计误差叠回 <code>last_speed</code> 造成双重积分抖动</td>
+            <td><strong>单一物理速度包络</strong>（取 5 个限速的最小值）+ 单一斜坡限幅，<code>active_decel_kp = 0.0</code></td>
+          </tr>
+          <tr>
+            <td><strong>机械满舵不对称</strong>：左限死 <code>+18.0°</code> (R=0.42m)，右限死 <code>-21.4°</code> (R=0.36m)</td>
+            <td>算法以为车能拐 35°，进急弯晚打方向直接冲出蓝线</td>
+            <td>29 条弧线直接按真实不对称上限生成，<strong>规划阶段就绝不画出车拐不出来的线</strong></td>
+          </tr>
+          <tr>
+            <td><strong>大角度欠转向 ~20%</strong>（<code>8°</code> 准 98%，<code>15°</code> 只有 80%）+ <strong>1.7° 偏心</strong></td>
+            <td>纯开环下发 <code>angular.z</code>，弯道发飘、直道微向右偏</td>
+            <td><strong>非线性大角增益（最高 +18%）+ IMU 陀螺仪角速度内环闭环</strong>，实测角速度不够自动补舵</td>
+          </tr>
+          <tr>
+            <td><strong>静止起步瞬间</strong> <code>v=0</code> 时 <code>v·κ=0</code> 舵机不预打角</td>
+            <td>黄线停 2 秒后再发车，前 15 cm 总是先直冲再猛拐</td>
+            <td><strong>起步预转向底速</strong> <span class="param">bev_steer_launch_v_floor: 0.16</span>，只要车开始动，舵机立刻提前转到位</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>执行层的 2 条核心公式（大白话拆解）</h3>
+      <div class="formula-box">
+        <div class="formula-eq">
+          ① 速度包络：v_target = min(巡航速度, √(a_lat / (|κ*|+0.15)), √(1.3·(L_safe−0.12)), 障碍限速, 黄线包络)<br>
+          ② 转向执行：ω_cmd = max(v_cmd, 0.16) · κ* · Boost(κ*) + bev_imu_yaw_kp · (v_cmd·κ* − ω_imu)
+        </div>
+        <div class="formula-glossary">
+          <div><mark class="hl-amber">a_lat = bev_max_lat_accel_mps2 (0.42)</mark>：控制“弯道有多稳”！越小过弯越慢越稳；直道 <code>κ≈0</code> 时完全不拖慢直道。</div>
+          <div><mark class="hl-blue">视野前瞻限速 √(1.3·(L_safe−0.12))</mark>：还没开始打方向，只要看到前面 <code>L_safe &lt; 0.72m</code>（比如要到 T 字口或 90° 死弯），就<strong>提前把速度降下来</strong>！</div>
+          <div><mark class="hl-amber">bev_imu_yaw_kp (0.35)</mark>：注意它<strong>不是老版视觉转向 kp</strong>！它是底盘角速度小闭环——车应该每秒转 <code>0.6 rad/s</code>，IMU 测到只转了 <code>0.5</code>，立刻自动加 <code>0.35×0.1</code> 补回来；且超过 94% 满舵自动停补防积分饱和。</div>
+        </div>
+      </div>
+
+      <!-- 交互实验 ③：物理速度包络 & IMU 执行闭环体验 -->
+      <div class="widget">
+        <div class="widget-head">
+          <div class="widget-title">⚙️ 交互实验：拖一下 <code>target_speed</code> 和 <code>a_lat</code>，看车在直道和急弯自动配速</div>
+          <span class="widget-badge">交互体验 ③ · 执行层</span>
+        </div>
+        <p class="widget-intro">看看你只调 2 个物理旋钮（巡航速度 + 最大向心加速度），系统如何自动算出“直道跑多快、S 弯自动降到多少”，以及 IMU 闭环怎么抵消底盘 20% 欠转向：</p>
+        <div class="controls-grid">
+          <div class="ctrl">
+            <div class="ctrl-label"><span>巡航速度 <code>target_speed</code></span><span class="ctrl-val" id="exV0V">0.42 m/s</span></div>
+            <input type="range" id="exV0" min="0.25" max="0.70" step="0.01" value="0.42">
+          </div>
+          <div class="ctrl">
+            <div class="ctrl-label"><span>过弯稳度 <code>bev_max_lat_accel_mps2</code></span><span class="ctrl-val" id="exAlatV">0.42 m/s²</span></div>
+            <input type="range" id="exAlat" min="0.20" max="0.75" step="0.02" value="0.42">
+          </div>
+          <div class="ctrl">
+            <div class="ctrl-label"><span>当前弯道曲率 <code>|κ*|</code></span><span class="ctrl-val" id="exKapV">1.80 m⁻¹ (R=0.56m)</span></div>
+            <input type="range" id="exKap" min="0.00" max="2.38" step="0.02" value="1.80">
+          </div>
+          <div class="ctrl">
+            <div class="ctrl-label"><span>IMU 纠偏 <code>bev_imu_yaw_kp</code></span><span class="ctrl-val" id="exImuV">0.35</span></div>
+            <input type="range" id="exImu" min="0.00" max="0.80" step="0.05" value="0.35">
+          </div>
+        </div>
+        <div class="canvas-frame light"><canvas id="cvExec" width="760" height="235"></canvas></div>
+        <div class="readout-strip">
+          <div class="readout"><div class="rk">直道速度 (κ=0)</div><div class="rv" id="exOutStr">0.42 m/s</div></div>
+          <div class="readout good"><div class="rk">当前弯道自动限速</div><div class="rv" id="exOutCur">0.42 m/s</div></div>
+          <div class="readout"><div class="rk">理论目标角速度 ω*</div><div class="rv" id="exOutW">0.76 rad/s</div></div>
+          <div class="readout good"><div class="rk">欠转 20% 时实际达成率</div><div class="rv" id="exOutTrack">96%</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 05 黄线刹停 + 三级保底 + 起跑自检 ==================== -->
+    <section class="chapter" id="s5">
+      <div class="chapter-eyebrow">第 5 站 · 零压线停稳 &amp; 防止现场翻车的 3 道保险 <span class="file-pill">finish_guard.cpp + line_follower_node.cpp</span></div>
+      <h2>黄线刹车修掉电机死区、起跑前 2 秒标定自检、三级脱困</h2>
+
+      <div class="two-col">
+        <div class="mini-card card-amber">
+          <h4>🛑 1. 黄线“越死区”定值反拖刹车</h4>
+          <p style="font-size:14px">
+            之前反刹太轻时，指令降到 <code>-0.06 m/s</code> 落在 Wheeltec 电机 <code>~0.09 m/s</code> 死区里，车就靠惯性滑压黄线；现在新增 <span class="param">brake_min_cmd_mps: 0.20</span>，反刹期间指令绝不低于 <code>-0.20 m/s</code>，一旦里程计测到速度掉到 <span class="param">brake_zero_cutoff_mps: 0.04</span>，瞬间撤刹锁零，干脆停在黄线前 <span class="param">yellow_bumper_margin_m: 0.09</span> m 处不后溜。
+          </p>
+          <p style="font-size:13.5px;color:var(--ink-soft)">
+            <strong>防同一条黄线连停两次</strong>：停完发车后，必须<strong>走出 0.25 m</strong> 且<strong>视觉连续 3 帧看不到黄线</strong>才会重新武装，彻底免疫反光连触。
+          </p>
+        </div>
+
+        <div class="mini-card card-green">
+          <h4>🩺 2. 起跑前 2 秒静止自检（专防镜头歪！）</h4>
+          <p style="font-size:14px">
+            新算法最怕<strong>摄像头支架被碰歪导致鸟瞰标定失真</strong>。现在把车摆上白道、按 Start 发车前，系统会自动做两件事：
+          </p>
+          <ul style="font-size:13.5px;padding-left:18px;margin-top:6px">
+            <li>用鸟瞰图量脚下白道宽度，不是 <code>0.43 ± 0.045 m</code> 就直接在 debug 画面顶部拉红字警报 <code>CAM_TILT / HOMOGRAPHY</code>！</li>
+            <li>同步录完陀螺仪静止零偏 <code>gyro_bias</code>，日志打印 <code>[DEC] preflight ok=1 width=0.43m</code>。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>3. 万一被死角逼到无解怎么办？（三级安全兜底）</h3>
+      <ul>
+        <li><strong>Level 0（正常行驶）</strong>：29 条弧里挑最高分无碰撞弧执行。</li>
+        <li><strong>Level 1（极窄挤死，所有弧硬碰撞）</strong>：自动切 <code>bev_tight_creep</code>，降到 <code>0.14 m/s</code> 选“余量最大且依然服从拓扑指南针方向”的弧线慢慢挪出去——<strong>绝不会在 T 字口失控反拐</strong>。</li>
+        <li><strong>Level 3（防顶墙卡死脱困）</strong>：如果离开黄线后，持续下发前进指令但里程计实测车速 <code>&lt; 0.02 m/s</code> 超过 <code>1.5 秒</code>（真顶到锥桶或卡住了），自动执行 <code>0.50 秒</code> 微速反打方向倒车（<code>bev_escape_rev</code>），空出前轮转向空间后再重新规划，最多重试 2 次。</li>
+      </ul>
+    </section>
+
+    <!-- ==================== 06 上实车指南与急救检索 ==================== -->
+    <section class="chapter" id="s6">
+      <div class="chapter-eyebrow">第 6 站 · 上实车实操手册</div>
+      <h2>实车只盯 4 颗旋钮：现象急救搜索 + 上车指令</h2>
+
+      <h3>第一步：拉代码、编译、先站着看 2 秒右上角小窗</h3>
+      <pre class="cmd"><span class="c"># 1. 在 RDK X5 上拉取最新 feat/finals-modular-refactor</span>
+cd ~/ws_rdkx5_1
+git fetch origin
+git checkout feat/finals-modular-refactor
+git pull --ff-only origin feat/finals-modular-refactor
+
+<span class="c"># 2. 编译 line_follower（约 15~30 秒）</span>
+source /opt/tros/humble/setup.bash
+colcon build --packages-select line_follower
+
+<span class="c"># 3. 启动（岔路 S 图用 finals_fork；环岛图换成 finals_roundabout）</span>
+./tools/start.sh --params finals_fork</pre>
+
+      <div class="callout blue">
+        <div class="callout-title">🔍 发车前必看 3 秒的“鸟瞰小窗体检清单”（Debug 画面右上角 210×210 方框）</div>
+        <ol style="font-size:14.5px">
+          <li><strong>无红色 <code>CAM_TILT</code> 警报</strong>，且测出白道宽约 <code>0.43 m</code>（如果偏到 0.36 或 0.50，说明相机俯仰角歪了，微调镜头或重标 Homography）。</li>
+          <li><strong>车头脚下白道干干净净</strong>，没有一堆蓝色碎斑点（如果有，稍微调大一点 <span class="param">blue_margin</span> 或调低 <span class="param">lab_blue_b_max</span>）。</li>
+          <li><strong>摆一个红锥在前面看小窗</strong>：应该是一个清晰的橙色小圆点（不是长条拖影）；摆红禁区应是一块紫红色多边形。</li>
+        </ol>
+      </div>
+
+      <h3>第二步：跑完一趟如果有小毛病？按现象直接搜旋钮</h3>
+      <div class="search-bar">
+        <input class="search-input" id="faqSearch" type="text" placeholder="输入你看到的实车现象，例如：压黄线 / 弯道外冲 / 发抖 / 漏红锥 / 切回老版 / 提速...">
+      </div>
+
+      <div class="faq-list" id="faqList">
+        <div class="faq-card" data-kw="黄线 压线 刹不住 滑过 停太早 留白 距离">
+          <div class="faq-head"><span class="faq-q">1. 黄线刹不住压线了，或者停得离黄线太远</span><span class="faq-tab">黄线停位</span></div>
+          <p class="faq-body">
+            先看日志里的 <code>[DEC] yellow brake_end dur=... v=... why=...</code>：<br>
+            • <strong>车头压线了</strong>：把 <span class="param">yellow_bumper_margin_m</span> 从 <code>0.09</code> 调大到 <code>0.11~0.13</code>；若发现车还在滑，把 <span class="param">brake_min_cmd_mps</span> 从 <code>0.20</code> 调到 <code>0.24</code>。<br>
+            • <strong>停得太远（离黄线 20 cm 就停了）</strong>：把 <span class="param">yellow_bumper_margin_m</span> 调小到 <code>0.06~0.07</code>；若是倒退了一小步，把 <span class="param">brake_zero_cutoff_mps</span> 从 <code>0.04</code> 调大到 <code>0.06</code>。
+          </p>
+        </div>
+
+        <div class="faq-card" data-kw="弯道 外冲 压蓝线 S弯 拐不过去 速度太快">
+          <div class="faq-head"><span class="faq-q">2. S 弯或急弯还是有点外冲压外侧蓝线</span><span class="faq-tab">过弯速度</span></div>
+          <p class="faq-body">
+            不要去调老版 <code>kp</code>（已失效）！直接降 <span class="param">bev_max_lat_accel_mps2</span>（从 <code>0.42</code> 降到 <code>0.32~0.36</code>），让车过弯自动慢下来、直道依然保持原速。<br>
+            如果左急弯比右急弯更容易外冲：这是你实测到的 <code>1.7°</code> 舵机右偏心（左极限 18.0° vs 右 21.4°），可以在机械上把转向拉杆/舵机臂往左调 1 齿归中，左右立刻对称到 <code>~19.7°</code>（最小转弯半径从 0.42 m 缩到 0.39 m）。
+          </p>
+        </div>
+
+        <div class="faq-card" data-kw="转向 发抖 摇头 震荡 画龙 偏软 拐不动 IMU kp">
+          <div class="faq-head"><span class="faq-q">3. 转向觉得有点“发抖/画龙”，或者感觉“偏软拐不够”</span><span class="faq-tab">IMU 内环</span></div>
+          <p class="faq-body">
+            调唯一剩下的闭环旋钮 <span class="param">bev_imu_yaw_kp</span>（当前默认 <code>0.35</code>）：<br>
+            • <strong>觉得直道或弯道舵机频繁左右抖动</strong>：降到 <code>0.15~0.20</code>（甚至设 <code>0.0</code> 纯前馈对比）。<br>
+            • <strong>觉得每次转弯都差一口气、欠转向明显</strong>：升到 <code>0.45~0.55</code>。
+          </p>
+        </div>
+
+        <div class="faq-card" data-kw="红锥 红禁区 漏检 没看到 灯光 反光 HSV 蓝斑">
+          <div class="faq-head"><span class="faq-q">4. 右上角鸟瞰小窗里红锥/红禁区没亮，或者白道里有很多碎蓝点</span><span class="faq-tab">灯光颜色</span></div>
+          <p class="faq-body">
+            • <strong>强光下红锥泛白漏检</strong>：适当调低 <span class="param">red_s_min</span>（如从 <code>90</code> 降到 <code>65~75</code>）或放宽 <span class="param">red_h_high_1</span> 到 <code>12</code>。<br>
+            • <strong>白道里出现碎蓝点导致车莫名蠕行（<code>bev_tight_creep</code>）</strong>：调高 <span class="param">blue_margin</span>（如 <code>22 → 28</code>）或调低 <span class="param">lab_blue_b_max</span>（<code>116 → 110</code>）。
+          </p>
+        </div>
+
+        <div class="faq-card" data-kw="提速 Run2 Run3 跑更快 冲刺 直道加速">
+          <div class="faq-head"><span class="faq-q">5. Run 1 稳妥完赛后，Run 2 / Run 3 怎么安全提速？</span><span class="faq-tab">提速策略</span></div>
+          <p class="faq-body">
+            分两步加，千万别一步拉满：<br>
+            • 第一步：打开 <span class="param">enable_clear_path_speed: true</span>，只让无障碍纯直道提速到 <span class="param">clear_straight_speed: 0.56~0.62</span>，弯道和避障完全保持原速不动。<br>
+            • 第二步：再把全局巡航 <span class="param">target_speed</span> 从 <code>0.42</code> 逐步提到 <code>0.48~0.52</code>。
+          </p>
+        </div>
+
+        <div class="faq-card" data-kw="回退 老版 legacy 切回 应急 保底">
+          <div class="faq-head"><span class="faq-q">6. 现场紧急情况想 1 秒切回原来的近远带老算法？</span><span class="faq-tab">一键回退</span></div>
+          <p class="faq-body">
+            老算法代码完整保留，不需要回退 git！直接在 Web 面板或 YAML 里把 <span class="param">bev_planner_mode</span> 从 <code>bev_dwa</code> 改成 <code>legacy</code>，重启节点立刻切回原来的近远带 + 走廊控制。
+          </p>
+        </div>
+      </div>
+
+      <div class="callout purple" style="margin-top:34px">
+        <div class="callout-title">📦 跑完第一趟怎么最快迭代？</div>
+        <p>在 Web 面板下载那一趟的 <code>debug.zip</code> 发给我。因为新版录屏右上角已经自带 <strong>210×210 实时鸟瞰地图 + 29 条弧线 + 选中绿弧</strong>，再加上日志里的 <code>[DEC] ctrl</code> 与 <code>[DEC] bev summary cost=[sa,so,hd,br,di,cl,sm]</code>，任何问题看 3 帧就能直接精准定位，不用再盲猜。</p>
+      </div>
+    </section>
+
+    <!-- ==================== 07 排雷总对照表：调参 vs 算法逻辑 ==================== -->
+    <section class="chapter" id="s7">
+      <div class="chapter-eyebrow">第 7 站 · 以后出问题怎么 3 分钟一刀切定性 <span class="file-pill">SOP 排查树 + 14 项问题对照总表</span></div>
+      <h2>实车问题定性总对照表：哪些该调参、哪些必须改逻辑？</h2>
+
+      <div class="callout red">
+        <div class="callout-title">🧭 防止再次陷入“盲调参 / 打补丁循环”的唯一铁律</div>
+        <p>
+          <strong>定量偏差</strong>（停早了 5 cm、弯道略快外飘 3 cm、转向略微发抖、换灯光颜色漏抠）→ <strong>调参解决</strong>。<br>
+          <strong>定性反常</strong>（方向拐反了、状态提前跳级、压边原地画圈死锁、60ms 左右抽搐、嘴上说走右却往左拐、起步硬卡半秒）→ <strong>100% 是算法或系统逻辑 Bug！严禁拧参数硬糊</strong>，必须直接看白盒 <code>cost=[...]</code> 抓出打架项，从逻辑上删掉或解耦，并把该场景写进回归单测锁死。
+        </p>
+      </div>
+
+      <h3>一、3 分钟四步排查树（严格从底层往顶层查，禁止跳步）</h3>
+      <div class="pipeline-strip">
+        <div class="pipe-step">
+          <div class="step-tag">第 1 步 · 看鸟瞰小窗</div>
+          <div class="step-name">判「标定 / 感知」</div>
+          <div class="step-desc">白道宽是不是 ~0.43m？红块亮不亮？有没有碎蓝斑？不对就只动镜头或 HSV，<strong>别碰规划</strong>。</div>
+        </div>
+        <div class="pipe-step">
+          <div class="step-tag">第 2 步 · 看 phase / mode</div>
+          <div class="step-name">判「状态机 / 防抖」</div>
+          <div class="step-desc"><code>phase</code> 是否提前跳级？<code>mode</code> 是否 100ms 内横跳？只要出现，<strong>直接改逻辑</strong>，不调参。</div>
+        </div>
+        <div class="pipe-step">
+          <div class="step-tag">第 3 步 · 看绿弧 vs 实车</div>
+          <div class="step-name">判「大脑 vs 执行」</div>
+          <div class="step-desc"><strong>绿弧画错了</strong> → 看 <code>cost=[...]</code> 查规划逻辑；<strong>绿弧对了但车没走到</strong> → 调速度/IMU/刹车参数。</div>
+        </div>
+        <div class="pipe-step">
+          <div class="step-tag">第 4 步 · 补回归锁死</div>
+          <div class="step-name">写进单测 &amp; 压测</div>
+          <div class="step-desc">每次修完逻辑 Bug，把事故帧/恶劣初态写进 <code>test_finals_modules.cpp</code> 与压力仿真，永不复发。</div>
+        </div>
+      </div>
+
+      <h3>二、白盒日志 <code>cost=[sa, so, hd, br, di, cl, sm]</code> 7 项速查词典</h3>
+      <p>打开 <code>follow_slice.log</code> 搜索事故时间点附近的 <code>[DEC] bev summary</code>，一眼就能看清是谁抢走了方向盘：</p>
+      <div class="formula-box">
+        <div class="formula-eq">score = sa(安全长) + so(软壁/穿透负分) + hd(指南针航向) + br(分岔偏置) + di(直道数字) + cl(余量/回白道) + sm(平滑项)</div>
+        <div class="formula-glossary">
+          <div><code>sa</code>：<code>4.2 × L_safe</code>（直道正常 <code>+3.57</code>；弯道变短）</div>
+          <div><code>so</code>：负分！正常直道 <code>0.00</code>；贴边 <code>-1~-5</code>；压进蓝墙成百上千负分</div>
+          <div><code>hd</code>：仅 T 字口/岔口/环岛生效（正常 <code>±1.8</code>，逆行扣 <code>-4.5</code>）</div>
+          <div><code>br</code>：仅分岔切入期生效（最大约 <code>±2.9</code>，应与 <code>so</code> 同量级）</div>
+          <div><code>di</code>：直道吃数字（正常 <code>0~+0.45</code>，防双压扣 <code>-0.95</code>）</div>
+          <div><code>cl</code> / <code>sm</code>：白道居中与回白道奖励 / 防抖动平滑扣分</div>
+        </div>
+      </div>
+
+      <h3>三、14 类实车问题详细对照总表（可按定性筛选或关键词检索）</h3>
+      <div class="btn-row" id="diagFilterBtns">
+        <button class="pill-btn active" data-cat="all">全部显示 (14)</button>
+        <button class="pill-btn" data-cat="logic">🧠 算法 / 系统逻辑 (6)</button>
+        <button class="pill-btn" data-cat="param">🎛️ 调参可解 (5)</button>
+        <button class="pill-btn" data-cat="hw">📷 标定 / 机械硬件 (3)</button>
+      </div>
+      <div class="search-bar" style="margin-top:8px">
+        <input class="search-input" id="diagSearch" type="text" placeholder="按现象/日志关键字过滤总表，例如：29/0 / 抽搐 / 喊右拐左 / 0.5秒 / 滑行 / 外冲 / 黑边...">
+      </div>
+
+      <div class="tbl-wrap">
+        <table class="diag-tbl" id="diagTable">
+          <thead>
+            <tr>
+              <th style="width:17%">实车现象</th>
+              <th style="width:20%">小窗 &amp; 日志铁证</th>
+              <th style="width:11%">定性归类</th>
+              <th style="width:32%">正确 How to do（与禁止踩的坑）</th>
+              <th style="width:20%">对应参数 / 源码</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- 1. 标定偏心/歪斜 -->
+            <tr data-cat="hw">
+              <td><strong>1. 车在直道中间，但总往一侧贴边或报红字</strong></td>
+              <td>画面顶红条 <span class="ev-code">BEV center=-0.063m</span> 或 <span class="ev-code">CAM_TILT</span>；日志 <span class="ev-code">w_bev</span> 偏离 <code>0.43m</code></td>
+              <td><span class="tag-badge tag-hw">标定 / 机械</span></td>
+              <td>
+                <span class="do-line">✓ 检查摄像头支架是否松动偏斜；重标 Homography 地面矩阵，或把起跑摆正。</span>
+                <span class="dont-line">✗ 禁止去改规划权重或强加转向偏置去凑歪镜头！</span>
+              </td>
+              <td><code>homography_matrix</code><br><span class="code-ref">tools/calibrate_homography.py</span></td>
+            </tr>
+
+            <!-- 2. 舵机机械不对称 -->
+            <tr data-cat="hw">
+              <td><strong>2. 左急弯总比右急弯更容易外冲</strong></td>
+              <td><code>steer_probe.py</code> 实测左满舵 <code>+18.0°</code> vs 右满舵 <code>-21.4°</code>，存在 <code>1.7°</code> 右偏心</td>
+              <td><span class="tag-badge tag-hw">机械硬件</span></td>
+              <td>
+                <span class="do-line">✓ 机械上把舵机臂/拉杆向左归中 1 齿（左右对称到 ~19.7°，最小半径从 0.42m 缩到 0.39m），再重跑一次 <code>steer_probe.py</code> 更新上限。</span>
+                <span class="dont-line">✗ 不要把 <code>bev_kappa_max_left</code> 虚标大于物理极限（画得出拐不出）。</span>
+              </td>
+              <td><code>bev_kappa_max_left</code><br><code>bev_kappa_max_right</code><br><span class="code-ref">tools/steer_probe.py</span></td>
+            </tr>
+
+            <!-- 3. 强光反光红障漏检 / 蓝噪点 -->
+            <tr data-cat="param">
+              <td><strong>3. 换灯光后红锥不亮，或白道里冒出碎蓝斑</strong></td>
+              <td>右上角小窗缺橙/紫红块，或白道里出现蓝色小点导致突然降速 <span class="ev-code">bev_tight_creep</span></td>
+              <td><span class="tag-badge tag-param">灯光调参</span></td>
+              <td>
+                <span class="do-line">✓ 漏红障：降 <code>red_s_min</code>（90→70）、放宽 <code>red_h_high_1</code>（10→12）；<br>✓ 碎蓝斑：升 <code>blue_margin</code>（22→28）或降 <code>lab_blue_b_max</code>（116→110）。</span>
+                <span class="dont-line">✗ 还没看小窗颜色准不准就去改 DWA 权重。</span>
+              </td>
+              <td><span class="param">red_s_min</span> <span class="param">blue_margin</span> <span class="param">lab_blue_b_max</span></td>
+            </tr>
+
+            <!-- 4. 压边后死锁满舵画圈 -->
+            <tr data-cat="logic">
+              <td><strong>4. 一蹭蓝边就锁死最右满舵 <code>k=-2.80</code> 原地画圈</strong></td>
+              <td>日志连刷 <span class="ev-code">arc=29/0 L=0.00 k=-2.80 clr=[w=-0.10]</span>，白道明明在左却向右打死</td>
+              <td><span class="tag-badge tag-logic">算法逻辑 (533ecde已修)</span></td>
+              <td>
+                <span class="do-line">✓ 已用全域带符号距离场 SDF（<code>dist_free_m_</code>）+ 删掉 <code>i=0</code> 平局兜底根治；若以后再现，检查白道 BFS 种子是否丢失或 <code>fused_grid_</code> 是否全蓝。</span>
+                <span class="dont-line">✗ 禁止靠调小 <code>wall_soft_weight</code> 掩盖截断死锁！</span>
+              </td>
+              <td><span class="code-ref">bev_dwa_planner.cpp</span><br><code>compute_distance_fields</code><br><code>evaluate_arc</code></td>
+            </tr>
+
+            <!-- 5. 直道 60ms 左右抽搐 -->
+            <tr data-cat="logic">
+              <td><strong>5. 直道高频左右抽搐画龙，进黄线车身歪 10°+</strong></td>
+              <td>日志每 60ms 在 <span class="ev-code">bev_digit (k=+0.34)</span> 与 <span class="ev-code">bev_cruise (k=-0.40)</span> 间横跳，<code>di</code> 正负剧烈跳变</td>
+              <td><span class="tag-badge tag-logic">算法逻辑 (533ecde已修)</span></td>
+              <td>
+                <span class="do-line">✓ 已加 3 帧连续锁帧（<code>filter_and_lock_straight_digits</code>）+ 黄线前 0.95m 禁吃直道数字；若现场 YOLO 抖得更凶，直接将 <code>max_digit_lateral_shift_m: 0.0</code> 先关直道追数字保完赛。</span>
+                <span class="dont-line">✗ 禁止靠把 <code>bev_imu_yaw_kp</code> 调死来硬按画龙！</span>
+              </td>
+              <td><span class="code-ref">bev_dwa_planner.cpp</span><br><code>filter_and_lock_straight_digits</code><br><span class="param">max_digit_lateral_shift_m</span></td>
+            </tr>
+
+            <!-- 6. 喊右拐左 -->
+            <tr data-cat="logic">
+              <td><strong>6. 岔口决策走右，实际方向盘却拐进了左道</strong></td>
+              <td>日志 <span class="ev-code">mode=bev_fork_R branch=1</span> 但 <span class="ev-code">k=+0.68</span>；拆解 <span class="ev-code">so=-4.17</span> 远大于 <span class="ev-code">br=+0.07</span></td>
+              <td><span class="tag-badge tag-logic">权重尺度 / 逻辑 (533ecde已修)</span></td>
+              <td>
+                <span class="do-line">✓ 已把 <code>branch_bias_weight</code> 升至 <code>6.5</code>（与软壁罚分同量级）；若极端歪斜仍拉不回，说明进黄线前车身已歪超过 25°，先查直道和停车偏斜，或在 BEV 地图对非选定半边加硬遮罩。</span>
+                <span class="dont-line">✗ 别盲目把 <code>target_speed</code> 降到爬行，歪着进岔口慢走照样选错。</span>
+              </td>
+              <td><span class="code-ref">bev_dwa_planner.hpp</span><br><code>branch_bias_weight</code></td>
+            </tr>
+
+            <!-- 7. 岔口刚走 33cm 误跳级 T 字口 -->
+            <tr data-cat="logic">
+              <td><strong>7. 刚出岔口还没进直道，突然强制掉头 180° 扎蓝海</strong></td>
+              <td>日志 <span class="ev-code">s</code> 仅走 <code>0.35m</code> 就切 <span class="ev-code">phase=fork_T_right goal=+180d</span></td>
+              <td><span class="tag-badge tag-logic">状态机逻辑 (533ecde已修)</span></td>
+              <td>
+                <span class="do-line">✓ 已给 <code>FORK_RIGHT_ENTER→STEM→T_RIGHT</code> 加上最小距离门限（0.40m / 0.25m）并禁止 <code>L=0</code> 假触发；以后任何 <code>phase</code> 提前/延迟跳变，都必须查 <code>update_heading_and_topology</code> 的触发条件。</span>
+                <span class="dont-line">✗ 绝不靠改速度/转角参数去“碰巧躲过”状态机跳级。</span>
+              </td>
+              <td><span class="code-ref">bev_dwa_planner.cpp</span><br><code>update_heading_and_topology</code></td>
+            </tr>
+
+            <!-- 8. 起步硬卡 0.5 秒后猛窜 -->
+            <tr data-cat="logic">
+              <td><strong>8. 发车或黄线停完后原地愣半秒，然后猛踹出去</strong></td>
+              <td>日志 <span class="ev-code">yellow stop_end</span> 后整整 <code>+0.50s</code> 才出现 <span class="ev-code">mux change active=follower</span></td>
+              <td><span class="tag-badge tag-logic">系统管道逻辑 (533ecde已修)</span></td>
+              <td>
+                <span class="do-line">✓ 已改待命与临时黄线停稳只发 <code>/cmd_vel_follower=0</code>（不占 <code>/cmd_vel_stop</code>）并降 <code>stop_timeout: 0.15</code>；若再现起步发愣，检查 <code>safety_node</code> 是否误发了 <code>/cmd_vel_stop</code>。</span>
+                <span class="dont-line">✗ 不是加速斜坡 <code>max_accel_mps2</code> 太小！</span>
+              </td>
+              <td><span class="code-ref">line_follower_node.cpp</span><br><span class="code-ref">cmd_mux_node.cpp</span><br><code>stop_timeout</code></td>
+            </tr>
+
+            <!-- 9. 黄线刹不住压线 / 停太远 -->
+            <tr data-cat="param">
+              <td><strong>9. 黄线压线 (+15s) 滑过头，或离黄线 20cm 就停了</strong></td>
+              <td>日志 <span class="ev-code">yellow brake_end dur=0.31 v=0.38 why=timeout</span>，且触发前仍高速 <code>0.42m/s</code></td>
+              <td><span class="tag-badge tag-param">刹车调参</span></td>
+              <td>
+                <span class="do-line">✓ 压线：调大 <code>yellow_bumper_margin_m</code>（0.10→0.12）、确保 <code>yellow_creep_speed_mps ≤ 0.18</code> 慢进场、<code>yellow_brake_max_time_s ≥ 0.45</code>；<br>✓ 停太远/倒溜：调小 <code>yellow_bumper_margin_m</code>（→0.07）、升 <code>brake_zero_cutoff_mps</code>（0.04→0.06）。</span>
+                <span class="dont-line">✗ 别把 <code>yellow_brake_decel_mps2</code> 降太小（会吃掉预减速段导致满速撞触发线）。</span>
+              </td>
+              <td><span class="param">yellow_bumper_margin_m</span><br><span class="param">yellow_creep_speed_mps</span><br><span class="param">yellow_brake_max_time_s</span></td>
+            </tr>
+
+            <!-- 10. 同一黄线连停两次 -->
+            <tr data-cat="param">
+              <td><strong>10. 刚在黄线停满发车，走几厘米又停一次</strong></td>
+              <td>日志两次 <span class="ev-code">yellow stop_begin</span> 间隔 <code>Δs &lt; 0.30m</code></td>
+              <td><span class="tag-badge tag-param">重武装调参</span></td>
+              <td>
+                <span class="do-line">✓ 调大 <code>yellow_rearm_dist_m</code>（0.25→0.35 m），确保车尾完全驶离黄线再重新武装；同时检查地面黄反光是否拉长了黄线块。</span>
+              </td>
+              <td><span class="param">yellow_rearm_dist_m</span><br><span class="code-ref">bev_dwa_planner.cpp</span></td>
+            </tr>
+
+            <!-- 11. 过弯外冲压蓝线 -->
+            <tr data-cat="param">
+              <td><strong>11. 绿弧贴弯画得很准，但实车进 S 弯/急弯外冲压蓝线</strong></td>
+              <td>小窗绿弧已贴着弯心走，实车却因惯性/向心加速度过大甩向外侧蓝边</td>
+              <td><span class="tag-badge tag-param">执行速度调参</span></td>
+              <td>
+                <span class="do-line">✓ 降低 <code>bev_max_lat_accel_mps2</code>（0.42 → 0.32~0.36），只让弯道自动变慢、直道保持原速；必要时略降 <code>target_speed</code>（0.42→0.38）。</span>
+                <span class="dont-line">✗ 老版 <code>corridor_kp_y</code> 已停用，拧它毫无效果！</span>
+              </td>
+              <td><span class="param">bev_max_lat_accel_mps2</span><br><span class="param">target_speed</span></td>
+            </tr>
+
+            <!-- 12. 转向微抖或偏软 -->
+            <tr data-cat="param">
+              <td><strong>12. 绿弧很平滑，但实车轮子高频微抖，或过弯总差一口气</strong></td>
+              <td>日志 <span class="ev-code">k</span> 稳定不变，但输出的 <span class="ev-code">yaw</span> 上下毛刺明显或实际转弯半径偏大</td>
+              <td><span class="tag-badge tag-param">IMU 内环调参</span></td>
+              <td>
+                <span class="do-line">✓ 发抖：降 <code>bev_imu_yaw_kp</code>（0.35 → 0.15~0.20，甚至设 0.0 A/B 对比）；<br>✓ 偏软欠转：升 <code>bev_imu_yaw_kp</code>（0.35 → 0.45~0.55）。</span>
+              </td>
+              <td><span class="param">bev_imu_yaw_kp</span></td>
+            </tr>
+
+            <!-- 13. 极限挤弯蹭外侧黑边线 -->
+            <tr data-cat="logic">
+              <td><strong>13. 避障或贴弯时车轮刚好压上白道外侧黑边线</strong></td>
+              <td>小窗里没碰蓝区，但实车轮胎擦到黑边线外沿（裁判判出界）</td>
+              <td><span class="tag-badge tag-logic">感知建模 (533ecde已修)</span></td>
+              <td>
+                <span class="do-line">✓ 已把 <code>road_span</code> 外侧黑边线直接并入 <code>BEV_WALL_BLUE</code>；若实测仍嫌贴太近，微调增大 <code>wall_hard_margin_m</code>（0.008→0.015m）。</span>
+              </td>
+              <td><span class="code-ref">bev_mapper.cpp:209</span><br><code>wall_hard_margin_m</code></td>
+            </tr>
+
+            <!-- 14. 终点提前停或冲过终点不永久停 -->
+            <tr data-cat="hw">
+              <td><strong>14. 途中黄线误判终点永久停，或终点只停 2 秒又开走</strong></td>
+              <td>日志 <span class="ev-code">yellow stop_begin finish=1/0 dead_end=1/0 cum_yaw=...</span></td>
+              <td><span class="tag-badge tag-hw">终点门槛 / 视觉封口</span></td>
+              <td>
+                <span class="do-line">✓ <strong>途中误停</strong>：看 <code>dead_end=1</code>（黄线前反光/视角太低看不到白道）或 <code>cum_yaw</code> 偏小，适当提高 <code>finish_min_cum_yaw_rad</code>（2.2→2.8）；<br>✓ <strong>终点没永久停</strong>：看 <code>dead_end=0</code>（终点黄线后面背景太亮被当白道）或 <code>cum_yaw &lt; 2.2</code>，检查终点前方背景色或调低 <code>finish_force_dist_m</code> 兜底。</span>
+              </td>
+              <td><span class="param">finish_min_cum_yaw_rad</span><br><span class="param">finish_force_dist_m</span><br><span class="code-ref">line_follower_node.cpp:1580</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+// ===================== 顶部进度条 & 目录高亮 =====================
+(function() {
+  const bar = document.getElementById('progressBar');
+  const links = Array.from(document.querySelectorAll('#toc a'));
+  const secs = links.map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+
+  function onScroll() {
+    const h = document.documentElement;
+    const pct = (h.scrollTop / Math.max(1, h.scrollHeight - h.clientHeight)) * 100;
+    bar.style.width = pct.toFixed(1) + '%';
+    let cur = secs[0];
+    for (const s of secs) {
+      if (s.getBoundingClientRect().top <= 140) cur = s;
+    }
+    links.forEach(a => a.classList.toggle('active', cur && a.getAttribute('href') === '#' + cur.id));
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+
+// ===================== 交互 ①：老近远带 vs 新 BEV 对比 =====================
+(function() {
+  const cv = document.getElementById('cvCmp');
+  const ctx = cv.getContext('2d');
+  const oldTxt = document.getElementById('cmpOldTxt');
+  const newTxt = document.getElementById('cmpNewTxt');
+  let mode = 't_junc';
+
+  const info = {
+    t_junc: [
+      '远带撞上顶边蓝墙、宽度突然炸裂，根本分不清该左拐(走反)还是右拐(进S弯)',
+      '完整看到 T 字顶栏+右侧开口，拓扑指南针强制锁右转东(-180°)，提前画右弧入弯'
+    ],
+    rb_island: [
+      '远带把“蓝中岛对面的假白道”也算进来，拉歪中点；3D红锥透视拖影糊成一片红墙',
+      'BFS 从车头出发抹掉隔岛假白道；3D红锥只投底边触地小圆，平滑绕岛贴弯'
+    ],
+    stagger: [
+      '一左一右错位两个障碍压缩成一维区间后“看起来路被封死了”，误判停车或硬撞',
+      '在 2D 地面清楚看到前后错开 35cm 的 S 形空隙，三圆车身沿弯曲弧线丝滑穿缝'
+    ],
+    s_bend: [
+      '斜切弯道时水平扫描线宽度暴涨为 W/cosθ，且只顾车头中点导致后轮切内弯压蓝线',
+      '还原真实 0.43m 弯曲道路，3 个覆盖前后轮的圆盘一起查碰撞，天然保住后轮不压线'
+    ]
+  };
+
+  function draw() {
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#1b1e24';
+    ctx.fillRect(0, 0, W, H);
+
+    // 分栏
+    const mid = W / 2;
+    ctx.strokeStyle = '#333844';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(mid, 0); ctx.lineTo(mid, H); ctx.stroke();
+
+    // 左：老算法相机透视图 + 近/远双带
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, mid - 1, H); ctx.clip();
+    drawLegacyView(ctx, mid, H, mode);
+    ctx.restore();
+
+    // 右：新算法 BEV 俯视图
+    ctx.save();
+    ctx.translate(mid, 0);
+    ctx.beginPath(); ctx.rect(1, 0, mid - 1, H); ctx.clip();
+    drawBevView(ctx, mid, H, mode);
+    ctx.restore();
+
+    // 标题条
+    ctx.fillStyle = 'rgba(0,0,0,0.58)';
+    ctx.fillRect(10, 10, 215, 28);
+    ctx.fillRect(mid + 10, 10, 245, 28);
+    ctx.font = 'bold 13px "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = '#fca5a5';
+    ctx.fillText('老算法：透视图只切近/远两条带', 18, 29);
+    ctx.fillStyle = '#86efac';
+    ctx.fillText('新算法：160×160 地面鸟瞰 + 圆弧', mid + 18, 29);
+
+    oldTxt.textContent = info[mode][0];
+    newTxt.textContent = info[mode][1];
+  }
+
+  function drawLegacyView(c, w, h, m) {
+    // 蓝色地垫背景
+    c.fillStyle = '#1e3a6e';
+    c.fillRect(0, 0, w, h);
+    // 白色透视道路
+    c.fillStyle = '#e8eaed';
+    if (m === 't_junc') {
+      c.fillRect(20, 72, w - 40, 58);
+      c.beginPath();
+      c.moveTo(135, 128); c.lineTo(245, 128); c.lineTo(295, h); c.lineTo(85, h); c.closePath(); c.fill();
+    } else if (m === 'rb_island') {
+      // 外弧+对面白道
+      c.fillRect(30, 62, w - 60, 36);
+      c.beginPath();
+      c.moveTo(95, h); c.quadraticCurveTo(100, 130, 250, 95); c.lineTo(310, 145);
+      c.quadraticCurveTo(220, 185, 265, h); c.closePath(); c.fill();
+      // 3D红锥透视大拖影
+      c.fillStyle = 'rgba(239,68,68,0.85)';
+      c.beginPath(); c.moveTo(160, 125); c.lineTo(186, 125); c.lineTo(195, 210); c.lineTo(150, 210); c.closePath(); c.fill();
+      c.fillStyle = '#fecaca'; c.font = '11px sans-serif'; c.fillText('透视拖影!', 196, 175);
+    } else if (m === 'stagger') {
+      c.beginPath();
+      c.moveTo(135, 60); c.lineTo(245, 60); c.lineTo(320, h); c.lineTo(60, h); c.closePath(); c.fill();
+      // 左远红锥、右近红框，在1D投影上完全重叠
+      c.fillStyle = '#ef4444'; c.fillRect(128, 122, 46, 48);
+      c.fillStyle = '#ec4899'; c.fillRect(190, 198, 66, 38);
+      c.strokeStyle = '#fbbf24'; c.setLineDash([4,3]); c.lineWidth = 2;
+      c.strokeRect(126, 195, 132, 44); c.setLineDash([]);
+      c.fillStyle = '#fef08a'; c.font = '11px sans-serif'; c.fillText('1D投影重叠=误判堵死', 120, 255);
+    } else {
+      c.beginPath();
+      c.moveTo(220, 58); c.quadraticCurveTo(40, 145, 270, h);
+      c.lineTo(115, h); c.quadraticCurveTo(-20, 155, 145, 58); c.closePath(); c.fill();
+    }
+
+    // 近带 & 远带两条横条
+    c.fillStyle = 'rgba(59,130,246,0.22)';
+    c.strokeStyle = '#60a5fa'; c.lineWidth = 1.5;
+    c.fillRect(8, 105, w - 16, 38); c.strokeRect(8, 105, w - 16, 38);
+    c.fillStyle = 'rgba(16,185,129,0.22)';
+    c.strokeStyle = '#34d399';
+    c.fillRect(8, 195, w - 16, 45); c.strokeRect(8, 195, w - 16, 45);
+
+    c.font = '11px monospace';
+    c.fillStyle = '#93c5fd'; c.fillText('FAR BAND (远带)', 14, 120);
+    c.fillStyle = '#6ee7b7'; c.fillText('NEAR BAND (近带)', 14, 211);
+
+    // 画误导性的中点连线
+    c.strokeStyle = '#f87171'; c.lineWidth = 2.5;
+    c.beginPath();
+    if (m === 't_junc') { c.moveTo(190, 218); c.lineTo(190, 124); }
+    else if (m === 'rb_island') { c.moveTo(185, 218); c.lineTo(145, 124); }
+    else if (m === 'stagger') { c.moveTo(190, 218); c.lineTo(190, 124); }
+    else { c.moveTo(190, 218); c.lineTo(110, 124); }
+    c.stroke();
+    c.fillStyle = '#ef4444';
+    c.beginPath(); c.arc(m === 'rb_island' ? 145 : (m === 's_bend' ? 110 : 190), 124, 5, 0, Math.PI * 2); c.fill();
+  }
+
+  function drawBevView(c, w, h, m) {
+    c.fillStyle = '#1c3b72';
+    c.fillRect(0, 0, w, h);
+    // 网格底纹
+    c.strokeStyle = 'rgba(255,255,255,0.06)';
+    c.lineWidth = 1;
+    for (let x = 20; x < w; x += 25) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); }
+    for (let y = 20; y < h; y += 25) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
+
+    const cx = w / 2, carY = h - 52;
+    c.fillStyle = '#e8eaed';
+
+    if (m === 't_junc') {
+      c.fillRect(28, 72, w - 56, 78);
+      c.fillRect(cx - 42, 120, 84, h - 120);
+      // 禁左标志
+      c.fillStyle = 'rgba(239,68,68,0.30)'; c.fillRect(35, 78, 95, 66);
+      c.fillStyle = '#fca5a5'; c.font = 'bold 12px sans-serif'; c.fillText('指南针禁左!', 48, 115);
+      // 绿弧向右
+      drawGreenArc(c, cx, carY - 12, 85, -Math.PI, -Math.PI * 0.45, true);
+    } else if (m === 'rb_island') {
+      // 孤立对面白道(灰暗表示被BFS清除)
+      c.fillStyle = 'rgba(255,255,255,0.14)';
+      c.fillRect(40, 48, w - 80, 32);
+      c.fillStyle = '#93c5fd'; c.font = '11px sans-serif'; c.fillText('BFS 已清除隔岛白道', 120, 68);
+      // 连通弯道
+      c.strokeStyle = '#e8eaed'; c.lineWidth = 82; c.lineCap = 'round';
+      c.beginPath(); c.arc(cx + 95, carY - 10, 95, Math.PI, Math.PI * 1.62); c.stroke();
+      // 红锥真实小触地圆
+      c.fillStyle = '#f97316';
+      c.beginPath(); c.arc(cx + 22, carY - 82, 12, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#fed7aa'; c.font = '11px sans-serif'; c.fillText('底边圆(无拖影)', cx + 38, carY - 78);
+      drawGreenArc(c, cx, carY - 12, 102, Math.PI, Math.PI * 1.58, false);
+    } else if (m === 'stagger') {
+      c.fillRect(cx - 52, 42, 104, h - 42);
+      // 错位红锥和红禁区
+      c.fillStyle = '#f97316'; c.beginPath(); c.arc(cx - 24, 115, 13, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#d946ef'; c.fillRect(cx + 8, 168, 34, 34);
+      // S形穿梭绿线
+      c.strokeStyle = '#22c55e'; c.lineWidth = 3.5;
+      c.beginPath();
+      c.moveTo(cx, carY - 12);
+      c.bezierCurveTo(cx - 28, carY - 55, cx - 22, 155, cx + 18, 95);
+      c.stroke();
+    } else {
+      c.strokeStyle = '#e8eaed'; c.lineWidth = 82; c.lineCap = 'round';
+      c.beginPath();
+      c.moveTo(cx, h + 10);
+      c.bezierCurveTo(cx, 195, cx - 95, 145, cx + 25, 65);
+      c.stroke();
+      c.strokeStyle = '#22c55e'; c.lineWidth = 3.5;
+      c.beginPath();
+      c.moveTo(cx, carY - 12);
+      c.bezierCurveTo(cx - 10, 190, cx - 78, 145, cx + 15, 72);
+      c.stroke();
+    }
+
+    // 3圆车身
+    c.strokeStyle = '#facc15'; c.lineWidth = 2;
+    c.strokeRect(cx - 19, carY - 14, 38, 52);
+    c.strokeStyle = 'rgba(250,204,21,0.55)';
+    for (const dy of [-4, 14, 32]) {
+      c.beginPath(); c.arc(cx, carY + dy, 18, 0, Math.PI * 2); c.stroke();
+    }
+  }
+
+  function drawGreenArc(c, x0, y0, R, a1, a2, rightTurn) {
+    c.strokeStyle = '#22c55e'; c.lineWidth = 3.5;
+    c.beginPath();
+    if (rightTurn) c.arc(x0 + R, y0, R, Math.PI, Math.PI * 1.48);
+    else c.arc(x0 + R, y0, R, Math.PI, Math.PI * 1.56);
+    c.stroke();
+  }
+
+  document.querySelectorAll('#sc1Btns .pill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#sc1Btns .pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      mode = btn.dataset.sc;
+      draw();
+    });
+  });
+  draw();
+})();
+
+// ===================== 交互 ②：29 弧真实 BEV+DWA 模拟器 =====================
+(function() {
+  const cv = document.getElementById('cvDwa');
+  const ctx = cv.getContext('2d');
+
+  const elObsY = document.getElementById('dwaObsY');
+  const elNeW  = document.getElementById('dwaNeW');
+  const elCnW  = document.getElementById('dwaConeW');
+  const elKapL = document.getElementById('dwaKapL');
+
+  let scene = 'cone_ne';
+
+  // 真实几何评估器（简化解析场景，直接运行与 C++ 同源的 29 弧 + 3 圆打分公式！）
+  function evalScenePoint(d, y, sc, obsY) {
+    // 返回 {wallDist, coneDist, neDist}
+    let wallD = 1.0, coneD = 1.0, neD = 1.0;
+    const halfW = 0.215; // 0.43m 白道半宽
+
+    if (sc === 'cone_ne') {
+      wallD = halfW - Math.abs(y);
+      // 左侧或可拖动的红锥 (d=0.44, y=obsY, r=0.065)
+      coneD = Math.hypot(d - 0.44, y - obsY) - 0.065;
+      // 另一侧放一个红禁区矩形 (d in [0.40, 0.58], y in [-0.21, -0.05])
+      const dxN = Math.max(0.40 - d, 0, d - 0.58);
+      const dyN = Math.max((-0.21) - y, 0, y - (-0.05));
+      neD = Math.hypot(dxN, dyN);
+    } else if (sc === 't_right') {
+      // 竖直路 d in [-0.35, 0.68], |y|<=0.215；顶部横路 d in [0.26, 0.68], y in [-0.75, +0.75]
+      const inVert = (d <= 0.68) ? (halfW - Math.abs(y)) : -1;
+      const inHoriz = (d >= 0.26 && d <= 0.68) ? Math.min(d - 0.26, 0.68 - d) : -1;
+      wallD = Math.max(inVert, inHoriz);
+      if (d > 0.68) wallD = 0.68 - d;
+      // 右上角放一个红禁区（模拟真实 fork_s 顶部障碍）
+      const dxN = Math.max(0.50 - d, 0, d - 0.66);
+      const dyN = Math.max((-0.44 + obsY * 0.5) - y, 0, y - (-0.28 + obsY * 0.5));
+      neD = Math.hypot(dxN, dyN);
+    } else if (sc === 'curve_l') {
+      // 向左急弯，弯心在 (d=0.10, y=+0.45)，中心半径 R=0.45m
+      const distC = Math.hypot(d - 0.10, y - 0.45);
+      if (d < 0.10) wallD = halfW - Math.abs(y);
+      else wallD = halfW - Math.abs(distC - 0.45);
+      // 外侧放个小锥桶
+      coneD = Math.hypot(d - 0.42, y - (obsY - 0.06)) - 0.06;
+    } else {
+      // 直道双数字 (8 在 obsY, 3 在另一侧)
+      wallD = halfW - Math.abs(y);
+    }
+    return { wallD, coneD, neD };
+  }
+
+  function runDwa() {
+    const obsY = parseFloat(elObsY.value);
+    const neW  = parseFloat(elNeW.value);
+    const cnW  = parseFloat(elCnW.value);
+    const kapL = parseFloat(elKapL.value);
+    const kapR = 2.80;
+
+    document.getElementById('dwaObsYV').textContent = (obsY >= 0 ? '+' : '') + obsY.toFixed(2) + ' m';
+    document.getElementById('dwaNeWV').textContent = neW.toFixed(0);
+    document.getElementById('dwaConeWV').textContent = cnW.toFixed(0);
+    const degL = Math.atan(0.1395 * kapL) * 180 / Math.PI;
+    document.getElementById('dwaKapLV').textContent = kapL.toFixed(2) + ' (' + degL.toFixed(1) + '°)';
+
+    const rCar = 0.0955;
+    const wallHard = rCar + 0.008, coneHard = rCar + 0.010, neHard = rCar + 0.015;
+    const wallSoft = rCar + 0.055, coneSoft = rCar + 0.050, neSoft = rCar + 0.065;
+    const bodyOff = [-0.04, -0.14, -0.24];
+    const N = 29, ds = 0.025, horizon = 0.85, maxSteps = Math.ceil(horizon / ds);
+
+    const cands = [];
+    let bestIdx = 14, bestScore = -1e9, feasCount = 0;
+
+    for (let i = 0; i < N; i++) {
+      const u = -1 + 2 * i / (N - 1);
+      const kappa = u >= 0 ? u * kapL : u * kapR;
+
+      let x = 0.03, y = 0.0, th = 0.0;
+      let safeLen = 0.0, minW = 1.0, softSum = 0.0, softN = 0, hit = false;
+      const pts = [[x, y]];
+
+      for (let st = 1; st <= maxSteps; st++) {
+        const dth = kappa * ds;
+        const thm = th + 0.5 * dth;
+        x += ds * Math.cos(thm);
+        y += ds * Math.sin(thm);
+        th += dth;
+
+        let dw = 1, dc = 1, dne = 1;
+        for (const off of bodyOff) {
+          const bx = x + off * Math.cos(th);
+          const by = y + off * Math.sin(th);
+          const r = evalScenePoint(bx, by, scene, obsY);
+          dw = Math.min(dw, r.wallD);
+          dc = Math.min(dc, r.coneD);
+          dne = Math.min(dne, r.neD);
+        }
+
+        if (dw < wallHard || dc < coneHard || dne < neHard) { hit = true; break; }
+        safeLen = st * ds;
+        pts.push([x, y]);
+        minW = Math.min(minW, dw - rCar);
+
+        let pen = 0;
+        if (dw < wallSoft) { const f = (wallSoft - dw) / (wallSoft - wallHard); pen += 20.0 * f * f; }
+        if (dc < coneSoft) { const f = (coneSoft - dc) / (coneSoft - coneHard); pen += cnW * f * f; }
+        if (dne < neSoft)  { const f = (neSoft - dne) / (neSoft - neHard); pen += neW * f * f; }
+        softSum += pen; softN++;
+      }
+
+      const meanSoft = softN > 0 ? softSum / softN : 30.0;
+      let headTerm = 0, digTerm = 0;
+      if (scene === 't_right') {
+        // 车朝北(-90°)，目标东(-180°)，即相对局部右转 -90°(-pi/2)
+        const align = Math.cos(th - (-Math.PI / 2));
+        headTerm = 1.8 * align;
+        if (align < -0.15) headTerm -= 4.5 * (-align);
+        if (y < 0) headTerm += 0.6 * Math.min(0.35, -y);
+      } else if (scene === 'digits' && safeLen >= 0.35) {
+        const dEval = Math.min(0.52, safeLen);
+        const yArc = dEval * Math.sin(0.5 * kappa * dEval);
+        const y8 = obsY;
+        const y3 = obsY >= 0 ? -0.10 : 0.10;
+        const d8 = Math.abs(yArc - y8);
+        const d3 = Math.abs(yArc - y3);
+        digTerm += 0.90 * Math.exp(-(d8 * d8) / (2 * 0.07 * 0.07));
+        if (d3 < rCar + 0.045) {
+          const ov = (rCar + 0.045 - d3) / (rCar + 0.045);
+          digTerm -= 2.50 * ov * ov;
+        }
+      }
+
+      const feasible = (!hit) || (safeLen >= 0.20);
+      if (feasible) feasCount++;
+      const score = 4.2 * safeLen - meanSoft + headTerm + digTerm + 0.25 * Math.max(-0.05, Math.min(0.14, minW));
+      cands.push({ kappa, safeLen, score, feasible, pts });
+      if (score > bestScore) { bestScore = score; bestIdx = i; }
+    }
+
+    drawDwaCanvas(cands, bestIdx, obsY);
+
+    const best = cands[bestIdx];
+    const vCurve = Math.sqrt(0.42 / (Math.abs(best.kappa) + 0.15));
+    const vHor = best.safeLen < 0.72 ? Math.max(0.14, Math.sqrt(1.3 * Math.max(0.03, best.safeLen - 0.12))) : 0.42;
+    const vOut = Math.min(0.42, vCurve, vHor, scene === 'cone_ne' ? 0.22 : 0.42);
+
+    document.getElementById('dwaOutK').textContent = (best.kappa >= 0 ? '+' : '') + best.kappa.toFixed(2) + ' m⁻¹';
+    document.getElementById('dwaOutL').textContent = best.safeLen.toFixed(2) + ' m';
+    document.getElementById('dwaOutFeas').textContent = feasCount + ' / 29';
+    document.getElementById('dwaOutV').textContent = vOut.toFixed(2) + ' m/s';
+  }
+
+  function drawDwaCanvas(cands, bestIdx, obsY) {
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // 左半画 BEV 地图 (400px)，右半画 29 弧柱状得分图 (360px)
+    const mapW = 410;
+    const scPx = 240; // 1 meter = 240 px
+    const ox = mapW / 2;
+    const oy = H - 72;
+    const toX = y => ox - y * scPx;
+    const toY = d => oy - d * scPx;
+
+    // 蓝底
+    ctx.fillStyle = '#1b386b';
+    ctx.fillRect(0, 0, mapW, H);
+
+    // 逐像素块绘制白道/障碍（清晰直观）
+    const step = 4;
+    for (let py = 0; py < H; py += step) {
+      for (let px = 0; px < mapW; px += step) {
+        const d = (oy - py) / scPx;
+        const y = (ox - px) / scPx;
+        const r = evalScenePoint(d, y, scene, obsY);
+        if (r.wallD >= 0) {
+          ctx.fillStyle = '#e8eaed';
+          ctx.fillRect(px, py, step, step);
+        }
+        if (r.coneD <= 0) {
+          ctx.fillStyle = '#f97316';
+          ctx.fillRect(px, py, step, step);
+        }
+        if (r.neD <= 0) {
+          ctx.fillStyle = '#d946ef';
+          ctx.fillRect(px, py, step, step);
+        }
+      }
+    }
+
+    // 数字标签
+    if (scene === 'digits') {
+      const y8 = obsY, y3 = obsY >= 0 ? -0.10 : 0.10;
+      ctx.fillStyle = '#1d4ed8';
+      ctx.beginPath(); ctx.arc(toX(y8), toY(0.52), 16, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px monospace'; ctx.fillText('8', toX(y8) - 5, toY(0.52) + 6);
+
+      ctx.fillStyle = '#64748b';
+      ctx.beginPath(); ctx.arc(toX(y3), toY(0.52), 14, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.fillText('3', toX(y3) - 4, toY(0.52) + 5);
+    }
+
+    // 画全部 29 条候选圆弧
+    for (let i = 0; i < cands.length; i++) {
+      if (i === bestIdx) continue;
+      const ca = cands[i];
+      ctx.strokeStyle = ca.feasible ? 'rgba(148,163,184,0.48)' : 'rgba(239,68,68,0.28)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ca.pts.forEach((p, idx) => {
+        if (idx === 0) ctx.moveTo(toX(p[1]), toY(p[0]));
+        else ctx.lineTo(toX(p[1]), toY(p[0]));
+      });
+      ctx.stroke();
+    }
+
+    // 高亮选中最优绿弧 + 终点三圆车身残影
+    const best = cands[bestIdx];
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    best.pts.forEach((p, idx) => {
+      if (idx === 0) ctx.moveTo(toX(p[1]), toY(p[0]));
+      else ctx.lineTo(toX(p[1]), toY(p[0]));
+    });
+    ctx.stroke();
+
+    // 当前车位三圆车身
+    ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2;
+    ctx.strokeRect(toX(0.0955), toY(0.0), 0.191 * scPx, 0.280 * scPx);
+    ctx.strokeStyle = 'rgba(250,204,21,0.55)'; ctx.lineWidth = 1.3;
+    for (const off of [-0.04, -0.14, -0.24]) {
+      ctx.beginPath(); ctx.arc(toX(0), toY(off), 0.0955 * scPx, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // 左图图例
+    ctx.fillStyle = 'rgba(15,23,42,0.72)';
+    ctx.fillRect(8, 8, 225, 26);
+    ctx.fillStyle = '#e2e8f0'; ctx.font = '12px sans-serif';
+    ctx.fillText('橙=红锥(-12)  紫=红禁区(-35)  绿=最优弧', 15, 25);
+
+    // 右半：29 条圆弧得分柱状图
+    ctx.fillStyle = '#14171d';
+    ctx.fillRect(mapW, 0, W - mapW, H);
+    ctx.fillStyle = '#cbd5e1'; ctx.font = 'bold 13px "Microsoft YaHei", sans-serif';
+    ctx.fillText('29 条候选圆弧实时综合得分（右转 ← 0 → 左转）', mapW + 18, 28);
+
+    const chartX = mapW + 22, chartY = 48, chartW = W - mapW - 40, chartH = H - 86;
+    const minS = -12, maxS = 5.5;
+    const zeroY = chartY + chartH * (maxS / (maxS - minS));
+    ctx.strokeStyle = '#334155'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(chartX, zeroY); ctx.lineTo(chartX + chartW, zeroY); ctx.stroke();
+
+    const bw = chartW / cands.length;
+    cands.forEach((ca, idx) => {
+      const clamped = Math.max(minS, Math.min(maxS, ca.score));
+      const yVal = chartY + chartH * ((maxS - clamped) / (maxS - minS));
+      ctx.fillStyle = idx === bestIdx ? '#22c55e' : (ca.feasible ? '#60a5fa' : '#ef4444');
+      const top = Math.min(yVal, zeroY);
+      const bh = Math.max(2, Math.abs(yVal - zeroY));
+      ctx.fillRect(chartX + idx * bw + 1, top, Math.max(3, bw - 2), bh);
+    });
+
+    ctx.fillStyle = '#94a3b8'; ctx.font = '11px monospace';
+    ctx.fillText('右满舵(-2.80)', chartX, H - 16);
+    ctx.fillText('直行(0)', chartX + chartW / 2 - 20, H - 16);
+    ctx.fillText('左满舵(+' + parseFloat(elKapL.value).toFixed(2) + ')', chartX + chartW - 82, H - 16);
+  }
+
+  document.querySelectorAll('#dwaScBtns .pill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#dwaScBtns .pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      scene = btn.dataset.dwa;
+      runDwa();
+    });
+  });
+  [elObsY, elNeW, elCnW, elKapL].forEach(el => el.addEventListener('input', runDwa));
+  runDwa();
+})();
+
+// ===================== 交互 ③：速度包络 & IMU 执行闭环 =====================
+(function() {
+  const cv = document.getElementById('cvExec');
+  const ctx = cv.getContext('2d');
+  const elV0   = document.getElementById('exV0');
+  const elAlat = document.getElementById('exAlat');
+  const elKap  = document.getElementById('exKap');
+  const elImu  = document.getElementById('exImu');
+
+  function update() {
+    const v0 = parseFloat(elV0.value);
+    const alat = parseFloat(elAlat.value);
+    const kap = parseFloat(elKap.value);
+    const kpImu = parseFloat(elImu.value);
+
+    document.getElementById('exV0V').textContent = v0.toFixed(2) + ' m/s';
+    document.getElementById('exAlatV').textContent = alat.toFixed(2) + ' m/s²';
+    document.getElementById('exKapV').textContent = kap.toFixed(2) + ' m⁻¹' + (kap > 0.05 ? ' (R=' + (1/kap).toFixed(2) + 'm)' : ' (直道)');
+    document.getElementById('exImuV').textContent = kpImu.toFixed(2);
+
+    const vAtK = k => Math.min(v0, Math.sqrt(alat / (k + 0.15)));
+    const vCur = vAtK(kap);
+    const wTar = vCur * kap;
+    // 模拟真车大角欠转向(η=0.80)下：前馈大角增益 + IMU 闭环稳态达成率
+    const kFrac = Math.min(1, kap / 2.38);
+    const nlBoost = 1 + 0.18 * Math.max(0, (kFrac - 0.35) / 0.65);
+    const eta = 0.80; // 实测大角开环效率 ~80%
+    // 稳态方程: w_real = eta * (nlBoost * wTar + kpImu * (wTar - w_real))
+    const ratio = (eta * (nlBoost + kpImu)) / (1 + eta * kpImu);
+    const pct = Math.min(100, Math.round(ratio * 100));
+
+    document.getElementById('exOutStr').textContent = v0.toFixed(2) + ' m/s';
+    document.getElementById('exOutCur').textContent = vCur.toFixed(2) + ' m/s';
+    document.getElementById('exOutW').textContent = wTar.toFixed(2) + ' rad/s';
+    document.getElementById('exOutTrack').textContent = pct + '%';
+
+    // 绘图
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    const padL = 56, padR = 24, padT = 26, padB = 38;
+    const gw = W - padL - padR, gh = H - padT - padB;
+
+    // 坐标网格
+    ctx.strokeStyle = '#e7dfd1'; ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + gh * i / 4;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      const val = (0.75 * (1 - i / 4)).toFixed(2);
+      ctx.fillStyle = '#857c6f'; ctx.font = '11px monospace';
+      ctx.fillText(val, 14, y + 4);
+    }
+
+    // 画巡航水平线
+    const yV0 = padT + gh * (1 - v0 / 0.75);
+    ctx.strokeStyle = '#cbd5e1'; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(padL, yV0); ctx.lineTo(W - padR, yV0); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 画实际物理限速曲线 v(κ)
+    ctx.strokeStyle = '#1d4ed8'; ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let i = 0; i <= 100; i++) {
+      const k = 2.4 * i / 100;
+      const v = vAtK(k);
+      const px = padL + gw * (k / 2.4);
+      const py = padT + gh * (1 - v / 0.75);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // 标注当前点
+    const curX = padL + gw * (kap / 2.4);
+    const curY = padT + gh * (1 - vCur / 0.75);
+    ctx.fillStyle = '#047857';
+    ctx.beginPath(); ctx.arc(curX, curY, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#047857'; ctx.font = 'bold 12px monospace';
+    ctx.fillText('当前: ' + vCur.toFixed(2) + ' m/s', Math.min(W - 140, curX + 10), Math.max(padT + 14, curY - 8));
+
+    ctx.fillStyle = '#534c43'; ctx.font = '12px sans-serif';
+    ctx.fillText('车速 (m/s)', 8, 16);
+    ctx.fillText('曲率 |κ| (0=直道 → 2.38=左满舵急弯)', padL + gw / 2 - 110, H - 10);
+  }
+
+  [elV0, elAlat, elKap, elImu].forEach(el => el.addEventListener('input', update));
+  update();
+})();
+
+// ===================== 急救卡实时搜索 =====================
+(function() {
+  const inp = document.getElementById('faqSearch');
+  const cards = Array.from(document.querySelectorAll('#faqList .faq-card'));
+  inp.addEventListener('input', () => {
+    const q = inp.value.trim().toLowerCase();
+    cards.forEach(card => {
+      const hay = (card.dataset.kw + ' ' + card.textContent).toLowerCase();
+      card.style.display = (!q || hay.includes(q)) ? '' : 'none';
+    });
+  });
+})();
+
+// ===================== 第 7 站：问题对照总表分类 + 搜索 =====================
+(function() {
+  const btns = Array.from(document.querySelectorAll('#diagFilterBtns .pill-btn'));
+  const inp  = document.getElementById('diagSearch');
+  const rows = Array.from(document.querySelectorAll('#diagTable tbody tr'));
+  let activeCat = 'all';
+
+  function applyFilter() {
+    const q = inp ? inp.value.trim().toLowerCase() : '';
+    rows.forEach(tr => {
+      const catOk = (activeCat === 'all') || (tr.dataset.cat === activeCat);
+      const txtOk = (!q) || tr.textContent.toLowerCase().includes(q);
+      tr.style.display = (catOk && txtOk) ? '' : 'none';
+    });
+  }
+
+  btns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      btns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeCat = btn.dataset.cat;
+      applyFilter();
+    });
+  });
+  if (inp) inp.addEventListener('input', applyFilter);
+})();
+</script>
+</body>
+</html>

@@ -140,7 +140,7 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("odom_topic", "/odom");
   this->declare_parameter("ekf_odom_topic", "/odom_combined");
   this->declare_parameter("detection_topic", "hobot_dnn_detection");
-  this->declare_parameter("detection_timeout_sec", 0.35);
+  this->declare_parameter("detection_timeout_sec", 0.22);
   this->declare_parameter("segment_topic", "line_follower/segment");
   this->declare_parameter("voltage_topic", "/PowerVoltage");
 
@@ -411,10 +411,10 @@ void LineFollowerNode::declare_parameters()
 void LineFollowerNode::sync_runtime_parameters()
 {
   planner_mode_ = this->get_parameter("bev_planner_mode").as_string();
-  if (planner_mode_ != "bev_dwa" && planner_mode_ != "legacy") {
+  if (planner_mode_ != "bev_dwa") {
     RCLCPP_WARN(
       this->get_logger(),
-      "[DEC] param bev_planner_mode='%s' unknown (expected bev_dwa/legacy), using bev_dwa",
+      "[DEC] param bev_planner_mode='%s' disabled; forcing bev_dwa",
       planner_mode_.c_str());
     planner_mode_ = "bev_dwa";
   }
@@ -1023,17 +1023,17 @@ void LineFollowerNode::setup_interfaces()
     start_topic_, 10, std::bind(&LineFollowerNode::start_callback, this, std::placeholders::_1));
 
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-    odom_topic_, 10, std::bind(&LineFollowerNode::odom_callback, this, std::placeholders::_1));
+    odom_topic_, rclcpp::QoS(1), std::bind(&LineFollowerNode::odom_callback, this, std::placeholders::_1));
 
   if (!ekf_odom_topic_.empty() && ekf_odom_topic_ != odom_topic_) {
     ekf_odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-      ekf_odom_topic_, 10,
+      ekf_odom_topic_, rclcpp::QoS(1),
       std::bind(&LineFollowerNode::ekf_odom_callback, this, std::placeholders::_1));
   }
 
   if (!detection_topic_.empty()) {
     detection_sub_ = this->create_subscription<ai_msgs::msg::PerceptionTargets>(
-      detection_topic_, rclcpp::QoS(10).best_effort(),
+      detection_topic_, rclcpp::QoS(1).best_effort(),
       std::bind(&LineFollowerNode::detection_callback, this, std::placeholders::_1));
   }
 
@@ -1180,8 +1180,16 @@ void LineFollowerNode::detection_callback(
     }
   }
 
+  const double recv_sec = this->now().seconds();
+  double cap_sec = static_cast<double>(msg->header.stamp.sec) +
+    static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
+  if (!std::isfinite(cap_sec) || cap_sec <= 1.0 || std::abs(recv_sec - cap_sec) > 60.0) {
+    cap_sec = recv_sec;
+  }
   latest_raw_boxes_ = std::move(boxes);
-  latest_det_stamp_sec_ = this->now().seconds();
+  latest_det_stamp_sec_ = recv_sec;
+  latest_det_capture_sec_ = cap_sec;
+  latest_det_seq_++;
 }
 
 void LineFollowerNode::voltage_callback(const std_msgs::msg::Float32::SharedPtr msg)
@@ -1216,6 +1224,7 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
     finish_guard_.reset();
     const VehiclePose2D & start_p = ekf_pose_seen_ ? ekf_pose_ : odom_pose_;
     bev_dwa_planner_.reset(now.seconds(), start_p);
+    consumed_det_seq_ = latest_det_seq_;
     last_red_src_state_ = RedDetectionSource::NONE;
     last_red_src_log_sec_ = -1e9;
     red_src_yolo_only_frames_ = 0;
@@ -1281,7 +1290,9 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
   std::vector<DebugDetectionBox> debug_boxes;
   std::vector<DebugDetectionBox> yolo_red_dboxes;
 
-  const bool dets_fresh = (now_sec - latest_det_stamp_sec_) <= detection_timeout_sec_;
+  const double det_ref_sec = (latest_det_capture_sec_ > -1e8) ?
+    latest_det_capture_sec_ : latest_det_stamp_sec_;
+  const bool dets_fresh = (now_sec - det_ref_sec) <= detection_timeout_sec_;
   if (dets_fresh) {
     for (const auto & box : latest_raw_boxes_) {
       if (box.type == SemanticObjectType::BONUS_DIGIT ||
@@ -1517,6 +1528,7 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     //    (100% immune to red-stripe='1' & blue-border='6'/'2' false positives!)
     std::vector<GroundDetection> bev_valid_digits;
     std::vector<DebugDetectionBox> bev_debug_boxes;
+    const bool new_det_packet = (latest_det_seq_ != consumed_det_seq_);
     if (dets_fresh) {
       for (const auto & box : latest_raw_boxes_) {
         if (box.type != SemanticObjectType::BONUS_DIGIT) {
@@ -1525,15 +1537,17 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         double d_m = 0.0;
         double y_m = 0.0;
         if (bev_mapper_.validate_yolo_digit(frame_bgr, box.bbox_img, ground_projector_, d_m, y_m)) {
-          GroundDetection gd{};
-          gd.type = SemanticObjectType::BONUS_DIGIT;
-          gd.digit = box.digit;
-          gd.confidence = box.confidence;
-          gd.d_bumper_m = d_m;
-          gd.y_lat_m = y_m;
-          gd.track_id = box.track_id;
-          gd.stamp_sec = latest_det_stamp_sec_;
-          bev_valid_digits.push_back(gd);
+          if (new_det_packet) {
+            GroundDetection gd{};
+            gd.type = SemanticObjectType::BONUS_DIGIT;
+            gd.digit = box.digit;
+            gd.confidence = box.confidence;
+            gd.d_bumper_m = d_m;
+            gd.y_lat_m = y_m;
+            gd.track_id = box.track_id;
+            gd.stamp_sec = det_ref_sec;
+            bev_valid_digits.push_back(gd);
+          }
 
           DebugDetectionBox dbox{};
           dbox.bbox_img = box.bbox_img;
@@ -1544,6 +1558,9 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
           dbox.is_digit = true;
           bev_debug_boxes.push_back(dbox);
         }
+      }
+      if (new_det_packet) {
+        consumed_det_seq_ = latest_det_seq_;
       }
     }
     for (const auto & rb : bev_red_boxes) {
@@ -1614,7 +1631,7 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
     if (step_events.yellow_stop_begin) {
       finish_guard_.mark_yellow_stop_triggered();
-      bev_dwa_planner_.notify_yellow_stop_triggered();
+      bev_dwa_planner_.notify_yellow_stop_triggered(now_sec);
       bev_dwa_planner_.clear_fork_votes();
 
       yellow_brake_entry_speed_mps_ = sm_state.odom_seen ?
@@ -1759,15 +1776,18 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       (bev_plan.mode_tag != last_ctrl_mode_tag_) ||
       (bev_plan.committed_branch != last_ctrl_branch_);
     if (ctrl_changed || (now_sec - last_ctrl_log_sec_) >= 0.20) {
+      const int det_age_ms = (det_ref_sec > -1e8) ?
+        static_cast<int>(std::round((now_sec - det_ref_sec) * 1000.0)) : -1;
       RCLCPP_INFO(
         this->get_logger(),
-        "[DEC] ctrl mode=%s phase=%s branch=%d k=%+.2f kr=%+.2f ey=%+.3f ld=%.2f L=%.2f th=%+.1fd "
+        "[DEC] ctrl mode=%s phase=%s branch=%d k=%+.2f k2=%+.2f kr=%+.2f ey=%+.3f ld=%.2f L=%.2f th=%+.1fd "
         "v=%.2f yaw=%+.2f w_bev=%.2f s=%.2f clr=[w=%+.2f,o=%+.2f] obs=%d "
-        "arc=%d/%d cap=%.2f goal=%+.0fd dig=L%d(%d)R%d(%d) flg=%d",
+        "arc=%d/%d cap=%.2f goal=%+.0fd dig=L%d(%d)R%d(%d) age=%dms flg=%d",
         bev_plan.mode_tag.c_str(),
         topology_phase_to_string(bev_plan.phase),
         bev_plan.committed_branch,
         bev_plan.chosen_kappa,
+        bev_plan.chosen_kappa2,
         bev_plan.road_kappa_fit,
         bev_plan.lat_err_m,
         bev_plan.lookahead_m,
@@ -1780,12 +1800,13 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         bev_plan.min_wall_clearance_m,
         bev_plan.min_obs_clearance_m,
         bev_plan.has_near_obstacle ? 1 : 0,
-        bev_plan.total_slice_count,
-        bev_plan.valid_slice_count,
+        static_cast<int>(bev_plan.candidates.size()),
+        bev_plan.feasible_arc_count,
         bev_plan.speed_cap_mps,
         bev_plan.goal_yaw_rad * (180.0 / kPi),
         bev_plan.fork_left_digit, bev_plan.fork_left_votes,
         bev_plan.fork_right_digit, bev_plan.fork_right_votes,
+        det_age_ms,
         (bev_plan.has_feasible_arc ? 1 : 0) |
         (bev_plan.escape_active ? 2 : 0) |
         (bev_plan.visual_dead_end_ahead ? 4 : 0) |

@@ -11,7 +11,7 @@ line_follower_node:
     odom_topic: /odom
     ekf_odom_topic: /odom_combined
     detection_topic: hobot_dnn_detection
-    detection_timeout_sec: 0.35
+    detection_timeout_sec: 0.22
     segment_topic: line_follower/segment
     voltage_topic: /PowerVoltage
 
@@ -195,7 +195,7 @@ line_follower_node:
     obstacle_rear_keep_margin_m: 0.15
     car_width_m: 0.191
     default_lane_width_m: 0.430
-    border_margin_m: 0.025
+    border_margin_m: 0.020
     cone_margin_m: 0.025
     no_entry_margin_m: 0.035
     obstacle_lookahead_m: 1.10

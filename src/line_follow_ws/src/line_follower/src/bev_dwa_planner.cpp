@@ -139,6 +139,8 @@ void BevDwaPlanner::reset(double now_sec, const VehiclePose2D & start_pose)
   dist_free_m_.fill(kInfDist);
   dist_cone_m_.fill(kInfDist);
   dist_no_entry_m_.fill(kInfDist);
+  road_progress_m_.fill(0.0f);
+  blocked_branch_grid_.fill(0);
 
   locked_digit_val_ = 0;
   locked_digit_y_ = 0.0;
@@ -159,6 +161,7 @@ void BevDwaPlanner::reset(double now_sec, const VehiclePose2D & start_pose)
   dist_since_yellow_m_ = 1e6;
   yellow_absent_frames_ = 10;
   yellow_visual_exited_ = true;
+  yellow_stop_begin_sec_ = -1e9;
 
   phase_ = (config_.track_mode == "roundabout") ?
     TopologyPhase::RB1_APPROACH : TopologyPhase::CRUISE_START;
@@ -201,8 +204,10 @@ double BevDwaPlanner::wrap_angle_rad(double a)
 
 void BevDwaPlanner::clear_fork_votes()
 {
-  left_digit_votes_.fill(0);
-  right_digit_votes_.fill(0);
+  left_digit_votes_.fill(0.0);
+  right_digit_votes_.fill(0.0);
+  left_digit_hits_.fill(0);
+  right_digit_hits_.fill(0);
   best_left_digit_ = 0;
   best_left_votes_ = 0;
   best_right_digit_ = 0;
@@ -325,7 +330,11 @@ void BevDwaPlanner::update_fork_votes(
   const std::vector<GroundDetection> & detections,
   bool is_stationary_at_yellow)
 {
-  const int vote_weight = is_stationary_at_yellow ? 2 : 1;
+  std::vector<const GroundDetection *> valid;
+  valid.reserve(detections.size());
+  double y_min = 1e9;
+  double y_max = -1e9;
+
   for (const auto & gd : detections) {
     if (gd.type != SemanticObjectType::BONUS_DIGIT) {
       continue;
@@ -336,10 +345,39 @@ void BevDwaPlanner::update_fork_votes(
     if (gd.d_bumper_m < 0.12 || gd.d_bumper_m > 1.25) {
       continue;
     }
-    if (gd.y_lat_m > 0.025) {
-      left_digit_votes_[static_cast<size_t>(gd.digit)] += vote_weight;
-    } else if (gd.y_lat_m < -0.025) {
-      right_digit_votes_[static_cast<size_t>(gd.digit)] += vote_weight;
+    // Stationary stop bonus weights must come strictly from post-stop frames!
+    if (is_stationary_at_yellow && yellow_stop_begin_sec_ > 0.0 &&
+      gd.stamp_sec > 0.0 && gd.stamp_sec < yellow_stop_begin_sec_)
+    {
+      continue;
+    }
+    valid.push_back(&gd);
+    y_min = std::min(y_min, gd.y_lat_m);
+    y_max = std::max(y_max, gd.y_lat_m);
+  }
+
+  const bool use_midpoint_split = (valid.size() >= 2U) && ((y_max - y_min) >= 0.08);
+  const double y_split = 0.5 * (y_min + y_max);
+  const int hit_inc = is_stationary_at_yellow ? 2 : 1;
+
+  for (const GroundDetection * gd : valid) {
+    const double w = static_cast<double>(hit_inc) * clamp_d(gd->confidence, 0.20, 1.0);
+    if (use_midpoint_split) {
+      if (gd->y_lat_m >= y_split) {
+        left_digit_votes_[static_cast<size_t>(gd->digit)] += w;
+        left_digit_hits_[static_cast<size_t>(gd->digit)] += hit_inc;
+      } else {
+        right_digit_votes_[static_cast<size_t>(gd->digit)] += w;
+        right_digit_hits_[static_cast<size_t>(gd->digit)] += hit_inc;
+      }
+    } else {
+      if (gd->y_lat_m > 0.025) {
+        left_digit_votes_[static_cast<size_t>(gd->digit)] += w;
+        left_digit_hits_[static_cast<size_t>(gd->digit)] += hit_inc;
+      } else if (gd->y_lat_m < -0.025) {
+        right_digit_votes_[static_cast<size_t>(gd->digit)] += w;
+        right_digit_hits_[static_cast<size_t>(gd->digit)] += hit_inc;
+      }
     }
   }
 
@@ -347,16 +385,21 @@ void BevDwaPlanner::update_fork_votes(
   best_left_votes_ = 0;
   best_right_digit_ = 0;
   best_right_votes_ = 0;
-  for (int d = 1; d <= 8; ++d) {
-    const int lv = left_digit_votes_[static_cast<size_t>(d)];
-    if (lv > best_left_votes_) {
-      best_left_votes_ = lv;
+  double best_lw = 0.0;
+  double best_rw = 0.0;
+  // Scan descending 8..1 so ties strictly favor the LARGER bonus digit!
+  for (int d = 8; d >= 1; --d) {
+    const double lw = left_digit_votes_[static_cast<size_t>(d)];
+    if (lw > best_lw + 1e-6) {
+      best_lw = lw;
       best_left_digit_ = d;
+      best_left_votes_ = left_digit_hits_[static_cast<size_t>(d)];
     }
-    const int rv = right_digit_votes_[static_cast<size_t>(d)];
-    if (rv > best_right_votes_) {
-      best_right_votes_ = rv;
+    const double rw = right_digit_votes_[static_cast<size_t>(d)];
+    if (rw > best_rw + 1e-6) {
+      best_rw = rw;
       best_right_digit_ = d;
+      best_right_votes_ = right_digit_hits_[static_cast<size_t>(d)];
     }
   }
 }
@@ -392,12 +435,12 @@ int BevDwaPlanner::finalize_fork_decision()
       phase_abs_yaw_rad_ = 0.0;
     }
   } else {
-    // Roundabout mode: distinguish RB1 (heading near 0) vs RB2 (heading near +/-pi)
+    // Roundabout mode: distinguish RB1 vs RB2 strictly by current phase (never jump out of RB_UTURN!)
     if (phase_ == TopologyPhase::RB1_APPROACH) {
       phase_ = TopologyPhase::RB1_ACTIVE;
       phase_arc_m_ = 0.0;
       phase_abs_yaw_rad_ = 0.0;
-    } else if (phase_ == TopologyPhase::RB2_APPROACH || phase_ == TopologyPhase::RB_UTURN) {
+    } else if (phase_ == TopologyPhase::RB2_APPROACH) {
       phase_ = TopologyPhase::RB2_ACTIVE;
       phase_arc_m_ = 0.0;
       phase_abs_yaw_rad_ = 0.0;
@@ -407,11 +450,12 @@ int BevDwaPlanner::finalize_fork_decision()
   return chosen;
 }
 
-void BevDwaPlanner::notify_yellow_stop_triggered()
+void BevDwaPlanner::notify_yellow_stop_triggered(double now_sec)
 {
   dist_since_yellow_m_ = 0.0;
   yellow_absent_frames_ = 0;
   yellow_visual_exited_ = false;
+  yellow_stop_begin_sec_ = now_sec;
   last_speed_cmd_ = 0.0;
   stall_accum_sec_ = 0.0;
   escape_active_ = false;
@@ -443,11 +487,34 @@ bool BevDwaPlanner::is_yellow_rearmed() const
 
 bool BevDwaPlanner::check_bev_dead_end_ahead(double d_yellow_m) const
 {
+  // Only confirm visual dead-end when yellow stop line is reasonably close (<= 0.38m)
+  // so mid-track corner yellow lines viewed from 0.55m never trigger premature finish!
+  if (d_yellow_m > 0.38) {
+    return false;
+  }
   const double d0 = std::max(0.05, d_yellow_m + 0.14);
-  const double d1 = std::min(kBevDMax - 0.02, d_yellow_m + 0.44);
+  const double d1 = std::min(kBevDMax - 0.02, d_yellow_m + 0.46);
   if (d1 <= d0 + 0.05) {
     return false;
   }
+  // Wide continuation check: if white drivable road continues left, right, or ahead beyond
+  // the yellow strip (e.g., curved entrance or T-bar), it is NOT a finish dead-end!
+  int wide_free_cnt = 0;
+  for (double d = d0 + 0.02; d <= d1; d += 0.02) {
+    for (double y = -0.48; y <= 0.48; y += 0.02) {
+      int r = 0, c = 0;
+      if (!metric_to_cell(d, y, r, c)) {
+        continue;
+      }
+      if (fused_grid_[static_cast<size_t>(r * kBevCols + c)] == BEV_FREE) {
+        wide_free_cnt++;
+      }
+    }
+  }
+  if (wide_free_cnt >= 25) {
+    return false;
+  }
+
   int total = 0;
   int wall_cnt = 0;
   int free_cnt = 0;
@@ -911,19 +978,19 @@ void BevDwaPlanner::update_heading_and_topology(
         }
         break;
       case TopologyPhase::FORK_RIGHT_ENTER:
-        // Transition to vertical stem only after truly rotating North (<-64 deg) AND traveling >= 0.40m
-        if ((err_north < 0.45 && width_m < 0.56 && phase_arc_m_ >= 0.40) || phase_arc_m_ > 0.95) {
+        // Keep committed_branch_=+1 until physically turned North AND entered narrow stem!
+        if ((err_north < 0.48 && width_m < 0.56 && phase_arc_m_ >= 0.40) || phase_arc_m_ > 2.20) {
           phase_ = TopologyPhase::FORK_RIGHT_STEM;
           committed_branch_ = 0;
           phase_arc_m_ = 0.0;
         }
         break;
       case TopologyPhase::FORK_RIGHT_STEM:
-        // T-JUNCTION DETECTION: must have driven >= 0.25m up vertical stem facing North (< 29 deg)
+        // T-JUNCTION DETECTION: must have driven >= 0.20m up vertical stem facing North
         // AND genuinely see top horizontal bar (never false-trigger on L=0 wall-graze!)
-        if (err_north < 0.50 && phase_arc_m_ >= 0.25 &&
-          ((t_junction_right_open && straight_free_len_m < 0.68) ||
-          (straight_free_len_m >= 0.08 && straight_free_len_m < 0.55)))
+        if (err_north < 0.55 && phase_arc_m_ >= 0.20 &&
+          ((t_junction_right_open && straight_free_len_m < 0.72) ||
+          (straight_free_len_m >= 0.06 && straight_free_len_m < 0.58)))
         {
           phase_ = TopologyPhase::FORK_T_RIGHT_TURN;
           phase_arc_m_ = 0.0;
@@ -931,17 +998,17 @@ void BevDwaPlanner::update_heading_and_topology(
         break;
       case TopologyPhase::FORK_T_RIGHT_TURN:
         // Completed 90 deg right turn into East-bound S-curve
-        if (err_east < 0.55) {
+        if (err_east < 0.50) {
           phase_ = TopologyPhase::FORK_S_CURVE;
           phase_arc_m_ = 0.0;
         }
         break;
       case TopologyPhase::FORK_LEFT_UTURN:
-        if (phase_arc_m_ > 0.55 && width_m < 0.54) {
-          committed_branch_ = 0;  // Release initial fork entry bias once inside outer lane
+        if (phase_abs_yaw_rad_ > 0.65 || (phase_arc_m_ > 0.90 && width_m < 0.52)) {
+          committed_branch_ = 0;  // Release initial fork entry bias only once inside outer lane
         }
         // After sweeping through outer U-turn to East (+180 deg), enter S-curve past T-junction
-        if (err_east < 0.60 && cum_abs_yaw_rad_ > 2.0) {
+        if (err_east < 0.55 && cum_abs_yaw_rad_ > 2.0) {
           phase_ = TopologyPhase::FORK_S_CURVE;
           committed_branch_ = 0;
           phase_arc_m_ = 0.0;
@@ -958,12 +1025,12 @@ void BevDwaPlanner::update_heading_and_topology(
       case TopologyPhase::RB1_APPROACH:
         break;
       case TopologyPhase::RB1_ACTIVE:
-        // Release initial branch bias after entering the ring
-        if (phase_arc_m_ > 0.55 && width_m < 0.56) {
+        // Release branch mask only after turning onto the chosen side of the island
+        if (phase_abs_yaw_rad_ > 0.65 || (phase_arc_m_ > 0.90 && width_m < 0.52)) {
           committed_branch_ = 0;
         }
-        // Exited RB1 once swept > 60 deg around island and returned to West (0 deg) narrow straight
-        if (phase_abs_yaw_rad_ > 1.1 && err_west < 0.45 && width_m < 0.54 && phase_arc_m_ > 1.2) {
+        // Exited RB1 once swept > 103 deg around island and returned to West (0 deg) narrow straight
+        if (phase_abs_yaw_rad_ > 1.80 && err_west < 0.45 && width_m < 0.54 && phase_arc_m_ > 1.35) {
           phase_ = TopologyPhase::RB_UTURN;
           committed_branch_ = 0;
           phase_arc_m_ = 0.0;
@@ -972,7 +1039,7 @@ void BevDwaPlanner::update_heading_and_topology(
         break;
       case TopologyPhase::RB_UTURN:
         // Completed big 180 deg U-turn onto East-bound straight approaching RB2
-        if (err_east < 0.55 && cum_abs_yaw_rad_ > 2.2) {
+        if (err_east < 0.52 && phase_abs_yaw_rad_ > 2.20 && phase_arc_m_ > 1.50) {
           phase_ = TopologyPhase::RB2_APPROACH;
           phase_arc_m_ = 0.0;
           phase_abs_yaw_rad_ = 0.0;
@@ -981,10 +1048,10 @@ void BevDwaPlanner::update_heading_and_topology(
       case TopologyPhase::RB2_APPROACH:
         break;
       case TopologyPhase::RB2_ACTIVE:
-        if (phase_arc_m_ > 0.55 && width_m < 0.56) {
+        if (phase_abs_yaw_rad_ > 0.65 || (phase_arc_m_ > 0.90 && width_m < 0.52)) {
           committed_branch_ = 0;
         }
-        if (phase_abs_yaw_rad_ > 1.1 && err_east < 0.45 && width_m < 0.54 && phase_arc_m_ > 1.2) {
+        if (phase_abs_yaw_rad_ > 1.80 && err_east < 0.45 && width_m < 0.54 && phase_arc_m_ > 1.35) {
           phase_ = TopologyPhase::RB2_EXIT;
           committed_branch_ = 0;
           phase_arc_m_ = 0.0;
@@ -1791,6 +1858,603 @@ void BevDwaPlanner::check_chosen_arc_clearance(
   }
 }
 
+void BevDwaPlanner::compute_geodesic_progress_field(
+  int branch_bias,
+  double goal_yaw,
+  bool goal_yaw_active,
+  bool forbid_reverse_yaw,
+  double reverse_yaw)
+{
+  (void)goal_yaw;
+  (void)goal_yaw_active;
+  (void)forbid_reverse_yaw;
+  (void)reverse_yaw;
+
+  road_progress_m_.fill(-1.0f);
+  blocked_branch_grid_.fill(0);
+
+  // 1) Topological wrong-way branch masking
+  if (phase_ == TopologyPhase::FORK_T_RIGHT_TURN) {
+    // At T-junction crossbar, mask wrong left arm (going toward world yaw 0)
+    for (int r = 0; r < kBevRows; ++r) {
+      const double dm = kBevDMin + (static_cast<double>(r) + 0.5) * kBevRes;
+      if (dm <= 0.22) {
+        continue;
+      }
+      const int row_off = r * kBevCols;
+      for (int c = 0; c < kBevCols; ++c) {
+        const double ym = kBevYMax - (static_cast<double>(c) + 0.5) * kBevRes;
+        if (ym > 0.14) {
+          blocked_branch_grid_[static_cast<size_t>(row_off + c)] = 1;
+        }
+      }
+    }
+  }
+
+  if (branch_bias != 0) {
+    // Only split branches across genuine blue islands/borders (>= 3 WALL_BLUE or UNKNOWN),
+    // keeping cones/no-entry INSIDE a single road span connected!
+    for (int r = 0; r < kBevRows; ++r) {
+      const double dm = kBevDMin + (static_cast<double>(r) + 0.5) * kBevRes;
+      if (dm < 0.14) {
+        continue;
+      }
+      const int row_off = r * kBevCols;
+      bool road_like[kBevCols]{};
+      for (int c = 0; c < kBevCols; ++c) {
+        const uint8_t cell = fused_grid_[static_cast<size_t>(row_off + c)];
+        road_like[c] = (cell == BEV_FREE || cell == BEV_OBS_CONE || cell == BEV_OBS_NO_ENTRY);
+      }
+      // Bridge 1..2 cell WALL_BLUE specks inside the same branch
+      for (int c = 1; c + 1 < kBevCols; ++c) {
+        if (!road_like[c] && fused_grid_[static_cast<size_t>(row_off + c)] == BEV_WALL_BLUE) {
+          if ((road_like[c - 1] && road_like[c + 1]) ||
+            (c + 2 < kBevCols && road_like[c - 1] && road_like[c + 2] &&
+              fused_grid_[static_cast<size_t>(row_off + c + 1)] == BEV_WALL_BLUE))
+          {
+            road_like[c] = true;
+          }
+        }
+      }
+
+      std::vector<std::pair<int, int>> intervals;
+      int c = 0;
+      while (c < kBevCols) {
+        if (!road_like[c]) {
+          ++c;
+          continue;
+        }
+        const int start_c = c;
+        while (c < kBevCols && road_like[c]) {
+          ++c;
+        }
+        const int end_c = c - 1;
+        if (end_c - start_c + 1 >= 4) {
+          intervals.emplace_back(start_c, end_c);
+        }
+      }
+
+      if (intervals.size() >= 2U) {
+        // c=0 is leftmost (+y), c=kBevCols-1 is rightmost (-y)
+        const size_t keep_idx = (branch_bias > 0) ? (intervals.size() - 1U) : 0U;
+        for (size_t k = 0; k < intervals.size(); ++k) {
+          if (k == keep_idx) {
+            continue;
+          }
+          for (int cc = intervals[k].first; cc <= intervals[k].second; ++cc) {
+            const size_t idx = static_cast<size_t>(row_off + cc);
+            if (fused_grid_[idx] == BEV_FREE) {
+              blocked_branch_grid_[idx] = 1;
+            }
+          }
+        }
+      }
+    }
+  } else if (phase_ != TopologyPhase::FORK_T_RIGHT_TURN) {
+    // Single-sided window glare guard: ONLY trigger on a genuine straight corridor continuing
+    // past d >= 0.78m where one edge stays steady to d >= 0.75m while the opposite edge jumps > 16cm.
+    double glare_straight_len = 0.0;
+    for (double dm = 0.10; dm <= 0.90; dm += 0.02) {
+      int rr = 0, cc = 0;
+      if (!metric_to_cell(dm, 0.0, rr, cc)) {
+        break;
+      }
+      if (fused_grid_[static_cast<size_t>(rr * kBevCols + cc)] == BEV_WALL_BLUE) {
+        break;
+      }
+      glare_straight_len = dm;
+    }
+    if (glare_straight_len >= 0.76) {
+      bool has_prev_edges = false;
+      double prev_yl = 0.0, prev_yr = 0.0;
+      bool glare_left = false;
+      bool glare_right = false;
+      for (int r = 0; r < kBevRows; ++r) {
+        const double dm = kBevDMin + (static_cast<double>(r) + 0.5) * kBevRes;
+        if (dm < 0.14 || dm > 0.95) {
+          continue;
+        }
+        const int row_off = r * kBevCols;
+        int c_l = -1, c_r = -1;
+        for (int c = 0; c < kBevCols; ++c) {
+          const uint8_t cell = fused_grid_[static_cast<size_t>(row_off + c)];
+          if (cell == BEV_FREE || cell == BEV_OBS_CONE || cell == BEV_OBS_NO_ENTRY) {
+            if (c_l < 0) {
+              c_l = c;
+            }
+            c_r = c;
+          }
+        }
+        if (c_l >= 0 && (c_r - c_l) >= 12) {
+          double dl = 0.0, yl = 0.0, dr = 0.0, yr = 0.0;
+          cell_to_metric(r, c_l, dl, yl);
+          cell_to_metric(r, c_r, dr, yr);
+          if (has_prev_edges) {
+            const double d_yl = yl - prev_yl;
+            const double d_yr = yr - prev_yr;
+            if (!glare_left && !glare_right) {
+              if (d_yl > 0.16 && std::abs(d_yr) < 0.03) {
+                glare_left = true;
+              } else if (-d_yr > 0.16 && std::abs(d_yl) < 0.03) {
+                glare_right = true;
+              }
+            }
+            if (glare_left) {
+              const double max_yl = yr + config_.nominal_lane_width_m + 0.04;
+              for (int c = c_l; c <= c_r; ++c) {
+                double dd = 0.0, yy = 0.0;
+                cell_to_metric(r, c, dd, yy);
+                if (yy > max_yl && fused_grid_[static_cast<size_t>(row_off + c)] == BEV_FREE) {
+                  blocked_branch_grid_[static_cast<size_t>(row_off + c)] = 1;
+                }
+              }
+              yl = std::min(yl, max_yl);
+            } else if (glare_right) {
+              const double min_yr = yl - config_.nominal_lane_width_m - 0.04;
+              for (int c = c_l; c <= c_r; ++c) {
+                double dd = 0.0, yy = 0.0;
+                cell_to_metric(r, c, dd, yy);
+                if (yy < min_yr && fused_grid_[static_cast<size_t>(row_off + c)] == BEV_FREE) {
+                  blocked_branch_grid_[static_cast<size_t>(row_off + c)] = 1;
+                }
+              }
+              yr = std::max(yr, min_yr);
+            }
+          }
+          prev_yl = yl;
+          prev_yr = yr;
+          has_prev_edges = true;
+        }
+      }
+    }
+  }
+
+  // 2) 8-connected Euclidean Dijkstra progress field along unblocked BEV_FREE road
+  struct QNode
+  {
+    float d;
+    int idx;
+    bool operator>(const QNode & other) const { return d > other.d; }
+  };
+
+  auto run_dijkstra = [&](float min_clr_thresh) -> float {
+    road_progress_m_.fill(-1.0f);
+    std::priority_queue<QNode, std::vector<QNode>, std::greater<QNode>> pq;
+
+    int seed_count = 0;
+    for (int r = 0; r < kBevRows; ++r) {
+      const double dm = kBevDMin + (static_cast<double>(r) + 0.5) * kBevRes;
+      if (dm < -0.08 || dm > 0.16) {
+        continue;
+      }
+      const int row_off = r * kBevCols;
+      for (int c = 0; c < kBevCols; ++c) {
+        const double ym = kBevYMax - (static_cast<double>(c) + 0.5) * kBevRes;
+        if (std::abs(ym) > 0.24) {
+          continue;
+        }
+        const int idx = row_off + c;
+        const size_t uidx = static_cast<size_t>(idx);
+        if (fused_grid_[uidx] != BEV_FREE || blocked_branch_grid_[uidx] != 0) {
+          continue;
+        }
+        const float clr = std::min(
+          dist_wall_m_[uidx], std::min(dist_cone_m_[uidx], dist_no_entry_m_[uidx]));
+        if (clr >= min_clr_thresh) {
+          road_progress_m_[uidx] = 0.0f;
+          pq.push(QNode{0.0f, idx});
+          seed_count++;
+        }
+      }
+    }
+
+    if (seed_count == 0) {
+      int best_idx = -1;
+      double best_d2 = 1e9;
+      for (int r = 0; r < kBevRows; ++r) {
+        const double dm = kBevDMin + (static_cast<double>(r) + 0.5) * kBevRes;
+        if (dm < -0.15 || dm > 0.35) {
+          continue;
+        }
+        for (int c = 0; c < kBevCols; ++c) {
+          const int idx = r * kBevCols + c;
+          const size_t uidx = static_cast<size_t>(idx);
+          if (fused_grid_[uidx] != BEV_FREE || blocked_branch_grid_[uidx] != 0) {
+            continue;
+          }
+          const double ym = kBevYMax - (static_cast<double>(c) + 0.5) * kBevRes;
+          const double d2 = (dm - 0.10) * (dm - 0.10) + ym * ym;
+          if (d2 < best_d2) {
+            best_d2 = d2;
+            best_idx = idx;
+          }
+        }
+      }
+      if (best_idx >= 0) {
+        road_progress_m_[static_cast<size_t>(best_idx)] = 0.0f;
+        pq.push(QNode{0.0f, best_idx});
+      }
+    }
+
+    constexpr int dr8[8] = {-1, 1, 0, 0, -1, -1, 1, 1};
+    constexpr int dc8[8] = {0, 0, -1, 1, -1, 1, -1, 1};
+    constexpr float kOrtho = static_cast<float>(kBevRes);
+    constexpr float kDiag = static_cast<float>(kBevRes * 1.41421356);
+
+    float max_prog = 0.0f;
+    while (!pq.empty()) {
+      const QNode top = pq.top();
+      pq.pop();
+      const size_t u = static_cast<size_t>(top.idx);
+      if (top.d > road_progress_m_[u] + 1e-6f) {
+        continue;
+      }
+      max_prog = std::max(max_prog, top.d);
+      const int r = top.idx / kBevCols;
+      const int c = top.idx % kBevCols;
+      for (int k = 0; k < 8; ++k) {
+        const int nr = r + dr8[k];
+        const int nc = c + dc8[k];
+        if (nr < 0 || nr >= kBevRows || nc < 0 || nc >= kBevCols) {
+          continue;
+        }
+        const int nidx = nr * kBevCols + nc;
+        const size_t nu = static_cast<size_t>(nidx);
+        if (fused_grid_[nu] != BEV_FREE || blocked_branch_grid_[nu] != 0) {
+          continue;
+        }
+        if (min_clr_thresh > 0.0f) {
+          const float clr = std::min(
+            dist_wall_m_[nu], std::min(dist_cone_m_[nu], dist_no_entry_m_[nu]));
+          if (clr < min_clr_thresh) {
+            continue;
+          }
+        }
+        const float step_cost = (k < 4) ? kOrtho : kDiag;
+        const float nd = top.d + step_cost;
+        if (road_progress_m_[nu] < 0.0f || nd < road_progress_m_[nu]) {
+          road_progress_m_[nu] = nd;
+          pq.push(QNode{nd, nidx});
+        }
+      }
+    }
+    return max_prog;
+  };
+
+  // Primary pass blocks sub-car pinholes (< 5.5cm clearance) beside cones/walls; fallback if too pinched
+  const float max_prog = run_dijkstra(0.055f);
+  if (max_prog < 0.20f) {
+    run_dijkstra(0.0f);
+  }
+}
+
+void BevDwaPlanner::evaluate_two_stage_candidate(
+  double kappa_init,
+  double kappa1,
+  double kappa2,
+  double s_split,
+  double s_lag,
+  bool allow_digit_bonus,
+  const std::vector<GroundDetection> & straight_digits,
+  bool clean_straight,
+  bool forbid_reverse_yaw,
+  double reverse_yaw,
+  int branch_bias,
+  double goal_yaw,
+  bool goal_yaw_active,
+  BevArcCandidate & out_cand,
+  int & out_hit_digit,
+  double & out_near_min_clr,
+  double & out_clr_start,
+  double & out_clr_near_end,
+  double & out_soft_ne,
+  double & out_soft_wall,
+  double & out_soft_cone) const
+{
+  (void)branch_bias;
+  out_cand = BevArcCandidate{};
+  out_cand.kappa = kappa1;
+  out_cand.kappa2 = kappa2;
+  out_cand.s_split_m = s_split;
+  out_hit_digit = 0;
+
+  const double r_car = 0.5 * config_.car_width_m;
+  const double horizon = std::max(0.65, config_.rollout_horizon_m);
+  const double ds = 0.035;
+  const int max_steps = std::max(1, static_cast<int>(std::floor((horizon + 1e-6) / ds)));
+  constexpr double kBodyOffsets[3] = {0.0, -0.10, -0.22};
+
+  // Exact rear-axle Ackermann kinematics: rear axle at -L_r moves tangent to th;
+  // front bumper at +L_r ahead captures inner rear-wheel off-tracking on tight bends.
+  const double L_r = std::max(0.05, config_.rear_axle_to_bumper_m);
+  const double wall_soft_lim = clean_straight ?
+    std::max(0.105, config_.border_margin_m + 0.085) :
+    std::max(0.075, config_.border_margin_m + 0.055);
+  const double cone_soft_lim = std::max(0.065, config_.cone_margin_m + 0.040);
+  const double ne_soft_lim = std::max(0.085, config_.no_entry_margin_m + 0.050);
+
+  double rx = -L_r;
+  double ry = 0.0;
+  double th = 0.0;
+
+  double safe_len = 0.0;
+  double rolled_len = 0.0;
+  bool first_hit = false;
+
+  double min_wall_clr = 1.0;
+  double min_obs_clr = 1.0;
+  double min_eff_clr = 1.0;
+  double min_safe_wall_clr = 1.0;
+  double min_safe_cone_clr = 1.0;
+  double min_safe_ne_clr = 1.0;
+  double near_min_clr = 1.0;
+  double clr_start = 1.0;
+  double clr_near_end = 1.0;
+
+  double soft_wall_sum = 0.0;
+  double soft_cone_sum = 0.0;
+  double soft_ne_sum = 0.0;
+  int soft_steps = 0;
+
+  double best_progress = 0.0;
+  double last_safe_progress = 0.0;
+  double rec_progress = 0.0;
+  double last_safe_th = 0.0;
+  double last_eval_th = 0.0;
+
+  double best_digit_bonus = 0.0;
+  int best_digit_id = 0;
+
+  for (int step = 1; step <= max_steps; ++step) {
+    const double s = static_cast<double>(step) * ds;
+    const double prev_s = static_cast<double>(step - 1) * ds;
+    const double k_seg = (s <= s_lag + 1e-6) ? kappa_init : ((s <= s_split + 1e-6) ? kappa1 : kappa2);
+    const double dth = k_seg * ds;
+    rx += ds * std::cos(th + 0.5 * dth);
+    ry += ds * std::sin(th + 0.5 * dth);
+    th += dth;
+    const double x = rx + L_r * std::cos(th);
+    const double y = ry + L_r * std::sin(th);
+
+    double dw = 1.0;
+    double dc = 1.0;
+    double dne = 1.0;
+    bool out_front = false;
+    const double cth = std::cos(th);
+    const double sth = std::sin(th);
+    for (int b = 0; b < 3; ++b) {
+      const double bx = x + kBodyOffsets[b] * cth;
+      const double by = y + kBodyOffsets[b] * sth;
+      int r = 0, c = 0;
+      if (!metric_to_cell(bx, by, r, c)) {
+        if (b == 0) {
+          out_front = true;
+        }
+        continue;
+      }
+      const size_t idx = static_cast<size_t>(r * kBevCols + c);
+      const uint8_t cell = fused_grid_[idx];
+      if (bx >= 0.02 && cell != BEV_UNKNOWN) {
+        double signed_w = 1.0;
+        if (bx >= 0.14 && blocked_branch_grid_[idx] != 0) {
+          signed_w = -0.05;
+        } else {
+          signed_w = (cell == BEV_WALL_BLUE) ?
+            -static_cast<double>(dist_free_m_[idx]) :
+            static_cast<double>(dist_wall_m_[idx]);
+        }
+        dw = std::min(dw, signed_w);
+      }
+      if (bx >= -0.24) {
+        dc = std::min(dc, static_cast<double>(dist_cone_m_[idx]));
+        dne = std::min(dne, static_cast<double>(dist_no_entry_m_[idx]));
+      }
+    }
+    if (out_front) {
+      break;
+    }
+
+    rolled_len = s;
+    const double w_clr = dw - r_car;
+    const double c_clr = dc - r_car;
+    const double ne_clr = dne - r_car;
+    const double step_eff = std::min({
+      w_clr - config_.wall_hard_margin_m,
+      c_clr - config_.cone_hard_margin_m,
+      ne_clr - config_.no_entry_hard_margin_m});
+
+    if (s <= 0.11) {
+      clr_start = std::min(clr_start, step_eff);
+    }
+    if (s > 0.11 && s <= 0.42) {
+      clr_near_end = step_eff;
+    }
+    if (s <= 0.45) {
+      near_min_clr = std::min(near_min_clr, step_eff);
+    }
+
+    min_wall_clr = std::min(min_wall_clr, w_clr);
+    min_obs_clr = std::min(min_obs_clr, std::min(c_clr, ne_clr));
+    min_eff_clr = std::min(min_eff_clr, step_eff);
+    last_eval_th = th;
+
+    if (step_eff < 0.0 && !first_hit) {
+      first_hit = true;
+      safe_len = prev_s;
+    }
+
+    // Sample geodesic road progress around (x, y) both while safe and during short recovery
+    if (!first_hit || s <= 0.42) {
+      int pr = 0, pc = 0;
+      if (metric_to_cell(x, y, pr, pc)) {
+        double p_here = static_cast<double>(road_progress_m_[static_cast<size_t>(pr * kBevCols + pc)]);
+        if (p_here < 0.0) {
+          for (int dr = -1; dr <= 1; ++dr) {
+            for (int dc_i = -1; dc_i <= 1; ++dc_i) {
+              const int rr = pr + dr;
+              const int cc = pc + dc_i;
+              if (rr >= 0 && rr < kBevRows && cc >= 0 && cc < kBevCols) {
+                p_here = std::max(
+                  p_here,
+                  static_cast<double>(road_progress_m_[static_cast<size_t>(rr * kBevCols + cc)]));
+              }
+            }
+          }
+        }
+        if (p_here >= 0.0) {
+          if (!first_hit) {
+            last_safe_progress = p_here;
+            best_progress = std::max(best_progress, p_here);
+          } else {
+            rec_progress = std::max(rec_progress, p_here);
+          }
+        }
+      }
+    }
+
+    if (!first_hit) {
+      safe_len = s;
+      last_safe_th = th;
+      min_safe_wall_clr = std::min(min_safe_wall_clr, w_clr);
+      min_safe_cone_clr = std::min(min_safe_cone_clr, c_clr);
+      min_safe_ne_clr = std::min(min_safe_ne_clr, ne_clr);
+
+      if (w_clr < wall_soft_lim) {
+        const double pen = (wall_soft_lim - std::max(0.0, w_clr)) / wall_soft_lim;
+        soft_wall_sum += pen * pen;
+      }
+      if (c_clr < cone_soft_lim) {
+        const double pen = (cone_soft_lim - std::max(0.0, c_clr)) / cone_soft_lim;
+        soft_cone_sum += pen * pen;
+      }
+      if (ne_clr < ne_soft_lim) {
+        const double pen = (ne_soft_lim - std::max(0.0, ne_clr)) / ne_soft_lim;
+        soft_ne_sum += pen * pen;
+      }
+      soft_steps++;
+
+      if (allow_digit_bonus && !straight_digits.empty() && x >= 0.14 && x <= 0.85) {
+        for (const auto & gd : straight_digits) {
+          const double d2 = (x - gd.d_bumper_m) * (x - gd.d_bumper_m) +
+            (y - gd.y_lat_m) * (y - gd.y_lat_m);
+          if (d2 < 0.015) {
+            const double rew = config_.digit_bonus_weight *
+              std::max(0.0, 1.0 - std::sqrt(d2) / 0.125);
+            if (rew > best_digit_bonus) {
+              best_digit_bonus = rew;
+              best_digit_id = gd.digit;
+            }
+          }
+        }
+      }
+    } else if (s > 0.42) {
+      // Already evaluated recovery response [0..0.42]; stop rolling past hard collision
+      break;
+    }
+  }
+
+  const double inv_steps = 1.0 / static_cast<double>(std::max(1, soft_steps));
+  const double pw_75 = std::max(0.0, (0.075 - std::max(0.0, min_safe_wall_clr)) / 0.075);
+  const double pw_35 = std::max(0.0, (0.035 - std::max(0.0, min_safe_wall_clr)) / 0.035);
+  const double pc_65 = std::max(0.0, (0.065 - std::max(0.0, min_safe_cone_clr)) / 0.065);
+  const double pne_85 = std::max(0.0, (0.085 - std::max(0.0, min_safe_ne_clr)) / 0.085);
+
+  out_soft_wall = 2.2 * soft_wall_sum * inv_steps + 11.0 * (pw_75 * pw_75) + 28.0 * (pw_35 * pw_35);
+  out_soft_cone = 6.0 * soft_cone_sum * inv_steps + 12.0 * (pc_65 * pc_65);
+  out_soft_ne = 10.0 * soft_ne_sum * inv_steps + 18.0 * (pne_85 * pne_85);
+
+  const double progress_m = 0.70 * last_safe_progress + 0.30 * best_progress;
+  const bool hard_ok = (!first_hit && rolled_len >= std::min(0.32, horizon - 0.15));
+
+  double cost_branch = 0.0;
+  double cost_heading = 0.0;
+  const double th_ref = hard_ok ? last_safe_th : last_eval_th;
+  const double th_proj = wrap_angle_rad(rel_yaw_rad_ + th_ref);
+  if (forbid_reverse_yaw) {
+    const double rev_align = std::cos(wrap_angle_rad(th_proj - reverse_yaw));
+    if (rev_align > 0.45) {
+      cost_branch = config_.wrong_way_penalty * ((rev_align - 0.45) / 0.55);
+    }
+  }
+  if (phase_ == TopologyPhase::FORK_T_RIGHT_TURN) {
+    cost_branch += 2.5 * std::max(0.0, kappa1 + 0.35) + 2.5 * std::max(0.0, kappa2 + 0.35);
+  }
+  if (goal_yaw_active) {
+    const double goal_err = std::abs(wrap_angle_rad(th_proj - goal_yaw));
+    cost_heading = 0.45 * goal_err;
+  }
+
+  const double smooth_pen =
+    0.07 * std::abs(kappa1 - prev_kappa_) +
+    0.03 * std::abs(kappa2 - kappa1) +
+    0.025 * std::abs(kappa1);
+
+  const double soft_total = out_soft_wall + out_soft_cone + out_soft_ne;
+  double score = 0.0;
+  if (hard_ok) {
+    score = 20.0 +
+      6.5 * progress_m +
+      2.2 * safe_len -
+      soft_total -
+      cost_heading -
+      cost_branch +
+      best_digit_bonus -
+      smooth_pen;
+  } else {
+    // Lexicographic recovery: reward continuous clearance gain & getting back onto BEV_FREE
+    const double eff_prog = std::max(progress_m, rec_progress);
+    const double rec_delta = clr_near_end - clr_start;
+    score = 16.0 * clr_near_end +
+      10.0 * rec_delta +
+      8.0 * min_eff_clr +
+      5.5 * safe_len +
+      4.0 * eff_prog -
+      0.5 * soft_total -
+      3.5 * cost_heading -
+      cost_branch -
+      0.3 * smooth_pen;
+  }
+
+  out_cand.progress_m = progress_m;
+  out_cand.safe_len_m = safe_len;
+  out_cand.min_wall_clr_m = min_wall_clr;
+  out_cand.min_obs_clr_m = min_obs_clr;
+  out_cand.score = score;
+  out_cand.hard_feasible = hard_ok;
+  out_cand.cost_safe_len = progress_m;
+  out_cand.cost_soft = soft_total;
+  out_cand.cost_heading = cost_heading;
+  out_cand.cost_branch = cost_branch;
+  out_cand.cost_digit = best_digit_bonus;
+  out_cand.cost_clearance = min_eff_clr;
+  out_cand.cost_smooth = smooth_pen;
+
+  out_hit_digit = best_digit_id;
+  out_near_min_clr = near_min_clr;
+  out_clr_start = clr_start;
+  out_clr_near_end = clr_near_end;
+}
+
 BevDwaPlanResult BevDwaPlanner::step(
   const std::array<uint8_t, kBevCells> & live_grid,
   const VehiclePose2D & pose,
@@ -1841,7 +2505,7 @@ BevDwaPlanResult BevDwaPlanner::step(
   if (yellow_ahead && yellow_dist_valid) {
     res.visual_dead_end_ahead = check_bev_dead_end_ahead(yellow_d_bumper_m);
     const bool yaw_armed = (cum_abs_yaw_rad_ >= config_.finish_min_cum_yaw_rad);
-    res.is_finish_line = (res.visual_dead_end_ahead && yaw_armed) ||
+    res.is_finish_line = (res.visual_dead_end_ahead && yaw_armed && total_arc_m_ >= 6.5) ||
       (total_arc_m_ >= config_.finish_force_dist_m);
   }
 
@@ -2043,17 +2707,17 @@ BevDwaPlanResult BevDwaPlanner::step(
   const double th0 = clamp_d(w_meas * tau, -0.45, 0.45);
   const double y0 = 0.5 * x0 * std::sin(th0);
 
-  // 6) Unified 1D Safe Corridor + Obstacle S-Curve Carving + Digit Clamping + Curve-Arc Pure Pursuit
+  // 6) 1D Corridor extraction retained strictly for whitebox HUD/test telemetry
   const bool allow_glare_guard = (branch_bias == 0) && (phase_ != TopologyPhase::FORK_T_RIGHT_TURN);
   extract_safe_corridor(
     y0, branch_bias, goal_yaw, goal_yaw_active, allow_glare_guard, res.corridor_slices);
 
   carve_obstacles_into_corridor(obs_clusters, res.corridor_slices);
 
-  int hit_digit = 0;
-  double digit_shift_m = 0.0;
+  int hud_hit_digit = 0;
+  double hud_digit_shift_m = 0.0;
   apply_digit_bias_to_corridor(
-    locked_digits, allow_digit_bonus, res.corridor_slices, hit_digit, digit_shift_m);
+    locked_digits, allow_digit_bonus, res.corridor_slices, hud_hit_digit, hud_digit_shift_m);
 
   smooth_corridor_centerline(res.corridor_slices);
 
@@ -2078,187 +2742,170 @@ BevDwaPlanResult BevDwaPlanner::step(
   res.lat_err_m = lat_err_m;
   res.heading_err_rad = heading_err_rad;
 
-  // Curvature-adaptive Regulated Pure Pursuit lookahead distance
-  double ld_raw =
-    (config_.lookahead_min_m + config_.lookahead_time_s * std::max(0.0, v_meas)) /
-    (1.0 + 0.30 * std::abs(road_kappa));
-  if (res.has_near_obstacle) {
-    ld_raw = std::min(ld_raw, 0.38);
+  // 7) 2D BEV Geodesic Progress Field + 2-Stage Ackermann State Lattice (kappa1, kappa2)
+  compute_geodesic_progress_field(
+    branch_bias, goal_yaw, goal_yaw_active, forbid_reverse_yaw, reverse_yaw);
+
+  const double k_left = std::max(0.5, config_.kappa_max_left);
+  const double k_right = std::max(0.5, config_.kappa_max_right);
+  const double s_lag = std::max(0.0, v_meas) * tau;
+  const double kappa_init = (v_meas > 0.12) ?
+    clamp_d(w_meas / v_meas, -k_right, k_left) :
+    clamp_d(prev_kappa_, -k_right, k_left);
+
+  std::vector<double> k1_vals;
+  k1_vals.reserve(14);
+  const double neg_fracs[6] = {1.0, 0.82, 0.62, 0.42, 0.24, 0.10};
+  const double pos_fracs[6] = {0.10, 0.24, 0.42, 0.62, 0.82, 1.0};
+  for (double f : neg_fracs) {
+    k1_vals.push_back(-f * k_right);
   }
-  if (phase_ == TopologyPhase::FORK_T_RIGHT_TURN || phase_ == TopologyPhase::FORK_RIGHT_ENTER) {
-    ld_raw = std::min(ld_raw, 0.36);
+  k1_vals.push_back(0.0);
+  for (double f : pos_fracs) {
+    k1_vals.push_back(f * k_left);
   }
-  const double ld_lo = std::min(0.18, config_.lookahead_min_m);
-  const double ld_hi = std::min(0.72, std::max(0.22, corridor_len_m));
-  const double Ld = clamp_d(ld_raw, ld_lo, ld_hi);
-  res.lookahead_m = Ld;
+  // Include continuous warm-start prev_kappa_ if outside lattice resolution
+  bool has_prev_k = false;
+  for (double kv : k1_vals) {
+    if (std::abs(kv - prev_kappa_) < 0.06) {
+      has_prev_k = true;
+      break;
+    }
+  }
+  if (!has_prev_k) {
+    k1_vals.push_back(clamp_d(prev_kappa_, -k_right, k_left));
+  }
 
-  double kappa_pp = 0.0;
-  double kappa_lat = 0.0;
-  double kappa_curv_ff = 0.0;
-  double kappa_cmd = 0.0;
-  double tx = x0 + Ld;
-  double ty = 0.0;
+  const double k2_vals[9] = {
+    -k_right, -0.70 * k_right, -0.40 * k_right, -0.15 * k_right,
+    0.0,
+    0.15 * k_left, 0.40 * k_left, 0.70 * k_left, k_left
+  };
 
-  if (valid_slices >= 3) {
-    // Interpolate lookahead target (tx, ty) along the smoothed safe corridor centerline
-    const double d_query = x0 + Ld;
-    int idx_lo = -1;
-    int idx_hi = -1;
-    int first_valid = -1;
-    int last_valid = -1;
-    for (size_t i = 0; i < res.corridor_slices.size(); ++i) {
-      if (!res.corridor_slices[i].valid) {
-        continue;
-      }
-      if (first_valid < 0) {
-        first_valid = static_cast<int>(i);
-      }
-      last_valid = static_cast<int>(i);
-      if (res.corridor_slices[i].d_m <= d_query) {
-        idx_lo = static_cast<int>(i);
-      } else if (idx_hi < 0) {
-        idx_hi = static_cast<int>(i);
+  std::vector<double> split_vals;
+  const double s_split_0 = clamp_d(s_lag + 0.16, 0.18, 0.24);
+  const double s_split_1 = clamp_d(std::max(s_lag + 0.14, 0.30), 0.26, 0.44);
+  const double s_split_2 = clamp_d(std::max(s_lag + 0.30, 0.48), 0.38, 0.62);
+  if ((res.has_near_obstacle || std::abs(road_kappa) > 0.8) && s_split_0 + 0.04 < s_split_1) {
+    split_vals.push_back(s_split_0);
+  }
+  split_vals.push_back(s_split_1);
+  if (s_split_2 > s_split_1 + 0.08) {
+    split_vals.push_back(s_split_2);
+  }
+
+  res.candidates.clear();
+  res.candidates.reserve(k1_vals.size() * 9U * split_vals.size());
+
+  int best_hard_idx = -1;
+  double best_hard_score = -1e18;
+  int best_rec_idx = -1;
+  double best_rec_score = -1e18;
+  int hard_count = 0;
+
+  int best_hard_digit = 0;
+  int best_rec_digit = 0;
+
+  for (double s_sp : split_vals) {
+    for (double k1 : k1_vals) {
+      for (double k2 : k2_vals) {
+        BevArcCandidate cand{};
+        int cand_hit_digit = 0;
+        double near_min_clr = 0.0;
+        double clr_start = 0.0;
+        double clr_near_end = 0.0;
+        double soft_ne = 0.0;
+        double soft_wall = 0.0;
+        double soft_cone = 0.0;
+
+        evaluate_two_stage_candidate(
+          kappa_init, k1, k2, s_sp, s_lag,
+          allow_digit_bonus, locked_digits, clean_straight,
+          forbid_reverse_yaw, reverse_yaw, branch_bias, goal_yaw, goal_yaw_active,
+          cand, cand_hit_digit, near_min_clr, clr_start, clr_near_end,
+          soft_ne, soft_wall, soft_cone);
+
+        const int idx = static_cast<int>(res.candidates.size());
+        res.candidates.push_back(cand);
+        if (cand.hard_feasible) {
+          hard_count++;
+          if (cand.score > best_hard_score) {
+            best_hard_score = cand.score;
+            best_hard_idx = idx;
+            best_hard_digit = cand_hit_digit;
+          }
+        }
+        if (cand.score > best_rec_score) {
+          best_rec_score = cand.score;
+          best_rec_idx = idx;
+          best_rec_digit = cand_hit_digit;
+        }
       }
     }
+  }
 
-    if (idx_lo >= 0 && idx_hi >= 0) {
-      const auto & a = res.corridor_slices[static_cast<size_t>(idx_lo)];
-      const auto & b = res.corridor_slices[static_cast<size_t>(idx_hi)];
-      const double alpha = clamp_d(
-        (d_query - a.d_m) / std::max(1e-4, b.d_m - a.d_m), 0.0, 1.0);
-      tx = a.d_m + alpha * (b.d_m - a.d_m);
-      ty = a.y_target + alpha * (b.y_target - a.y_target);
-    } else if (last_valid >= 0) {
-      const auto & b = res.corridor_slices[static_cast<size_t>(last_valid)];
-      tx = b.d_m;
-      ty = b.y_target;
-    } else if (first_valid >= 0) {
-      const auto & a = res.corridor_slices[static_cast<size_t>(first_valid)];
-      tx = a.d_m;
-      ty = a.y_target;
-    }
-
-    // Transform target into Smith-predicted bumper frame (x0, y0, th0)
-    const double dx_loc = (tx - x0) * std::cos(th0) + (ty - y0) * std::sin(th0);
-    const double dy_loc = -(tx - x0) * std::sin(th0) + (ty - y0) * std::cos(th0);
-    const double L2 = std::max(0.04, dx_loc * dx_loc + dy_loc * dy_loc);
-    kappa_pp = (2.0 * dy_loc) / L2;
-
-    // Near-bumper Stanley cross-track centering pull (evaluated in Smith-predicted frame)
-    kappa_lat = clamp_d(config_.stanley_k_y * lat_err_m / std::max(0.28, Ld), -1.6, 1.6);
-
-    // Curve-Arc Curvature Feedforward: feeds forward excess road arc curvature ahead WITHOUT
-    // double-counting on steady circles (where road_kappa == kappa_pp -> excess == 0)!
-    const double k_excess = road_kappa - kappa_pp;
-    const double obs_scale = res.has_near_obstacle ? 0.35 : 1.0;
-    if (std::abs(road_kappa) > 0.25 && k_excess * road_kappa > 0.0) {
-      kappa_curv_ff = clamp_d(obs_scale * config_.curv_ff_gain * k_excess, -1.6, 1.6);
-    } else if (std::abs(road_kappa) <= 0.25 && std::abs(lat_err_m) < 0.06) {
-      // Gentle straightening on bend exit onto a straight
-      kappa_curv_ff = clamp_d(0.30 * obs_scale * config_.curv_ff_gain * k_excess, -0.6, 0.6);
-    }
-
-    kappa_cmd = kappa_pp + kappa_lat + kappa_curv_ff;
+  const bool has_hard = (best_hard_idx >= 0);
+  const int win_idx = has_hard ? best_hard_idx : best_rec_idx;
+  BevArcCandidate chosen_snap{};
+  int hit_digit = 0;
+  if (win_idx >= 0) {
+    chosen_snap = res.candidates[static_cast<size_t>(win_idx)];
+    hit_digit = has_hard ? best_hard_digit : best_rec_digit;
   } else {
-    // Blind / extreme off-track fallback: steer toward closest BEV_FREE cell (never deadlock!)
-    int best_r = -1, best_c = -1;
-    double best_d2 = 1e9;
-    for (int r = 0; r < kBevRows; ++r) {
-      const double dm = kBevDMin + (static_cast<double>(r) + 0.5) * kBevRes;
-      if (dm < 0.02 || dm > 0.90) {
-        continue;
-      }
-      for (int c = 0; c < kBevCols; ++c) {
-        if (fused_grid_[static_cast<size_t>(r * kBevCols + c)] != BEV_FREE) {
-          continue;
-        }
-        const double ym = kBevYMax - (static_cast<double>(c) + 0.5) * kBevRes;
-        const double d2 = (dm - 0.25) * (dm - 0.25) + ym * ym;
-        if (d2 < best_d2) {
-          best_d2 = d2;
-          best_r = r;
-          best_c = c;
-        }
-      }
-    }
-    if (best_r >= 0) {
-      cell_to_metric(best_r, best_c, tx, ty);
-      kappa_pp = (ty >= 0.0) ? config_.kappa_max_left : -config_.kappa_max_right;
-      kappa_cmd = kappa_pp;
-    } else if (phase_ == TopologyPhase::FORK_T_RIGHT_TURN || branch_bias > 0) {
-      kappa_cmd = -config_.kappa_max_right;
-    } else if (branch_bias < 0) {
-      kappa_cmd = config_.kappa_max_left;
-    } else {
-      kappa_cmd = prev_kappa_;
-    }
+    chosen_snap.kappa = (branch_bias > 0 || phase_ == TopologyPhase::FORK_T_RIGHT_TURN) ?
+      -k_right : ((branch_bias < 0) ? k_left : prev_kappa_);
+    chosen_snap.kappa2 = chosen_snap.kappa;
+    chosen_snap.s_split_m = s_split_1;
   }
 
-  // Topology Compass guard: prevent T-junction wrong-way turn or reverse-looping
-  if (phase_ == TopologyPhase::FORK_T_RIGHT_TURN && straight_free_len_m < 0.55) {
-    kappa_cmd = std::min(kappa_cmd, -1.5);
+  // Topology emergency T-junction right-turn guard when straight corridor is closing fast
+  double kappa_cmd = chosen_snap.kappa;
+  if (phase_ == TopologyPhase::FORK_T_RIGHT_TURN && straight_free_len_m < 0.42 && !has_hard) {
+    kappa_cmd = std::min(kappa_cmd, -1.6);
   }
-  if (forbid_reverse_yaw) {
-    const double th_proj = wrap_angle_rad(rel_yaw_rad_ + th0 + kappa_cmd * 0.45);
-    const double rev_align = std::cos(wrap_angle_rad(th_proj - reverse_yaw));
-    if (rev_align > 0.55) {
-      const double err_to_goal = goal_yaw_active ?
-        wrap_angle_rad(goal_yaw - rel_yaw_rad_) :
-        -wrap_angle_rad(reverse_yaw - rel_yaw_rad_);
-      const double nudge = (err_to_goal >= 0.0) ? +1.4 : -1.4;
-      kappa_cmd = 0.5 * kappa_cmd + 0.5 * nudge;
-    }
-  }
-
-  // Clamp to real measured asymmetric Ackermann limits [-kappa_max_right, +kappa_max_left]
-  const double kappa_star = clamp_d(kappa_cmd, -config_.kappa_max_right, config_.kappa_max_left);
-  const double delta_kappa = kappa_star - prev_kappa_;
+  const double kappa_star = clamp_d(kappa_cmd, -k_right, k_left);
   prev_kappa_ = kappa_star;
 
-  // Single fast 3-circle clearance check along chosen kappa_star for whitebox telemetry & speed cap
-  double safe_len_m = 0.0;
-  double min_wall_clr_m = 0.20;
-  double min_obs_clr_m = 1.0;
-  check_chosen_arc_clearance(
-    x0, y0, th0, kappa_star, safe_len_m, min_wall_clr_m, min_obs_clr_m);
+  // Integrate winning 2-stage trajectory out to preview distance for HUD lookahead marker
+  const double Ld = clamp_d(std::max(0.24, 0.70 * chosen_snap.safe_len_m), 0.22, 0.55);
+  res.lookahead_m = Ld;
+  {
+    const double L_r = std::max(0.05, config_.rear_axle_to_bumper_m);
+    double prx = -L_r, pry = 0.0, pth = 0.0;
+    double px = 0.0, py = 0.0;
+    const double pds = 0.025;
+    for (double s = pds; s <= Ld + 1e-5; s += pds) {
+      const double ks = (s <= s_lag) ? kappa_init :
+        ((s <= chosen_snap.s_split_m) ? kappa_star : chosen_snap.kappa2);
+      const double dth = ks * pds;
+      prx += pds * std::cos(pth + 0.5 * dth);
+      pry += pds * std::sin(pth + 0.5 * dth);
+      pth += dth;
+      px = prx + L_r * std::cos(pth);
+      py = pry + L_r * std::sin(pth);
+    }
+    res.lookahead_x_m = px;
+    res.lookahead_y_m = py;
+  }
 
-  res.lookahead_x_m = tx;
-  res.lookahead_y_m = ty;
-  res.kappa_pp = kappa_pp;
-  res.kappa_lat = kappa_lat;
-  res.kappa_curv_ff = kappa_curv_ff;
-  res.kappa_digit_shift = digit_shift_m;
+  res.kappa_pp = kappa_star;
+  res.kappa_lat = lat_err_m * config_.stanley_k_y;
+  res.kappa_curv_ff = chosen_snap.kappa2 - kappa_star;
+  res.kappa_digit_shift = hud_digit_shift_m;
 
   res.chosen_kappa = kappa_star;
-  res.chosen_safe_len_m = std::max(safe_len_m, 0.0);
-  res.min_wall_clearance_m = min_wall_clr_m;
-  res.min_obs_clearance_m = min_obs_clr_m;
-  res.has_feasible_arc = (valid_slices >= 3);
-  res.feasible_arc_count = valid_slices;
+  res.chosen_kappa2 = chosen_snap.kappa2;
+  res.chosen_s_split_m = chosen_snap.s_split_m;
+  res.chosen_safe_len_m = std::max(0.0, chosen_snap.safe_len_m);
+  res.min_wall_clearance_m = chosen_snap.min_wall_clr_m;
+  res.min_obs_clearance_m = chosen_snap.min_obs_clr_m;
+  res.has_feasible_arc = has_hard;
+  res.feasible_arc_count = hard_count;
   res.digit_target_active = (hit_digit > 0);
   res.target_digit = hit_digit;
-
-  // Populate chosen_candidate & candidates[0] for unified whitebox telemetry / HUD compatibility
-  BevArcCandidate chosen_snap{};
-  chosen_snap.kappa = kappa_star;
-  chosen_snap.safe_len_m = res.chosen_safe_len_m;
-  chosen_snap.min_wall_clr_m = min_wall_clr_m;
-  chosen_snap.min_obs_clr_m = min_obs_clr_m;
-  chosen_snap.hard_feasible = res.has_feasible_arc;
-  chosen_snap.cost_safe_len = road_kappa;
-  chosen_snap.cost_soft = kappa_pp;
-  chosen_snap.cost_heading = kappa_lat;
-  chosen_snap.cost_branch = kappa_curv_ff;
-  chosen_snap.cost_digit = digit_shift_m;
-  chosen_snap.cost_clearance = lat_err_m;
-  chosen_snap.cost_smooth = delta_kappa;
-  chosen_snap.score = kappa_star;
   res.chosen_candidate = chosen_snap;
-  res.candidates.clear();
-  res.candidates.push_back(chosen_snap);
 
-  // 7) Level-3 Anti-Stall Escape (only if physically wedged for > stall_detect_sec away from yellow)
+  // 8) Level-3 Anti-Stall Escape (only if physically wedged for > stall_detect_sec away from yellow)
   if (config_.enable_anti_stall_escape && !yellow_ahead) {
     if (escape_active_) {
       escape_elapsed_sec_ += dt;
@@ -2295,25 +2942,41 @@ BevDwaPlanResult BevDwaPlanner::step(
     }
   }
 
-  // 8) Single Clean Physics Speed Envelope (proactive curve-arc slowdown!)
+  // 9) Single Clean Physics Speed Envelope (proactive 2-stage curve-arc slowdown!)
   double v_target = config_.cruise_speed_mps;
   if (config_.enable_clear_straight_boost &&
     clean_straight && !res.has_near_obstacle && !yellow_ahead &&
     !in_fork_or_t && corridor_len_m >= 0.72 &&
-    std::abs(kappa_star) < 0.35 && std::abs(road_kappa) < 0.35)
+    std::abs(kappa_star) < 0.35 && std::abs(chosen_snap.kappa2) < 0.45 &&
+    std::abs(road_kappa) < 0.35)
   {
     v_target = config_.clear_straight_speed_mps;
   }
 
-  // Centripetal lateral acceleration limit using max(|kappa_cmd|, 0.9*|road_kappa_fit|)
-  // so the car slows down BEFORE entering sharp 90 deg bends!
-  const double k_speed = std::max(std::abs(kappa_star), 0.90 * std::abs(road_kappa));
-  const double v_curve = std::sqrt(config_.max_lat_accel_mps2 / (k_speed + 0.15));
+  // Centripetal lateral acceleration limit using max(|kappa1|, 0.95*|kappa2|, 0.85*|road_kappa|, 0.65*|kappa_init|)
+  // plus wall-clearance speed taper so the car decelerates BEFORE entering tight bends under actuator lag!
+  const double k_speed = std::max({
+    std::abs(kappa_star),
+    0.95 * std::abs(chosen_snap.kappa2),
+    0.85 * std::abs(road_kappa),
+    0.65 * std::abs(kappa_init)});
+  double v_curve = std::sqrt(std::min(config_.max_lat_accel_mps2, 0.24) / (k_speed + 0.15));
+  if (std::abs(chosen_snap.kappa2) > 1.6) {
+    v_curve = std::min(v_curve, config_.corner_approach_speed_mps);
+  } else if (k_speed > 1.25) {
+    v_curve = std::min(v_curve, config_.corner_approach_speed_mps + 0.04);
+  }
   v_target = std::min(v_target, v_curve);
 
-  // Corridor horizon limit (uses actual curved corridor length so sharp curves don't choke to 0.14m/s!)
-  const double eff_horizon = std::max(res.chosen_safe_len_m, 0.85 * corridor_len_m);
-  if (eff_horizon < 0.55) {
+  if (chosen_snap.min_wall_clr_m < 0.065) {
+    const double clr_frac = clamp_d(chosen_snap.min_wall_clr_m / 0.065, 0.0, 1.0);
+    const double v_clr = 0.22 + (config_.cruise_speed_mps - 0.22) * clr_frac;
+    v_target = std::min(v_target, v_clr);
+  }
+
+  // Horizon limit using both rolled safe_len and geodesic progress
+  const double eff_horizon = std::max(res.chosen_safe_len_m, 0.80 * chosen_snap.progress_m);
+  if (eff_horizon < 0.50) {
     const double v_hor = std::sqrt(2.0 * 0.65 * std::max(0.03, eff_horizon - 0.10));
     v_target = std::min(v_target, std::max(config_.creep_speed_mps, v_hor));
   }
@@ -2321,7 +2984,7 @@ BevDwaPlanResult BevDwaPlanner::step(
     v_target = std::min(v_target, config_.corner_approach_speed_mps);
   }
 
-  // Obstacle speed caps
+  // Obstacle & recovery speed caps
   if (near_no_entry) {
     v_target = std::min(v_target, config_.no_entry_speed_mps);
   } else if (near_cone) {
@@ -2346,18 +3009,16 @@ BevDwaPlanResult BevDwaPlanner::step(
   v_cmd = clamp_d(v_cmd, 0.0, config_.max_speed_mps);
   last_speed_cmd_ = v_cmd;
 
-  // 9) Real-Car Ackermann Yaw-Rate Execution Layer (Feedforward + Launch Pre-Steer + IMU Inner Loop)
+  // 10) Real-Car Ackermann Yaw-Rate Execution Layer (Feedforward + Launch Pre-Steer + IMU Inner Loop)
   const double v_for_steer = (v_cmd > 0.01) ? std::max(v_cmd, config_.steer_launch_v_floor) : 0.0;
 
-  // Gentle large-angle nonlinearity boost (compensates measured ~20% under-turn above 10 deg)
   const double abs_k = std::abs(kappa_star);
-  const double k_ref_max = (kappa_star >= 0.0) ? config_.kappa_max_left : config_.kappa_max_right;
+  const double k_ref_max = (kappa_star >= 0.0) ? k_left : k_right;
   const double k_frac = clamp_d(abs_k / std::max(0.5, k_ref_max), 0.0, 1.0);
   const double nl_boost = 1.0 + config_.large_angle_boost_max * std::max(0.0, (k_frac - 0.35) / 0.65);
 
   double omega_cmd = v_for_steer * kappa_star * nl_boost;
 
-  // IMU gyro inner feedback loop (cancels mechanical right offset & servo under-turn!)
   if (pose.valid && std::isfinite(pose.angular_w) && v_cmd > 0.05 && config_.imu_yaw_kp > 0.0) {
     const double omega_target = v_cmd * kappa_star;
     const double omega_imu = pose.angular_w -
@@ -2372,7 +3033,6 @@ BevDwaPlanResult BevDwaPlanner::step(
   res.linear_speed_mps = v_cmd;
   res.yaw_rate_rps = omega_cmd;
 
-  // Concise human-readable mode tag
   if (!res.has_feasible_arc) {
     res.mode_tag = "bev_tight_creep";
   } else if (phase_ == TopologyPhase::FORK_T_RIGHT_TURN) {

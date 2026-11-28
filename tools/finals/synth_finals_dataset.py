@@ -81,16 +81,52 @@ MNIST_MIRRORS: Tuple[str, ...] = (
 MNIST_TRAIN_IMAGES_GZ = "train-images-idx3-ubyte.gz"
 MNIST_TRAIN_LABELS_GZ = "train-labels-idx1-ubyte.gz"
 
+# 与实车 finals_fork.yaml / finals_roundabout.yaml 对齐的地面单应矩阵 (u, v, 1) -> (x_fwd, y_left, w)
+CALIBRATED_H_P2G = np.array(
+    [
+        [-1.3985236e-05, 0.00074556476, -0.41829529],
+        [0.0007049316, -2.6281263e-05, -0.21497408],
+        [-4.7978586e-06, -0.0063203042, 1.0],
+    ],
+    dtype=np.float64,
+)
+CALIBRATED_H_G2P = np.linalg.inv(CALIBRATED_H_P2G)
+
 BOLD_FONT_CANDIDATES: Tuple[str, ...] = (
     r"C:\Windows\Fonts\arialbd.ttf",
-    r"C:\Windows\Fonts\impact.ttf",
     r"C:\Windows\Fonts\segoeuib.ttf",
-    r"C:\Windows\Fonts\calibrib.ttf",
+    r"C:\Windows\Fonts\tahomabd.ttf",
     r"C:\Windows\Fonts\verdanab.ttf",
+    r"C:\Windows\Fonts\bahnschrift.ttf",
+    r"C:\Windows\Fonts\calibrib.ttf",
+    r"C:\Windows\Fonts\trebucbd.ttf",
+    r"C:\Windows\Fonts\impact.ttf",
+    r"C:\Windows\Fonts\arial.ttf",
+    r"C:\Windows\Fonts\ARIALNB.TTF",
+    r"C:\Windows\Fonts\consolab.ttf",
+    r"C:\Windows\Fonts\georgiab.ttf",
+    r"C:\Windows\Fonts\simhei.ttf",
+    r"C:\Windows\Fonts\msyhbd.ttc",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 )
+HANDWRITTEN_FONT_CANDIDATES: Tuple[str, ...] = (
+    r"C:\Windows\Fonts\Inkfree.ttf",
+    r"C:\Windows\Fonts\segoepr.ttf",
+    r"C:\Windows\Fonts\segoeprb.ttf",
+    r"C:\Windows\Fonts\segoesc.ttf",
+    r"C:\Windows\Fonts\segoescb.ttf",
+    r"C:\Windows\Fonts\BRADHITC.TTF",
+    r"C:\Windows\Fonts\LHANDW.TTF",
+    r"C:\Windows\Fonts\mvboli.ttf",
+    r"C:\Windows\Fonts\PRISTINA.TTF",
+    r"C:\Windows\Fonts\comic.ttf",
+    r"C:\Windows\Fonts\comicbd.ttf",
+    r"C:\Windows\Fonts\FRSCRIPT.TTF",
+    r"C:\Windows\Fonts\MISTRAL.TTF",
+)
 _FONT_PATH_CACHE: Optional[List[str]] = None
+_HW_FONT_PATH_CACHE: Optional[List[str]] = None
 
 
 def clamp(v: float, lo: float, hi: float) -> float:
@@ -102,6 +138,13 @@ def _discover_bold_fonts() -> List[str]:
     if _FONT_PATH_CACHE is None:
         _FONT_PATH_CACHE = [p for p in BOLD_FONT_CANDIDATES if os.path.isfile(p)]
     return _FONT_PATH_CACHE
+
+
+def _discover_handwritten_fonts() -> List[str]:
+    global _HW_FONT_PATH_CACHE
+    if _HW_FONT_PATH_CACHE is None:
+        _HW_FONT_PATH_CACHE = [p for p in HANDWRITTEN_FONT_CANDIDATES if os.path.isfile(p)]
+    return _HW_FONT_PATH_CACHE
 
 
 # ---------------------------------------------------------------- MNIST 手写数字缓存与加载
@@ -294,40 +337,121 @@ def make_synthetic_track_bg(rng: random.Random, width: int = 640, height: int = 
 
 # ---------------------------------------------------------------- 道具合成 (BGRA)
 
+def _apply_elastic_warp_u8(mask_u8: np.ndarray, rng: random.Random, alpha: float = 5.5, sigma: float = 4.0) -> np.ndarray:
+    """对字形灰度遮罩施加 Simard 风格随机弹性形变，模拟不同书写者手抖与笔顺变化。"""
+    h, w = mask_u8.shape[:2]
+    np_rng = np.random.default_rng(rng.randint(0, 2**31 - 1))
+    ksize = max(3, int(round(sigma * 4.0)) | 1)
+    dx = cv2.GaussianBlur((np_rng.uniform(-1.0, 1.0, (h, w))).astype(np.float32), (ksize, ksize), sigma) * float(alpha)
+    dy = cv2.GaussianBlur((np_rng.uniform(-1.0, 1.0, (h, w))).astype(np.float32), (ksize, ksize), sigma) * float(alpha)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    map_x = np.clip(xx + dx, 0, w - 1)
+    map_y = np.clip(yy + dy, 0, h - 1)
+    return cv2.remap(mask_u8, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+def _apply_stroke_width_and_dry_ink(mask_u8: np.ndarray, rng: random.Random, allow_very_thin: bool = True) -> np.ndarray:
+    """模拟不同笔型与出墨质感：极细圆珠笔/细白笔、中号油漆笔、扁头宽马克笔、干笔粉笔微断墨。"""
+    modes = ["keep", "thin1", "thick_iso", "thick_horiz", "thick_vert", "dry_chalk"]
+    weights = [0.28, 0.24 if allow_very_thin else 0.12, 0.16, 0.10, 0.10, 0.12]
+    mode = rng.choices(modes, weights=weights, k=1)[0]
+
+    out = mask_u8.copy()
+    if mode == "thin1":
+        # 对过细笔画若腐蚀过狠先检查像素保留比例，防止笔迹断裂消失
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        er = cv2.erode(out, k, iterations=1)
+        if int((er > 64).sum()) >= max(30, int((out > 64).sum() * 0.35)):
+            out = er
+    elif mode == "thick_iso":
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (rng.choice([2, 3]), rng.choice([2, 3])))
+        out = cv2.dilate(out, k, iterations=1)
+    elif mode == "thick_horiz":
+        k = cv2.getStructuringElement(cv2.MORPH_RECT, (rng.choice([3, 4]), 2))
+        out = cv2.dilate(out, k, iterations=1)
+    elif mode == "thick_vert":
+        k = cv2.getStructuringElement(cv2.MORPH_RECT, (2, rng.choice([3, 4])))
+        out = cv2.dilate(out, k, iterations=1)
+    elif mode == "dry_chalk":
+        h, w = out.shape[:2]
+        np_rng = np.random.default_rng(rng.randint(0, 2**31 - 1))
+        tex = np_rng.uniform(0.55, 1.15, (max(4, h // 2), max(4, w // 2))).astype(np.float32)
+        tex = cv2.resize(tex, (w, h), interpolation=cv2.INTER_LINEAR)
+        out = np.clip(out.astype(np.float32) * tex, 0, 255).astype(np.uint8)
+    return out
+
+
 def _draw_handwritten_digit(
     canvas: np.ndarray, digit: str, color: Tuple[int, int, int], rng: random.Random
 ) -> None:
-    """用带抖动控制点的手绘折线生成手写体数字 1-8，作为无 MNIST 缓存时的回退方案。"""
+    """多笔形、多写法、多线宽手绘折线数字 1-8，显式覆盖换人换笔写法差异。"""
     h, w = canvas.shape[:2]
-    strokes_map: Dict[str, List[List[Tuple[float, float]]]] = {
-        "1": [[(0.38, 0.28), (0.52, 0.17), (0.52, 0.83)], [(0.34, 0.83), (0.70, 0.83)]],
-        "2": [[(0.28, 0.30), (0.40, 0.18), (0.62, 0.18), (0.72, 0.30), (0.66, 0.48), (0.28, 0.82), (0.74, 0.82)]],
-        "3": [[(0.28, 0.24), (0.55, 0.17), (0.72, 0.30), (0.52, 0.48), (0.74, 0.65), (0.58, 0.83), (0.28, 0.78)]],
-        "4": [[(0.60, 0.18), (0.26, 0.58), (0.76, 0.58)], [(0.60, 0.18), (0.60, 0.84)]],
-        "5": [[(0.70, 0.19), (0.32, 0.19), (0.29, 0.47), (0.58, 0.44), (0.73, 0.62), (0.58, 0.83), (0.28, 0.78)]],
-        "6": [[(0.68, 0.22), (0.46, 0.18), (0.28, 0.45), (0.30, 0.75), (0.54, 0.84), (0.72, 0.68), (0.64, 0.50), (0.32, 0.52)]],
-        "7": [[(0.26, 0.20), (0.74, 0.20), (0.44, 0.84)]],
+    variants_map: Dict[str, List[List[List[Tuple[float, float]]]]] = {
+        "1": [
+            [[(0.36, 0.28), (0.52, 0.17), (0.52, 0.83)], [(0.33, 0.83), (0.70, 0.83)]],
+            [[(0.50, 0.16), (0.50, 0.84)]],
+            [[(0.37, 0.31), (0.54, 0.17), (0.50, 0.84)]],
+        ],
+        "2": [
+            [[(0.28, 0.30), (0.40, 0.18), (0.62, 0.18), (0.72, 0.30), (0.66, 0.48), (0.28, 0.82), (0.74, 0.82)]],
+            [[(0.26, 0.28), (0.45, 0.17), (0.68, 0.25), (0.62, 0.50), (0.30, 0.81), (0.42, 0.72), (0.74, 0.81)]],
+        ],
+        "3": [
+            [[(0.28, 0.24), (0.55, 0.17), (0.72, 0.30), (0.50, 0.48), (0.74, 0.65), (0.58, 0.83), (0.28, 0.78)]],
+            [[(0.30, 0.19), (0.70, 0.19), (0.46, 0.46), (0.70, 0.56), (0.66, 0.78), (0.30, 0.82)]],
+        ],
+        "4": [
+            [[(0.60, 0.18), (0.26, 0.58), (0.76, 0.58)], [(0.60, 0.18), (0.60, 0.84)]],  # 闭口印刷风手写4
+            [[(0.32, 0.19), (0.26, 0.55), (0.74, 0.55)], [(0.64, 0.22), (0.64, 0.84)]],  # 开口手写4
+            [[(0.62, 0.17), (0.28, 0.60), (0.77, 0.58)], [(0.62, 0.40), (0.62, 0.84)]],
+        ],
+        "5": [
+            [[(0.70, 0.19), (0.32, 0.19), (0.29, 0.47), (0.58, 0.44), (0.73, 0.62), (0.58, 0.83), (0.28, 0.78)]],
+            [[(0.34, 0.20), (0.31, 0.48), (0.60, 0.47), (0.72, 0.65), (0.52, 0.83), (0.28, 0.76)], [(0.34, 0.20), (0.72, 0.20)]],
+        ],
+        "6": [
+            [[(0.66, 0.20), (0.44, 0.18), (0.28, 0.46), (0.30, 0.75), (0.54, 0.84), (0.72, 0.68), (0.64, 0.50), (0.32, 0.52)]],
+            [[(0.58, 0.17), (0.32, 0.42), (0.31, 0.72), (0.52, 0.83), (0.69, 0.68), (0.56, 0.52), (0.34, 0.58)]],
+        ],
+        "7": [
+            [[(0.26, 0.20), (0.74, 0.20), (0.44, 0.84)]],
+            [[(0.26, 0.20), (0.74, 0.20), (0.44, 0.84)], [(0.38, 0.52), (0.67, 0.52)]],  # 带横杠7
+            [[(0.26, 0.30), (0.26, 0.19), (0.74, 0.19), (0.48, 0.84)]],
+        ],
         "8": [
-            [(0.50, 0.48), (0.30, 0.34), (0.36, 0.18), (0.64, 0.18), (0.70, 0.34), (0.50, 0.48)],
-            [(0.50, 0.48), (0.27, 0.64), (0.34, 0.83), (0.66, 0.83), (0.73, 0.64), (0.50, 0.48)],
+            [
+                [(0.50, 0.48), (0.30, 0.34), (0.36, 0.18), (0.64, 0.18), (0.70, 0.34), (0.50, 0.48)],
+                [(0.50, 0.48), (0.27, 0.64), (0.34, 0.83), (0.66, 0.83), (0.73, 0.64), (0.50, 0.48)],
+            ],
+            [[(0.55, 0.20), (0.32, 0.28), (0.36, 0.44), (0.67, 0.56), (0.69, 0.75), (0.48, 0.84), (0.30, 0.72), (0.35, 0.55), (0.66, 0.40), (0.66, 0.24), (0.55, 0.20)]],
         ],
     }
-    thickness = max(3, int(min(h, w) * rng.uniform(0.08, 0.14)))
-    for stroke in strokes_map[digit]:
+    mask_u8 = np.zeros((h, w), dtype=np.uint8)
+    chosen_strokes = rng.choice(variants_map[digit])
+    # 线宽覆盖极细白板笔 (0.038) 到粗马克笔 (0.145)
+    thickness = max(2, int(round(min(h, w) * rng.uniform(0.038, 0.145))))
+    for stroke in chosen_strokes:
         pts = []
         for nx, ny in stroke:
-            jx = clamp(nx + rng.uniform(-0.04, 0.04), 0.12, 0.88)
-            jy = clamp(ny + rng.uniform(-0.04, 0.04), 0.10, 0.90)
+            jx = clamp(nx + rng.uniform(-0.045, 0.045), 0.12, 0.88)
+            jy = clamp(ny + rng.uniform(-0.045, 0.045), 0.10, 0.90)
             pts.append((int(jx * w), int(jy * h)))
         arr = np.array(pts, dtype=np.int32).reshape(-1, 1, 2)
-        cv2.polylines(canvas, [arr], False, color, thickness, cv2.LINE_AA)
+        cv2.polylines(mask_u8, [arr], False, 255, thickness, cv2.LINE_AA)
+
+    if rng.random() < 0.65:
+        mask_u8 = _apply_elastic_warp_u8(mask_u8, rng, alpha=rng.uniform(2.5, 6.0), sigma=rng.uniform(3.5, 5.5))
+    mask_u8 = _apply_stroke_width_and_dry_ink(mask_u8, rng, allow_very_thin=False)
+    mask_f = (mask_u8.astype(np.float32) / 255.0)[:, :, None]
+    fg_arr = np.array(color, dtype=np.float32)[None, None, :]
+    out = canvas.astype(np.float32) * (1.0 - mask_f) + fg_arr * mask_f
+    canvas[:, :] = np.clip(out, 0, 255).astype(np.uint8)
 
 
 def _render_mnist_glyph_mask(
     glyph28: np.ndarray, out_w: int, out_h: int, rng: random.Random
 ) -> np.ndarray:
-    """将 28x28 MNIST 手写体增强（随机粗细形态学 + 微倾），输出 [0,1] float 遮罩。"""
-    # 放大到 64x64 再做粗细与微倾，避免 28px 直接旋转锯齿
+    """将 28x28 MNIST 手写体增强（随机弹性形变 + 多笔宽腐蚀/加粗 + 宽高比 + 微倾），输出 [0,1] float 遮罩。"""
     up = cv2.resize(glyph28, (64, 64), interpolation=cv2.INTER_CUBIC)
     ys, xs = np.nonzero(up > 35)
     if len(xs) > 8:
@@ -337,25 +461,24 @@ def _render_mnist_glyph_mask(
     else:
         crop = up
 
-    # 模拟白油漆马克笔粗细变化（避免过粗膨胀把 5/3/6 开口闭合变成 8）
-    morph_op = rng.choice(["none", "none", "erode_thin", "dilate_light"])
-    if morph_op == "erode_thin":
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        crop = cv2.erode(crop, k, iterations=1)
-    elif morph_op == "dilate_light":
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-        crop = cv2.dilate(crop, k, iterations=1)
+    # 弹性形变 + 换笔粗细与干墨纹理
+    if rng.random() < 0.70:
+        crop = _apply_elastic_warp_u8(crop, rng, alpha=rng.uniform(2.5, 7.5), sigma=rng.uniform(3.2, 5.5))
+    crop = _apply_stroke_width_and_dry_ink(crop, rng, allow_very_thin=True)
 
     ch, cw = crop.shape[:2]
-    target_frac = rng.uniform(0.54, 0.72)
-    scale = min((out_w * target_frac) / max(1, cw), (out_h * target_frac) / max(1, ch))
-    nw = max(6, int(round(cw * scale)))
-    nh = max(6, int(round(ch * scale)))
-    resized = cv2.resize(crop, (nw, nh), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC)
+    target_frac = rng.uniform(0.50, 0.74)
+    aspect_jitter = rng.uniform(0.80, 1.24)
+    base_scale = min((out_w * target_frac) / max(1, cw), (out_h * target_frac) / max(1, ch))
+    nw = max(6, int(round(cw * base_scale * math.sqrt(aspect_jitter))))
+    nh = max(6, int(round(ch * base_scale / math.sqrt(aspect_jitter))))
+    nw = min(int(out_w * 0.84), nw)
+    nh = min(int(out_h * 0.84), nh)
+    resized = cv2.resize(crop, (nw, nh), interpolation=cv2.INTER_AREA if base_scale < 1.0 else cv2.INTER_CUBIC)
 
     mask = np.zeros((out_h, out_w), dtype=np.uint8)
-    ox = (out_w - nw) // 2 + rng.randint(-max(1, out_w // 20), max(1, out_w // 20))
-    oy = (out_h - nh) // 2 + rng.randint(-max(1, out_h // 20), max(1, out_h // 20))
+    ox = (out_w - nw) // 2 + rng.randint(-max(1, out_w // 18), max(1, out_w // 18))
+    oy = (out_h - nh) // 2 + rng.randint(-max(1, out_h // 18), max(1, out_h // 18))
     x1, y1 = max(0, ox), max(0, oy)
     x2, y2 = min(out_w, ox + nw), min(out_h, oy + nh)
     if x2 > x1 and y2 > y1:
@@ -364,25 +487,27 @@ def _render_mnist_glyph_mask(
 
     # 微倾剪切与微旋转（硬限幅 <= 10°，绝不翻转）
     ang = rng.uniform(-10.0, 10.0)
-    shear = rng.uniform(-0.14, 0.14)
+    shear = rng.uniform(-0.16, 0.16)
     M_rot = cv2.getRotationMatrix2D((out_w * 0.5, out_h * 0.5), ang, 1.0)
     M_rot[0, 1] += shear
     M_rot[0, 2] -= shear * (out_h * 0.5)
     mask = cv2.warpAffine(mask, M_rot, (out_w, out_h), flags=cv2.INTER_LINEAR, borderValue=0)
 
-    # 轻微锐化模拟实心白漆笔迹
-    mask_f = np.clip((mask.astype(np.float32) - 22.0) / 170.0, 0.0, 1.0)
+    mask_f = np.clip((mask.astype(np.float32) - 20.0) / 172.0, 0.0, 1.0)
     return mask_f
 
 
 def _draw_printed_digit_mask(
-    digit: str, out_w: int, out_h: int, rng: random.Random
+    digit: str, out_w: int, out_h: int, rng: random.Random, font_pool: str = "printed"
 ) -> np.ndarray:
-    """绘制粗体无衬线印刷数字遮罩 [0,1]（优先 PIL 系统粗体字体，缺失时回退 OpenCV）。"""
-    fonts = _discover_bold_fonts()
+    """绘制多样印刷字体或手写风格系统字体数字遮罩 [0,1]。"""
+    fonts = _discover_handwritten_fonts() if font_pool == "handwritten" else _discover_bold_fonts()
+    if not fonts:
+        fonts = _discover_bold_fonts()
     if PILImage is not None and PILImageDraw is not None and PILImageFont is not None and fonts:
         font_path = rng.choice(fonts)
-        font_px = max(16, int(min(out_w, out_h) * rng.uniform(0.62, 0.78)))
+        frac = rng.uniform(0.54, 0.78) if font_pool == "handwritten" else rng.uniform(0.58, 0.78)
+        font_px = max(16, int(min(out_w, out_h) * frac))
         try:
             font = PILImageFont.truetype(font_path, font_px)
             pil_img = PILImage.new("L", (out_w, out_h), 0)
@@ -390,20 +515,27 @@ def _draw_printed_digit_mask(
             bbox = draw.textbbox((0, 0), digit, font=font)
             tw = bbox[2] - bbox[0]
             th = bbox[3] - bbox[1]
-            tx = (out_w - tw) * 0.5 - bbox[0] + rng.uniform(-out_w * 0.03, out_w * 0.03)
-            ty = (out_h - th) * 0.5 - bbox[1] + rng.uniform(-out_h * 0.03, out_h * 0.03)
+            tx = (out_w - tw) * 0.5 - bbox[0] + rng.uniform(-out_w * 0.05, out_w * 0.05)
+            ty = (out_h - th) * 0.5 - bbox[1] + rng.uniform(-out_h * 0.05, out_h * 0.05)
             draw.text((tx, ty), digit, fill=255, font=font)
-            return np.asarray(pil_img, dtype=np.float32) / 255.0
+            arr = np.asarray(pil_img, dtype=np.uint8)
+            if font_pool == "handwritten":
+                if rng.random() < 0.70:
+                    arr = _apply_elastic_warp_u8(arr, rng, alpha=rng.uniform(2.5, 6.5), sigma=rng.uniform(3.5, 5.5))
+                arr = _apply_stroke_width_and_dry_ink(arr, rng, allow_very_thin=True)
+            elif rng.random() < 0.35:
+                arr = _apply_stroke_width_and_dry_ink(arr, rng, allow_very_thin=False)
+            return arr.astype(np.float32) / 255.0
         except Exception:
             pass
 
     canvas = np.zeros((out_h, out_w), dtype=np.uint8)
     font = rng.choice([cv2.FONT_HERSHEY_SIMPLEX, cv2.FONT_HERSHEY_DUPLEX, cv2.FONT_HERSHEY_TRIPLEX])
-    scale = rng.uniform(2.0, 2.7) * (min(out_w, out_h) / 96.0)
-    thick = max(3, int(round(rng.uniform(5.5, 9.5) * (min(out_w, out_h) / 96.0))))
+    scale = rng.uniform(1.8, 2.7) * (min(out_w, out_h) / 96.0)
+    thick = max(2, int(round(rng.uniform(3.5, 9.5) * (min(out_w, out_h) / 96.0))))
     (tw, th), _ = cv2.getTextSize(digit, font, scale, thick)
-    org = (max(2, (out_w - tw) // 2 + rng.randint(-3, 3)),
-           min(out_h - 4, (out_h + th) // 2 + rng.randint(-3, 3)))
+    org = (max(2, (out_w - tw) // 2 + rng.randint(-4, 4)),
+           min(out_h - 4, (out_h + th) // 2 + rng.randint(-4, 4)))
     cv2.putText(canvas, digit, org, font, scale, 255, thick, cv2.LINE_AA)
     return canvas.astype(np.float32) / 255.0
 
@@ -416,24 +548,131 @@ def _draw_digit_on_bgr(
     handwritten: bool,
     mnist_bank: Optional[Dict[str, np.ndarray]] = None,
 ) -> None:
-    """将印刷体 / MNIST 手写体 / 内置笔画数字合成到 bgr 画布上。"""
+    """将多样印刷体 / 系统手写字体 / 弹性 MNIST / 多变体手绘笔画合成到 bgr 画布上。"""
     h, w = bgr.shape[:2]
     mask_f: Optional[np.ndarray] = None
 
     if handwritten:
+        p_hw = rng.random()
         samples = mnist_bank.get(digit) if mnist_bank else None
-        if samples is not None and len(samples) > 0:
+        if p_hw < 0.45 and samples is not None and len(samples) > 0:
             glyph = samples[rng.randrange(len(samples))]
             mask_f = _render_mnist_glyph_mask(glyph, w, h, rng)
+        elif p_hw < 0.78 and _discover_handwritten_fonts():
+            mask_f = _draw_printed_digit_mask(digit, w, h, rng, font_pool="handwritten")
         else:
             _draw_handwritten_digit(bgr, digit, fg_bgr, rng)
             return
     else:
-        mask_f = _draw_printed_digit_mask(digit, w, h, rng)
+        mask_f = _draw_printed_digit_mask(digit, w, h, rng, font_pool="printed")
 
     fg_arr = np.array(fg_bgr, dtype=np.float32)[None, None, :]
     out = bgr.astype(np.float32) * (1.0 - mask_f[:, :, None]) + fg_arr * mask_f[:, :, None]
     bgr[:, :] = np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _apply_disc_background_interference(
+    bgr: np.ndarray,
+    alpha_mask: np.ndarray,
+    rng: random.Random,
+    strength: str = "random",
+) -> np.ndarray:
+    """针对 2026 决赛“蓝圆片加底噪、局部纹理、彩色斑块干扰”专项合成模块。"""
+    h, w = bgr.shape[:2]
+    out = bgr.astype(np.float32)
+    np_rng = np.random.default_rng(rng.randint(0, 2**31 - 1))
+    inside = (alpha_mask > 64)
+
+    strong = (strength == "heavy") or (strength == "random" and rng.random() < 0.45)
+
+    # 1) 局部纹理叠加（细条纹、网格、棋盘格、半色调圆点、纸张/布料纹理）
+    if strength == "heavy" or rng.random() < 0.72:
+        tex_mode = rng.choice(["stripes", "grid", "checker", "dots", "rings", "grain"])
+        overlay = out.copy()
+        tex_col = np.array(
+            [
+                rng.randint(25, 225),
+                rng.randint(25, 225),
+                rng.randint(25, 225),
+            ],
+            dtype=np.float32,
+        )
+        if tex_mode == "stripes":
+            step = rng.randint(8, 18)
+            thick = max(2, step // 2)
+            ang_horiz = rng.random() < 0.5
+            for p in range(0, (h if ang_horiz else w), step):
+                if ang_horiz:
+                    overlay[p:p + thick, :] = tex_col
+                else:
+                    overlay[:, p:p + thick] = tex_col
+        elif tex_mode == "grid":
+            step = rng.randint(10, 22)
+            lw = rng.randint(1, 2)
+            for p in range(0, h, step):
+                overlay[p:p + lw, :] = tex_col
+            for p in range(0, w, step):
+                overlay[:, p:p + lw] = tex_col
+        elif tex_mode == "checker":
+            tile = rng.randint(10, 20)
+            for yy in range(0, h, tile):
+                for xx in range(0, w, tile):
+                    if (yy // tile + xx // tile) % 2 == 0:
+                        overlay[yy:yy + tile, xx:xx + tile] = tex_col
+        elif tex_mode == "dots":
+            step = rng.randint(12, 22)
+            rad = rng.randint(2, max(2, step // 4))
+            for yy in range(step // 2, h, step):
+                for xx in range(step // 2, w, step):
+                    cv2.circle(overlay, (xx, yy), rad, tex_col.tolist(), -1, cv2.LINE_AA)
+        elif tex_mode == "rings":
+            cx, cy = w // 2 + rng.randint(-15, 15), h // 2 + rng.randint(-15, 15)
+            for r_rad in range(12, max(h, w), rng.randint(12, 20)):
+                cv2.circle(overlay, (cx, cy), r_rad, tex_col.tolist(), rng.randint(1, 3), cv2.LINE_AA)
+        else:  # grain
+            coarse = np_rng.uniform(0.0, 255.0, (max(8, h // 4), max(8, w // 4), 3)).astype(np.float32)
+            overlay = cv2.resize(coarse, (w, h), interpolation=cv2.INTER_LINEAR)
+        t_alpha = rng.uniform(0.22, 0.48) if strong else rng.uniform(0.12, 0.30)
+        out[inside] = out[inside] * (1.0 - t_alpha) + overlay[inside] * t_alpha
+
+    # 2) 低频云斑 / 彩色污渍色块（不规则黄/绿/青/紫/灰斑）
+    if strength == "heavy" or rng.random() < 0.65:
+        n_blobs = rng.randint(2, 5) if strong else rng.randint(1, 3)
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+        for _ in range(n_blobs):
+            bx = rng.uniform(0.15, 0.85) * w
+            by = rng.uniform(0.15, 0.85) * h
+            rx = rng.uniform(0.12, 0.34) * w
+            ry = rng.uniform(0.10, 0.30) * h
+            blob_env = np.exp(-(((xx - bx) / max(1.0, rx)) ** 2 + ((yy - by) / max(1.0, ry)) ** 2))
+            blob_col = np.array(
+                [rng.randint(20, 210), rng.randint(25, 220), rng.randint(25, 220)], dtype=np.float32
+            )[None, None, :]
+            b_alpha = (blob_env * (rng.uniform(0.25, 0.52) if strong else rng.uniform(0.15, 0.34)))[:, :, None]
+            out = out * (1.0 - b_alpha) + blob_col * b_alpha
+
+    # 3) 高斯底噪 + RGB 通道色噪 + 椒盐斑点
+    if strength == "heavy" or rng.random() < 0.80:
+        sigma = rng.uniform(18.0, 40.0) if strong else rng.uniform(9.0, 24.0)
+        g_noise = np_rng.normal(0.0, sigma, (h, w, 3)).astype(np.float32)
+        out += g_noise
+    if strength == "heavy" or rng.random() < 0.55:
+        sp_prob = rng.uniform(0.025, 0.07) if strong else rng.uniform(0.008, 0.03)
+        sp_rand = np_rng.random((h, w))
+        salt = (sp_rand < sp_prob * 0.5) & inside
+        pepper = (sp_rand > 1.0 - sp_prob * 0.5) & inside
+        out[salt] = np.clip(out[salt] + rng.uniform(60.0, 145.0), 0, 255)
+        out[pepper] = np.clip(out[pepper] - rng.uniform(45.0, 120.0), 0, 255)
+
+    # 4) 蓝盘表面轻微彩色杂线（保留中心清晰度）
+    if strength == "heavy" or rng.random() < 0.50:
+        for _ in range(rng.randint(2, 6)):
+            p1 = (rng.randint(int(w * 0.1), int(w * 0.9)), rng.randint(int(h * 0.1), int(h * 0.9)))
+            p2 = (rng.randint(int(w * 0.1), int(w * 0.9)), rng.randint(int(h * 0.1), int(h * 0.9)))
+            lcol = (rng.randint(25, 210), rng.randint(25, 210), rng.randint(25, 210))
+            cv2.line(out, p1, p2, lcol, rng.randint(1, 2), cv2.LINE_AA)
+
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def _apply_pvc_gloss_and_scratches(
@@ -481,44 +720,78 @@ def make_official_sticker_bgra(
     glossy_pvc: bool = False,
     mnist_bank: Optional[Dict[str, np.ndarray]] = None,
     size: int = 160,
+    blank_disc_bank: Optional[Sequence[np.ndarray]] = None,
+    disc_interference_prob: float = 0.60,
+    interference_strength: str = "random",
 ) -> np.ndarray:
-    """1:1 复刻官方宝蓝圆贴纸 BGRA（宝蓝圆底 + 粗体白字/白笔手写 + 可选 PVC 反光划痕）。"""
+    """复刻官方宝蓝圆贴纸 BGRA（支持真实去字蓝盘底材 + 2026 决赛底噪/纹理/彩斑干扰 + 多样白字）。"""
     s = int(size)
-    bgr = np.zeros((s, s, 3), dtype=np.uint8)
     alpha = np.zeros((s, s), dtype=np.uint8)
-
-    # 同时覆盖两种实拍圆底色调：
-    #   1) 55% 官方亮宝蓝（近距/PVC 实拍）: BGR ≈ (140..195, 32..68, 10..38)
-    #   2) 45% 暗藏青/低饱和灰蓝（RDK X5 赛场镜头下实拍色）: BGR ≈ (72..145, 52..108, 42..96)
-    if rng.random() < 0.55:
-        b = rng.randint(140, 195)
-        g = rng.randint(32, 68)
-        r = rng.randint(10, 38)
-    else:
-        b = rng.randint(72, 145)
-        g = rng.randint(min(52, b - 8), min(108, b - 4))
-        r = rng.randint(min(42, g - 6), min(96, g))
-    bgr[:, :] = (b, g, r)
-
-    # 轻微渐变底色模拟斜照光影
-    yy, xx = np.mgrid[0:s, 0:s].astype(np.float32)
-    grad = 1.0 + rng.uniform(-0.12, 0.12) * ((yy / s) - 0.5) + rng.uniform(-0.10, 0.10) * ((xx / s) - 0.5)
-    bgr = np.clip(bgr.astype(np.float32) * grad[:, :, None], 0, 255).astype(np.uint8)
-
     center = (s // 2, s // 2)
     rad = int(s * 0.46)
-    cv2.circle(alpha, center, rad, 255, -1, cv2.LINE_AA)
 
-    # ~15% 概率保留少许白色底纸边（模拟贴纸未完全对齐或边缘白衬边）
-    if rng.random() < 0.15:
-        pad_r = rad + rng.randint(3, 6)
-        white_bg = np.full((s, s, 3), rng.randint(228, 250), dtype=np.uint8)
-        circ_m = (alpha.astype(np.float32) / 255.0)[:, :, None]
-        bgr = np.clip(bgr.astype(np.float32) * circ_m + white_bg.astype(np.float32) * (1.0 - circ_m), 0, 255).astype(np.uint8)
-        cv2.circle(alpha, center, min(s // 2 - 1, pad_r), 255, -1, cv2.LINE_AA)
+    used_real_blank = False
+    if blank_disc_bank and rng.random() < 0.42:
+        tpl = rng.choice(blank_disc_bank)
+        tpl_rs = cv2.resize(tpl, (s, s), interpolation=cv2.INTER_LINEAR)
+        bgr = tpl_rs[:, :, :3].copy()
+        alpha = tpl_rs[:, :, 3].copy() if tpl_rs.shape[2] >= 4 else np.zeros((s, s), dtype=np.uint8)
+        if int((alpha > 64).sum()) < 200:
+            cv2.circle(alpha, center, rad, 255, -1, cv2.LINE_AA)
+        # 轻度亮度/色调微调防止贴纸颜色单一
+        bgr = np.clip(bgr.astype(np.float32) * np.array(
+            [rng.uniform(0.85, 1.18), rng.uniform(0.85, 1.18), rng.uniform(0.85, 1.22)], dtype=np.float32
+        )[None, None, :], 0, 255).astype(np.uint8)
+        used_real_blank = True
 
-    fg_white = (rng.randint(235, 255), rng.randint(235, 255), rng.randint(235, 255))
+    if not used_real_blank:
+        bgr = np.zeros((s, s, 3), dtype=np.uint8)
+        # 覆盖多种蓝贴纸色调：亮宝蓝、暗藏青灰蓝、偏靛蓝/青蓝
+        p_pal = rng.random()
+        if p_pal < 0.50:
+            b = rng.randint(135, 200)
+            g = rng.randint(28, 72)
+            r = rng.randint(8, 42)
+        elif p_pal < 0.85:
+            b = rng.randint(68, 145)
+            g = rng.randint(min(48, b - 8), min(110, b - 4))
+            r = rng.randint(min(38, g - 6), min(96, g))
+        else:
+            b = rng.randint(120, 190)
+            g = rng.randint(65, 125)
+            r = rng.randint(18, 65)
+        bgr[:, :] = (b, g, r)
+
+        yy, xx = np.mgrid[0:s, 0:s].astype(np.float32)
+        grad = 1.0 + rng.uniform(-0.14, 0.14) * ((yy / s) - 0.5) + rng.uniform(-0.12, 0.12) * ((xx / s) - 0.5)
+        bgr = np.clip(bgr.astype(np.float32) * grad[:, :, None], 0, 255).astype(np.uint8)
+        cv2.circle(alpha, center, rad, 255, -1, cv2.LINE_AA)
+
+        # ~15% 概率保留少许白色底纸边
+        if rng.random() < 0.15:
+            pad_r = rad + rng.randint(3, 6)
+            white_bg = np.full((s, s, 3), rng.randint(225, 250), dtype=np.uint8)
+            circ_m = (alpha.astype(np.float32) / 255.0)[:, :, None]
+            bgr = np.clip(bgr.astype(np.float32) * circ_m + white_bg.astype(np.float32) * (1.0 - circ_m), 0, 255).astype(np.uint8)
+            cv2.circle(alpha, center, min(s // 2 - 1, pad_r), 255, -1, cv2.LINE_AA)
+
+    had_interference = (rng.random() < disc_interference_prob)
+    if had_interference:
+        bgr = _apply_disc_background_interference(bgr, alpha, rng, strength=interference_strength)
+
+    # 字迹颜色以高对比白/微暖白/微冷灰白为主
+    fg_white = rng.choice([
+        (rng.randint(235, 255), rng.randint(235, 255), rng.randint(235, 255)),
+        (rng.randint(208, 240), rng.randint(228, 252), rng.randint(235, 255)),
+        (rng.randint(235, 255), rng.randint(225, 248), rng.randint(210, 238)),
+    ])
     _draw_digit_on_bgr(bgr, digit, fg_white, rng, handwritten=handwritten, mnist_bank=mnist_bank)
+
+    # 轻度字迹表面磨损噪点（不破坏数字拓扑）
+    if had_interference and rng.random() < 0.35:
+        np_rng = np.random.default_rng(rng.randint(0, 2**31 - 1))
+        dust = np_rng.normal(0.0, rng.uniform(5.0, 12.0), bgr.shape).astype(np.float32)
+        bgr = np.clip(bgr.astype(np.float32) + dust, 0, 255).astype(np.uint8)
 
     if glossy_pvc:
         bgr = _apply_pvc_gloss_and_scratches(bgr, alpha, rng)
@@ -614,20 +887,27 @@ def make_digit_sticker_by_mix(
     digit: str,
     rng: random.Random,
     mnist_bank: Optional[Dict[str, np.ndarray]] = None,
+    blank_disc_bank: Optional[Sequence[np.ndarray]] = None,
+    disc_interference_prob: float = 0.60,
+    interference_strength: str = "random",
 ) -> np.ndarray:
-    """按决赛真实分布混合生成数字贴纸：~45% 干净宝蓝/暗藏青圆贴纸、~35% PVC 反光圆贴纸、~20% 干扰底纹卡片。"""
+    """按决赛强泛化分布生成数字贴纸：蓝底圆片（含底噪/纹理/反光）+ 2026 非蓝彩色干扰底纹圆片/卡片。"""
     p = rng.random()
-    handwritten = rng.random() < 0.55
-    if p < 0.45:
+    handwritten = rng.random() < 0.58
+    if p < 0.42:
         return make_official_sticker_bgra(
-            digit, rng, handwritten=handwritten, glossy_pvc=False, mnist_bank=mnist_bank, size=160
+            digit, rng, handwritten=handwritten, glossy_pvc=False, mnist_bank=mnist_bank, size=160,
+            blank_disc_bank=blank_disc_bank, disc_interference_prob=disc_interference_prob,
+            interference_strength=interference_strength,
         )
-    if p < 0.80:
+    if p < 0.76:
         return make_official_sticker_bgra(
-            digit, rng, handwritten=handwritten, glossy_pvc=True, mnist_bank=mnist_bank, size=160
+            digit, rng, handwritten=handwritten, glossy_pvc=True, mnist_bank=mnist_bank, size=160,
+            blank_disc_bank=blank_disc_bank, disc_interference_prob=disc_interference_prob,
+            interference_strength=interference_strength,
         )
-    is_circ = rng.random() < 0.50
-    sz = (144, 144) if is_circ else (128, 152)
+    is_circ = rng.random() < 0.65
+    sz = (152, 152) if is_circ else (128, 152)
     return make_digit_card_bgra(
         digit, rng, handwritten=handwritten, size=sz, mnist_bank=mnist_bank, circular=is_circ
     )
@@ -717,6 +997,22 @@ def project_3d_to_uv(
     return u, v
 
 
+def project_ground_point_homography(
+    x_fwd_m: float,
+    y_left_m: float,
+    width: int = 640,
+    height: int = 480,
+    H_g2p: np.ndarray = CALIBRATED_H_G2P,
+) -> Optional[Tuple[float, float]]:
+    """使用实车标定单应逆矩阵将地面点 (x_fwd_m, y_left_m) 映射到图像坐标 (u, v)。"""
+    p = H_g2p @ np.array([float(x_fwd_m), float(y_left_m), 1.0], dtype=np.float64)
+    if abs(p[2]) < 1e-8:
+        return None
+    u = float(p[0] / p[2]) * (float(width) / 640.0)
+    v = float(p[1] / p[2]) * (float(height) / 480.0)
+    return u, v
+
+
 def project_ground_prop_bgra(
     bg: np.ndarray,
     prop_bgra: np.ndarray,
@@ -732,16 +1028,19 @@ def project_ground_prop_bgra(
     allow_flip: bool = False,
     min_box_w: int = 5,
     min_box_h: int = 4,
+    use_homography: bool = False,
+    allow_wide_yaw: bool = False,
 ) -> Optional[Tuple[int, int, int, int]]:
-    """按小车相机内参将平面贴纸/道具做真实 3D 地面单应透视并混合到 bg 上。
+    """按小车相机单应/针孔内参将平面贴纸/道具做真实 3D 地面透视并混合到 bg 上。
 
-    圆贴纸在地面 d∈[0.15, 1.55]m 处会自然压扁为 3.5:1~5:1+ 扁椭圆；
-    支持 curl_deg 模拟贴纸翘边及底部软阴影，以及近处图像边缘截断。
+    allow_wide_yaw=True 仅用于地面圆形数字贴纸在平面内 ±180° 任意朝向（如 8 横贴成 ∞、6 斜贴），
+    仍严禁任何镜像翻转（allow_flip=True 必报错）。
     """
     if allow_flip:
         raise ValueError("严格禁止水平/垂直翻转（会破坏数字 1-8 类别语义）！")
-    if abs(rot_deg) > MAX_ROTATION_DEG + 1e-6:
-        raise ValueError(f"rot_deg={rot_deg} 超过允许上限 ±{MAX_ROTATION_DEG}°")
+    max_allowed = 180.0 if allow_wide_yaw else MAX_ROTATION_DEG
+    if abs(rot_deg) > max_allowed + 1e-6:
+        raise ValueError(f"rot_deg={rot_deg} 超过允许上限 ±{max_allowed}°")
 
     H_img, W_img = bg.shape[:2]
     ph, pw = prop_bgra.shape[:2]
@@ -750,7 +1049,6 @@ def project_ground_prop_bgra(
     d_mm = d_m * 1000.0
     w_mm = -y_m * 1000.0  # ROS +y 向左 -> 车体 w_mm 向右为负
 
-    # 局部四角：(tl, tr, br, bl)，图像顶部对应地面更远处 (+d)，底部对应更近处 (-d)
     local_pts = [
         (-hw_mm, +hh_mm),
         (+hw_mm, +hh_mm),
@@ -763,15 +1061,24 @@ def project_ground_prop_bgra(
 
     dst_pts: List[List[float]] = []
     shadow_pts: List[List[float]] = []
+    pose_scale = cam_h_mm / 110.0
     for lx, ly in local_pts:
         rx = lx * cos_r - ly * sin_r
         ry = lx * sin_r + ly * cos_r
-        # 若有翘边，将远端（+hh_mm 侧）相对近端抬起
         lift_frac = max(0.0, (ly + hh_mm) / max(1e-3, 2.0 * hh_mm))
         z_mm = (2.0 * hh_mm * lift_frac) * math.sin(curl_rad)
         dd_mm = d_mm + ry * math.cos(curl_rad)
         ww_mm = w_mm + rx
-        u, v = project_3d_to_uv(ww_mm, dd_mm, z_mm, cam_h_mm, pitch_deg, f_px, W_img, H_img)
+        if use_homography and curl_deg <= 1.0:
+            # 轻度车身俯仰颠簸微调（绕标定单应扰动 ±4%）
+            pt_h = project_ground_point_homography(
+                (dd_mm / 1000.0) * pose_scale, -ww_mm / 1000.0, width=W_img, height=H_img
+            )
+            if pt_h is None:
+                return None
+            u, v = pt_h
+        else:
+            u, v = project_3d_to_uv(ww_mm, dd_mm, z_mm, cam_h_mm, pitch_deg, f_px, W_img, H_img)
         dst_pts.append([u, v])
         if curl_deg > 1.0:
             su, sv = project_3d_to_uv(ww_mm, dd_mm, 0.0, cam_h_mm, pitch_deg, f_px, W_img, H_img)
@@ -1009,10 +1316,21 @@ def apply_photometric_augmentation(img: np.ndarray, rng: random.Random) -> np.nd
         else:
             kernel[:, k // 2] = 1.0 / k
         out = cv2.filter2D(out, -1, kernel)
+    elif rng.random() < 0.24:
+        # RDK X5 UVC 镜头轻度离焦模糊
+        out = cv2.GaussianBlur(out, (3, 3), rng.uniform(0.5, 1.1))
 
     if rng.random() < 0.40:
         noise = np.random.default_rng(rng.randint(0, 2**31 - 1)).normal(0.0, rng.uniform(1.8, 5.5), out.shape)
         out = np.clip(out.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+
+    if rng.random() < 0.35:
+        # 复刻实车 UVC MJPEG 压缩块效应与色度轻度抽样失真
+        ok_m, enc_m = cv2.imencode(".jpg", out, [int(cv2.IMWRITE_JPEG_QUALITY), rng.randint(58, 86)])
+        if ok_m:
+            dec_m = cv2.imdecode(enc_m, cv2.IMREAD_COLOR)
+            if dec_m is not None:
+                out = dec_m
 
     return out
 
@@ -1082,6 +1400,94 @@ def _box_iou(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> floa
     return inter / float(area_a + area_b - inter)
 
 
+def load_blank_disc_bank(props_dir: Optional[str]) -> List[np.ndarray]:
+    """加载真实去字空白蓝圆盘底材 (_blank_discs/*.png) 用于合成全 8 类数字的真实纹理贴纸。"""
+    if not props_dir:
+        return []
+    bdir = Path(props_dir) / "_blank_discs"
+    if not bdir.is_dir():
+        return []
+    out: List[np.ndarray] = []
+    for p in load_image_paths(str(bdir)):
+        arr = read_prop_bgra(p)
+        if arr is not None:
+            out.append(arr)
+    return out
+
+
+def apply_roi_crop_remap(
+    img: np.ndarray,
+    labels: Sequence[str],
+    roi_crop_top_px: int,
+    out_w: int = 640,
+    out_h: int = 640,
+    min_box_w_px: float = 5.0,
+    min_box_h_px: float = 4.0,
+) -> Tuple[np.ndarray, List[str]]:
+    """对图像与 YOLO 标注执行与实车 bpu_yolov8_node 一致的顶部裁剪 + 垂直拉伸。"""
+    crop_top = int(roi_crop_top_px or 0)
+    if crop_top <= 0:
+        return img, list(labels)
+
+    H, W = img.shape[:2]
+    roi_top = max(0, min(crop_top, H - 32))
+    crop_img = img[roi_top:H, :]
+    roi_h = float(max(1, H - roi_top))
+    if crop_img.shape[1] != out_w or crop_img.shape[0] != out_h:
+        resized = cv2.resize(crop_img, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+    else:
+        resized = crop_img
+
+    remapped: List[str] = []
+    for ln in labels:
+        parts = ln.strip().split()
+        if len(parts) != 5:
+            continue
+        cid = int(parts[0])
+        cx, cy, bw, bh = map(float, parts[1:])
+        x1 = (cx - bw * 0.5) * W
+        x2 = (cx + bw * 0.5) * W
+        y1 = (cy - bh * 0.5) * H - float(roi_top)
+        y2 = (cy + bh * 0.5) * H - float(roi_top)
+
+        cx1 = clamp(x1, 0.0, float(W))
+        cx2 = clamp(x2, 0.0, float(W))
+        cy1 = clamp(y1, 0.0, roi_h)
+        cy2 = clamp(y2, 0.0, roi_h)
+
+        # 转入 out_w x out_h 模型像素空间校验最低可辨尺寸
+        pw = (cx2 - cx1) * (float(out_w) / float(max(1, W)))
+        ph = (cy2 - cy1) * (float(out_h) / roi_h)
+        if pw < min_box_w_px or ph < min_box_h_px:
+            continue
+
+        ncx = clamp(0.5 * (cx1 + cx2) / float(W), 0.0, 1.0)
+        ncy = clamp(0.5 * (cy1 + cy2) / roi_h, 0.0, 1.0)
+        nbw = clamp((cx2 - cx1) / float(W), 1e-4, 1.0)
+        nbh = clamp((cy2 - cy1) / roi_h, 1e-4, 1.0)
+        remapped.append(f"{cid} {ncx:.6f} {ncy:.6f} {nbw:.6f} {nbh:.6f}")
+
+    return resized, remapped
+
+
+def _weighted_sample_distinct(
+    rng: random.Random,
+    items: Sequence[str],
+    weights: Sequence[float],
+    k: int,
+) -> List[str]:
+    avail = list(items)
+    w_avail = [max(1e-4, float(w)) for w in weights]
+    chosen: List[str] = []
+    for _ in range(min(k, len(avail))):
+        pick = rng.choices(avail, weights=w_avail, k=1)[0]
+        idx = avail.index(pick)
+        chosen.append(pick)
+        avail.pop(idx)
+        w_avail.pop(idx)
+    return chosen
+
+
 def _generate_digits8_sample(
     rng: random.Random,
     bg_paths: Sequence[Path],
@@ -1091,9 +1497,20 @@ def _generate_digits8_sample(
     height: int,
     max_rot_deg: float,
     max_digit_dist_m: float = DEFAULT_MAX_DIGIT_DIST_8CLS_M,
+    blank_disc_bank: Optional[Sequence[np.ndarray]] = None,
+    use_homography: bool = False,
+    allow_wide_yaw: bool = False,
+    roi_crop_top_px: int = 0,
+    empty_ratio: float = 0.08,
+    prop_reuse_prob: float = 0.70,
+    disc_interference_prob: float = 0.60,
+    interference_strength: str = "random",
+    class_weights: Optional[Sequence[float]] = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """生成 8 类（1..8）真实 3D 地面单应透视样本，并将红锥/红禁行区/黄线作为无标签干扰背景绘制。"""
     max_d = resolve_max_digit_dist_m(8, max_digit_dist_m)
+    c_weights = list(class_weights) if (class_weights is not None and len(class_weights) == 8) else [1.0] * 8
+
     using_real_bg = False
     if bg_paths:
         raw_bg = cv2.imdecode(np.fromfile(str(rng.choice(bg_paths)), dtype=np.uint8), cv2.IMREAD_COLOR)
@@ -1109,9 +1526,8 @@ def _generate_digits8_sample(
     real_white_mask: Optional[np.ndarray] = None
     if using_real_bg:
         hsv_bg = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        real_white_mask = ((hsv_bg[:, :, 1] < 78) & (hsv_bg[:, :, 2] > 105)).astype(np.uint8)
-        real_white_mask[: int(height * 0.32), :] = 0
-        # 轻度腐蚀避免紧贴黑边/蓝区外沿
+        real_white_mask = ((hsv_bg[:, :, 1] < 82) & (hsv_bg[:, :, 2] > 102)).astype(np.uint8)
+        real_white_mask[: int(height * 0.34), :] = 0
         k_er = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 5))
         real_white_mask = cv2.erode(real_white_mask, k_er, iterations=1)
 
@@ -1121,12 +1537,19 @@ def _generate_digits8_sample(
     f_px = rng.uniform(318.0, 332.0)
 
     def get_prop(cls_name: str) -> np.ndarray:
-        if prop_bank.get(cls_name) and rng.random() < 0.7:
+        if prop_bank.get(cls_name) and rng.random() < prop_reuse_prob:
             loaded = read_prop_bgra(rng.choice(prop_bank[cls_name]))
             if loaded is not None:
                 return loaded
         if cls_name in DIGITS8_CLASS_TO_ID:
-            return make_digit_sticker_by_mix(cls_name, rng, mnist_bank=mnist_bank)
+            return make_digit_sticker_by_mix(
+                cls_name,
+                rng,
+                mnist_bank=mnist_bank,
+                blank_disc_bank=blank_disc_bank,
+                disc_interference_prob=disc_interference_prob,
+                interference_strength=interference_strength,
+            )
         if cls_name == "red_cone":
             return make_red_cone_bgra(rng)
         if cls_name == "red_no_entry":
@@ -1135,107 +1558,129 @@ def _generate_digits8_sample(
 
     # 1) 无标签背景干扰物：真实背景自带红锥/红禁行区/黄线，仅在合成背景上高频绘制
     if not using_real_bg and rng.random() < 0.45:
-        d_y = rng.uniform(0.30, 1.05)
+        d_y = rng.uniform(0.20, 0.90) if use_homography else rng.uniform(0.30, 1.05)
         y_lat = rng.uniform(-0.08, 0.08)
         y_prop = get_prop("yellow_stop_line")
         project_ground_prop_bgra(
             img, y_prop, d_m=d_y, y_m=y_lat, phys_w_m=rng.uniform(0.28, 0.42), phys_h_m=rng.uniform(0.025, 0.045),
             rot_deg=rng.uniform(-min(6.0, max_rot_deg), min(6.0, max_rot_deg)),
             cam_h_mm=cam_h_mm, pitch_deg=pitch_deg, f_px=f_px, allow_flip=False, min_box_w=12, min_box_h=2,
+            use_homography=use_homography, allow_wide_yaw=False,
         )
 
     if not using_real_bg and rng.random() < 0.45:
-        d_n = rng.uniform(0.35, 1.15)
+        d_n = rng.uniform(0.24, 0.95) if use_homography else rng.uniform(0.35, 1.15)
         y_n = rng.uniform(-0.14, 0.14)
         n_prop = get_prop("red_no_entry")
         project_ground_prop_bgra(
             img, n_prop, d_m=d_n, y_m=y_n, phys_w_m=0.24, phys_h_m=0.13,
             rot_deg=rng.uniform(-min(10.0, max_rot_deg), min(10.0, max_rot_deg)),
             cam_h_mm=cam_h_mm, pitch_deg=pitch_deg, f_px=f_px, allow_flip=False, min_box_w=10, min_box_h=3,
+            use_homography=use_homography, allow_wide_yaw=False,
         )
 
     # 2) 地面数字贴纸布局（直道并排 / 岔道双支路 / 单弯道 / 近处边缘截断），所有距离严格 <= max_d
-    #    约 8% 样本为纯无数字负样本（仅包含赛道/红锥/黄线/红禁行框，强化抗误检）
     labels: List[str] = []
     placed_boxes: List[Tuple[int, int, int, int]] = []
-    placements: List[Tuple[str, float, float, float, float]] = []  # (digit, d_m, y_m, diam_m, curl_deg)
+    placements: List[Tuple[str, float, float, float, float]] = []
 
     def _u_dist(lo: float, hi: float) -> float:
         hi_c = min(hi, max_d)
         lo_c = min(lo, hi_c)
         return rng.uniform(lo_c, hi_c)
 
-    if rng.random() >= 0.08:
+    if rng.random() >= clamp(empty_ratio, 0.0, 0.5):
         scene_mode = rng.choices(
             ["straight_dual", "fork_branches", "single_curve", "near_clipped", "multi_depth"],
-            weights=[0.32, 0.25, 0.20, 0.13, 0.10],
+            weights=[0.34, 0.24, 0.18, 0.14, 0.10],
         )[0]
 
         def rand_diam(d_m: float) -> float:
-            # 远距离适度偏向 0.13-0.21m，保证地面扁椭圆在 640x480 中仍有清晰可辨高度
+            if use_homography:
+                # 实车蓝圆盘真实直径 ~0.10–0.14 m
+                return rng.uniform(0.105, 0.148)
             if d_m > 0.90:
                 return rng.uniform(0.14, 0.22)
             return rng.uniform(0.11, 0.16)
 
         if scene_mode == "straight_dual":
-            d1, d2 = rng.sample(DIGITS8_CLASSES, 2)
-            d_base = _u_dist(0.24, 0.85)
-            sep = rng.uniform(0.10, 0.17)
-            y_mid = rng.uniform(-0.08, 0.08)
-            placements.append((d1, clamp(d_base + rng.uniform(-0.02, 0.02), 0.15, max_d), clamp(y_mid + sep * 0.5, -0.20, 0.20), rand_diam(d_base), 0.0))
-            placements.append((d2, clamp(d_base + rng.uniform(-0.02, 0.02), 0.15, max_d), clamp(y_mid - sep * 0.5, -0.20, 0.20), rand_diam(d_base), 0.0))
+            d1, d2 = _weighted_sample_distinct(rng, DIGITS8_CLASSES, c_weights, 2)
+            d_base = _u_dist(0.12, 0.72) if use_homography else _u_dist(0.24, 0.85)
+            sep = rng.uniform(0.11, 0.19)
+            y_mid = rng.uniform(-0.07, 0.07)
+            d_floor = 0.06 if use_homography else 0.15
+            placements.append((d1, clamp(d_base + rng.uniform(-0.02, 0.02), d_floor, max_d), clamp(y_mid + sep * 0.5, -0.20, 0.20), rand_diam(d_base), 0.0))
+            placements.append((d2, clamp(d_base + rng.uniform(-0.02, 0.02), d_floor, max_d), clamp(y_mid - sep * 0.5, -0.20, 0.20), rand_diam(d_base), 0.0))
         elif scene_mode == "fork_branches":
-            d1, d2 = rng.sample(DIGITS8_CLASSES, 2)
-            da = _u_dist(0.32, 1.15)
-            db = clamp(da + rng.uniform(-0.18, 0.18), min(0.28, max_d), min(1.35, max_d))
-            placements.append((d1, da, rng.uniform(0.08, 0.20), rand_diam(da), rng.uniform(0.0, 14.0) if rng.random() < 0.25 else 0.0))
-            placements.append((d2, db, rng.uniform(-0.20, -0.08), rand_diam(db), rng.uniform(0.0, 14.0) if rng.random() < 0.25 else 0.0))
+            d1, d2 = _weighted_sample_distinct(rng, DIGITS8_CLASSES, c_weights, 2)
+            da = _u_dist(0.18, 1.00) if use_homography else _u_dist(0.32, 1.15)
+            db = clamp(da + rng.uniform(-0.14, 0.14), min(0.16, max_d), max_d)
+            placements.append((d1, da, rng.uniform(0.08, 0.19), rand_diam(da), rng.uniform(0.0, 12.0) if rng.random() < 0.20 else 0.0))
+            placements.append((d2, db, rng.uniform(-0.19, -0.08), rand_diam(db), rng.uniform(0.0, 12.0) if rng.random() < 0.20 else 0.0))
         elif scene_mode == "single_curve":
-            d1 = rng.choice(DIGITS8_CLASSES)
-            da = _u_dist(0.26, 1.30)
-            placements.append((d1, da, rng.uniform(-0.19, 0.19), rand_diam(da), rng.uniform(0.0, 22.0) if rng.random() < 0.22 else 0.0))
+            d1 = _weighted_sample_distinct(rng, DIGITS8_CLASSES, c_weights, 1)[0]
+            da = _u_dist(0.12, 1.05) if use_homography else _u_dist(0.26, 1.30)
+            placements.append((d1, da, rng.uniform(-0.18, 0.18), rand_diam(da), rng.uniform(0.0, 18.0) if rng.random() < 0.18 else 0.0))
             if rng.random() < 0.45:
-                d2 = rng.choice([c for c in DIGITS8_CLASSES if c != d1])
-                db = _u_dist(0.55, 1.50)
-                placements.append((d2, db, rng.uniform(-0.18, 0.18), rand_diam(db), rng.uniform(0.0, 20.0) if rng.random() < 0.30 else 0.0))
+                rem = [c for c in DIGITS8_CLASSES if c != d1]
+                rem_w = [c_weights[DIGITS8_CLASS_TO_ID[c]] for c in rem]
+                d2 = _weighted_sample_distinct(rng, rem, rem_w, 1)[0]
+                db = _u_dist(0.38, 1.10) if use_homography else _u_dist(0.55, 1.50)
+                placements.append((d2, db, rng.uniform(-0.18, 0.18), rand_diam(db), rng.uniform(0.0, 18.0) if rng.random() < 0.25 else 0.0))
         elif scene_mode == "near_clipped":
-            d1 = rng.choice(DIGITS8_CLASSES)
-            # 近处边缘截断（d ≈ 0.15..0.24m 或横向接近 ±0.20m）
-            da = _u_dist(0.15, 0.24)
-            ya = rng.choice([rng.uniform(-0.20, -0.11), rng.uniform(0.11, 0.20), rng.uniform(-0.08, 0.08)])
-            placements.append((d1, da, ya, rng.uniform(0.12, 0.17), 0.0))
+            d1 = _weighted_sample_distinct(rng, DIGITS8_CLASSES, c_weights, 1)[0]
+            da = _u_dist(0.055, 0.14) if use_homography else _u_dist(0.15, 0.24)
+            ya = rng.choice([rng.uniform(-0.19, -0.10), rng.uniform(0.10, 0.19), rng.uniform(-0.08, 0.08)])
+            placements.append((d1, da, ya, rng.uniform(0.105, 0.15), 0.0))
             if rng.random() < 0.5:
-                d2 = rng.choice([c for c in DIGITS8_CLASSES if c != d1])
-                db = _u_dist(0.45, 1.10)
+                rem = [c for c in DIGITS8_CLASSES if c != d1]
+                rem_w = [c_weights[DIGITS8_CLASS_TO_ID[c]] for c in rem]
+                d2 = _weighted_sample_distinct(rng, rem, rem_w, 1)[0]
+                db = _u_dist(0.30, 0.95) if use_homography else _u_dist(0.45, 1.10)
                 placements.append((d2, db, rng.uniform(-0.14, 0.14), rand_diam(db), 0.0))
         else:  # multi_depth
-            chosen = rng.sample(DIGITS8_CLASSES, rng.randint(2, 3))
-            depths = sorted([
-                _u_dist(0.22, 0.45),
-                _u_dist(0.48, min(0.85, max_d)),
-                _u_dist(0.80, 1.52),
-            ][:len(chosen)])
+            chosen = _weighted_sample_distinct(rng, DIGITS8_CLASSES, c_weights, rng.randint(2, 3))
+            if use_homography:
+                depths = sorted([
+                    _u_dist(0.09, 0.22),
+                    _u_dist(0.28, min(0.58, max_d)),
+                    _u_dist(0.62, 1.05),
+                ][:len(chosen)])
+            else:
+                depths = sorted([
+                    _u_dist(0.22, 0.45),
+                    _u_dist(0.48, min(0.85, max_d)),
+                    _u_dist(0.80, 1.52),
+                ][:len(chosen)])
             for dg, dm in zip(chosen, depths):
-                curl = rng.uniform(6.0, 25.0) if (dm > 0.90 and rng.random() < 0.5) else 0.0
-                placements.append((dg, dm, rng.uniform(-0.18, 0.18), rand_diam(dm), curl))
+                curl = rng.uniform(5.0, 20.0) if (dm > 0.75 and rng.random() < 0.4) else 0.0
+                placements.append((dg, dm, rng.uniform(-0.17, 0.17), rand_diam(dm), curl))
 
         # 按由远到近顺序绘制（正确遮挡关系），并对每张贴纸距离强制封顶 <= max_d
         min_bw_eff = 10 if max_d <= 0.85 else 6
-        min_bh_eff = 10 if max_d <= 0.85 else 4
+        min_bh_eff = 8 if max_d <= 0.85 else 4
         placements.sort(key=lambda item: item[1], reverse=True)
         for digit, d_m, y_m, diam_m, curl_deg in placements:
             d_m = min(d_m, max_d)
-            # 若使用真实背景，校验中心投影落在真实白道上；若落在弯道蓝区则自动微调 y_m 到白道中心附近
             if real_white_mask is not None:
-                u0, v0 = project_3d_to_uv(-y_m * 1000.0, d_m * 1000.0, 0.0, cam_h_mm, pitch_deg, f_px, width, height)
+                if use_homography:
+                    pt0 = project_ground_point_homography(d_m, y_m, width=width, height=height)
+                    u0, v0 = pt0 if pt0 is not None else (-1.0, -1.0)
+                else:
+                    u0, v0 = project_3d_to_uv(-y_m * 1000.0, d_m * 1000.0, 0.0, cam_h_mm, pitch_deg, f_px, width, height)
                 ui, vi = int(round(u0)), int(round(v0))
                 on_white = (0 <= ui < width and 0 <= vi < height and real_white_mask[vi, ui] > 0)
-                if not on_white:
-                    if 0 <= vi < height:
-                        xs_w = np.nonzero(real_white_mask[vi, :] > 0)[0]
-                        if len(xs_w) >= 24:
-                            # 在该行白道内随机重采样安全落点并反算对应 y_m
-                            u_new = float(xs_w[rng.randint(int(len(xs_w) * 0.15), int(len(xs_w) * 0.85))])
+                if not on_white and 0 <= vi < height:
+                    xs_w = np.nonzero(real_white_mask[vi, :] > 0)[0]
+                    if len(xs_w) >= 24:
+                        u_new = float(xs_w[rng.randint(int(len(xs_w) * 0.15), int(len(xs_w) * 0.85))])
+                        if use_homography:
+                            gp = CALIBRATED_H_P2G @ np.array([u_new * (640.0 / width), float(vi) * (480.0 / height), 1.0], dtype=np.float64)
+                            if abs(gp[2]) > 1e-8:
+                                d_m = clamp(float(gp[0] / gp[2]), 0.05, max_d)
+                                y_m = clamp(float(gp[1] / gp[2]), -0.35, 0.35)
+                                on_white = True
+                        else:
                             scale_w = width / 640.0
                             denom = max(1.0, d_m * 1000.0 + cam_h_mm * math.tan(math.radians(pitch_deg)))
                             w_mm_new = (u_new - width * 0.5) * denom / max(1.0, f_px * scale_w)
@@ -1243,20 +1688,31 @@ def _generate_digits8_sample(
                             on_white = True
                 if not on_white:
                     continue
+
             prop = get_prop(digit)
             ph_p, pw_p = prop.shape[:2]
             aspect = pw_p / max(1.0, float(ph_p))
             phys_w = diam_m * (aspect if aspect < 1.0 else 1.0)
             phys_h = diam_m / (aspect if aspect > 1.0 else 1.0)
-            rot = rng.uniform(-max_rot_deg, max_rot_deg)
+            if allow_wide_yaw:
+                p_rot = rng.random()
+                if p_rot < 0.50:
+                    rot = rng.uniform(-25.0, 25.0)
+                elif p_rot < 0.80:
+                    rot = rng.choice([-1.0, 1.0]) * rng.uniform(25.0, 115.0)
+                else:
+                    rot = rng.choice([-1.0, 1.0]) * rng.uniform(115.0, 180.0)
+            else:
+                rot = rng.uniform(-max_rot_deg, max_rot_deg)
+
             box = project_ground_prop_bgra(
                 img, prop, d_m=d_m, y_m=y_m, phys_w_m=phys_w, phys_h_m=phys_h,
                 rot_deg=rot, curl_deg=curl_deg, cam_h_mm=cam_h_mm, pitch_deg=pitch_deg,
                 f_px=f_px, allow_flip=False, min_box_w=min_bw_eff, min_box_h=min_bh_eff,
+                use_homography=use_homography, allow_wide_yaw=allow_wide_yaw,
             )
             if box is None:
                 continue
-            # 防止贴纸高度重叠导致标注错乱
             if any(_box_iou(box, prev) > 0.25 for prev in placed_boxes):
                 continue
             ln = bbox_to_yolo(DIGITS8_CLASS_TO_ID[digit], box, width, height)
@@ -1264,10 +1720,10 @@ def _generate_digits8_sample(
                 placed_boxes.append(box)
                 labels.append(ln)
 
-    # 3) 站立红锥作为无标签背景干扰物（仅在合成背景上绘制；真实背景已自带真实红锥，避免无意义叠假锥遮挡数字）
+    # 3) 站立红锥作为无标签背景干扰物（仅合成背景绘制；真实背景已自带真实红锥）
     if not using_real_bg and rng.random() < 0.50:
         for _ in range(rng.randint(1, 2)):
-            d_c = rng.uniform(0.45, 1.45)
+            d_c = rng.uniform(0.35, 1.10) if use_homography else rng.uniform(0.45, 1.45)
             y_c = rng.uniform(-0.22, 0.22)
             u_c, v_base = project_3d_to_uv(-y_c * 1000.0, d_c * 1000.0, 0.0, cam_h_mm, pitch_deg, f_px, width, height)
             _, v_top = project_3d_to_uv(-y_c * 1000.0, d_c * 1000.0, 230.0, cam_h_mm, pitch_deg, f_px, width, height)
@@ -1283,6 +1739,8 @@ def _generate_digits8_sample(
             composite_bgra(img, cone, cx_c, cy_c)
 
     img = apply_photometric_augmentation(img, rng)
+    if roi_crop_top_px > 0:
+        img, labels = apply_roi_crop_remap(img, labels, roi_crop_top_px=roi_crop_top_px, out_w=640, out_h=640)
     return img, labels
 
 
@@ -1296,8 +1754,17 @@ def generate_one_sample(
     num_classes: int = 11,
     mnist_bank: Optional[Dict[str, np.ndarray]] = None,
     max_digit_dist_m: Optional[float] = None,
+    blank_disc_bank: Optional[Sequence[np.ndarray]] = None,
+    use_homography: bool = False,
+    allow_wide_yaw: bool = False,
+    roi_crop_top_px: int = 0,
+    empty_ratio: float = 0.08,
+    prop_reuse_prob: float = 0.70,
+    disc_interference_prob: float = 0.60,
+    interference_strength: str = "random",
+    class_weights: Optional[Sequence[float]] = None,
 ) -> Tuple[np.ndarray, List[str]]:
-    """生成单张 640x480 训练样本及其 8 类或 11 类 YOLO 标注行。"""
+    """生成单张训练样本及其 8 类或 11 类 YOLO 标注行。"""
     if num_classes not in (8, 11):
         raise ValueError(f"num_classes 仅支持 8 或 11，收到: {num_classes}")
     eff_max_dist_m = resolve_max_digit_dist_m(num_classes, max_digit_dist_m)
@@ -1306,6 +1773,15 @@ def generate_one_sample(
             rng=rng, bg_paths=bg_paths, prop_bank=prop_bank, mnist_bank=mnist_bank,
             width=width, height=height, max_rot_deg=max_rot_deg,
             max_digit_dist_m=eff_max_dist_m,
+            blank_disc_bank=blank_disc_bank,
+            use_homography=use_homography,
+            allow_wide_yaw=allow_wide_yaw,
+            roi_crop_top_px=roi_crop_top_px,
+            empty_ratio=empty_ratio,
+            prop_reuse_prob=prop_reuse_prob,
+            disc_interference_prob=disc_interference_prob,
+            interference_strength=interference_strength,
+            class_weights=class_weights,
         )
 
     if bg_paths:
@@ -1472,6 +1948,14 @@ def generate_dataset(
     mnist_dir: Optional[str] = None,
     allow_mnist_download: bool = True,
     max_digit_dist_m: Optional[float] = None,
+    use_homography: bool = False,
+    allow_wide_yaw: bool = False,
+    roi_crop_top_px: int = 0,
+    empty_ratio: float = 0.08,
+    prop_reuse_prob: float = 0.70,
+    disc_interference_prob: float = 0.60,
+    interference_strength: str = "random",
+    class_weights: Optional[Sequence[float]] = None,
 ) -> Dict[str, object]:
     """生成完整 Ultralytics 8 类或 11 类 YOLO 数据集与 Horizon OE PTQ 校准列表。"""
     if abs(max_rot_deg) > MAX_ROTATION_DEG:
@@ -1488,6 +1972,7 @@ def generate_dataset(
 
     bg_paths = load_image_paths(bg_dir)
     prop_bank = load_prop_bank(props_dir)
+    blank_disc_bank = load_blank_disc_bank(props_dir)
     mnist_bank = load_mnist_digits(mnist_dir, allow_download=allow_mnist_download) if mnist_dir else None
     mnist_total = sum(len(v) for v in mnist_bank.values()) if mnist_bank else 0
     rng = random.Random(seed)
@@ -1508,6 +1993,15 @@ def generate_dataset(
                 num_classes=num_classes,
                 mnist_bank=mnist_bank,
                 max_digit_dist_m=eff_max_digit_dist_m,
+                blank_disc_bank=blank_disc_bank,
+                use_homography=use_homography,
+                allow_wide_yaw=allow_wide_yaw,
+                roi_crop_top_px=roi_crop_top_px,
+                empty_ratio=empty_ratio,
+                prop_reuse_prob=prop_reuse_prob,
+                disc_interference_prob=disc_interference_prob,
+                interference_strength=interference_strength,
+                class_weights=class_weights,
             )
             stem = f"{split}_{i:05d}"
             img_path = root / "images" / split / f"{stem}.jpg"
@@ -1522,7 +2016,7 @@ def generate_dataset(
     names_yaml = "\n".join(f"  {i}: '{name}'" for i, name in enumerate(active_classes))
     dataset_yaml = root / "dataset.yaml"
     dataset_yaml.write_text(
-        f"# AIC 2026 Finals {num_classes}-class YOLO dataset (max_digit_dist_m={eff_max_digit_dist_m:.2f})\n"
+        f"# AIC 2026 Finals {num_classes}-class YOLO dataset (max_digit_dist_m={eff_max_digit_dist_m:.2f}, roi_crop_top_px={roi_crop_top_px})\n"
         f"# CRITICAL training hyperparameters: fliplr=0.0, flipud=0.0, degrees={min(max_rot_deg, MAX_ROTATION_DEG):.1f}\n"
         f"path: {root.as_posix()}\n"
         f"train: images/train\n"
@@ -1548,6 +2042,7 @@ def generate_dataset(
         "num_val": len(val_images),
         "total_boxes": total_boxes,
         "mnist_samples": mnist_total,
+        "blank_discs": len(blank_disc_bank),
         "dataset_yaml": str(dataset_yaml),
         "calib_list": str(calib_list),
         "calib_count": len(calib_sel),
@@ -1555,6 +2050,7 @@ def generate_dataset(
         "allow_vflip": ALLOW_VFLIP,
         "max_rot_deg": min(abs(max_rot_deg), MAX_ROTATION_DEG),
         "max_digit_dist_m": eff_max_digit_dist_m,
+        "roi_crop_top_px": roi_crop_top_px,
     }
 
 
@@ -1580,6 +2076,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=None,
         help="数字贴纸最远投影距离（m）；未指定时 --classes 8 默认 1.15m，--classes 11 默认 1.55m",
     )
+    ap.add_argument("--use-homography", action="store_true", help="启用标定地面单应矩阵投影")
+    ap.add_argument("--allow-wide-yaw", action="store_true", help="允许地面圆形贴纸平面内宽角旋转（严禁镜像翻转）")
+    ap.add_argument("--roi-crop-top", type=int, default=0, help="可选：顶部裁剪像素（如 160）并重映射为 640x640")
+    ap.add_argument("--empty-ratio", type=float, default=0.08, help="空道无数字负样本比例")
+    ap.add_argument("--prop-reuse-prob", type=float, default=0.70, help="复用 --props-dir 实拍贴纸的概率（防过拟合建议 0.15）")
+    ap.add_argument("--disc-interference-prob", type=float, default=0.60, help="蓝圆盘底噪/纹理/彩斑干扰概率")
+    ap.add_argument("--interference-strength", choices=["random", "heavy"], default="random", help="蓝圆盘干扰强度")
+    ap.add_argument("--class-weights", default=None, help="可选 8 类采样权重（如 1.35,1,1,1,1,1,1.35,1）")
     ap.add_argument("--calib-count", type=int, default=100, help="INT8 PTQ 校准集图片数量")
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=480)
@@ -1589,6 +2093,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     use_mnist_dir = None if args.no_mnist else (args.mnist_dir if args.classes == 8 or args.mnist_dir != "dataset_work/mnist_cache" else None)
+    parsed_cw = None
+    if args.class_weights:
+        parsed_cw = [float(x.strip()) for x in args.class_weights.split(",") if x.strip()]
     info = generate_dataset(
         out_dir=args.out,
         num_train=args.num_train,
@@ -1603,6 +2110,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         num_classes=args.classes,
         mnist_dir=use_mnist_dir,
         max_digit_dist_m=args.max_digit_dist_m,
+        use_homography=args.use_homography,
+        allow_wide_yaw=args.allow_wide_yaw,
+        roi_crop_top_px=args.roi_crop_top,
+        empty_ratio=args.empty_ratio,
+        prop_reuse_prob=args.prop_reuse_prob,
+        disc_interference_prob=args.disc_interference_prob,
+        interference_strength=args.interference_strength,
+        class_weights=parsed_cw,
     )
     if args.preview_out:
         cnames = DIGITS8_CLASSES if args.classes == 8 else CLASSES

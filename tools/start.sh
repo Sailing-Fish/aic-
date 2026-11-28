@@ -85,6 +85,27 @@ fi
 [[ -f "$PARAMS_FILE" ]] || die "参数文件不存在: $PARAMS_FILE（可选: finals_fork / finals_roundabout）"
 [[ -f "$WS/install/setup.bash" ]] || die "工作区未编译: $WS/install/setup.bash 不存在"
 
+LINE_FOLLOWER_BIN="$WS/install/line_follower/lib/line_follower/line_follower_node"
+if [[ -f "$LINE_FOLLOWER_BIN" ]]; then
+  STALE_SRC=""
+  for src_dir in \
+    "$WS/src/line_follow_ws/src/line_follower/src" \
+    "$WS/src/line_follow_ws/src/line_follower/include" \
+    "$WS/src/line_follower/src" \
+    "$WS/src/line_follower/include"; do
+    if [[ -d "$src_dir" ]]; then
+      found="$(find "$src_dir" -type f \( -name '*.cpp' -o -name '*.hpp' \) -newer "$LINE_FOLLOWER_BIN" -print -quit 2>/dev/null || true)"
+      if [[ -n "$found" ]]; then
+        STALE_SRC="$found"
+        break
+      fi
+    fi
+  done
+  if [[ -n "$STALE_SRC" ]]; then
+    die "检测到 C++ 源码比安装二进制更新 ($STALE_SRC -> $LINE_FOLLOWER_BIN)；切勿带着旧可执行文件发车，请先在 $WS 下重新编译安装 (colcon build --base-paths src/line_follow_ws/src --packages-select line_follower)"
+  fi
+fi
+
 if [[ $HEADLESS -eq 0 && -z "${DISPLAY:-}" ]]; then
   die "DISPLAY 为空。请在 MobaXterm 的 SSH 终端里直接运行（不要套 screen/nohup），或加 --headless"
 fi

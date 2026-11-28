@@ -259,6 +259,9 @@ private:
 
   std::vector<RawYoloBox> latest_raw_boxes_{};
   double latest_det_stamp_sec_{-1e9};
+  double latest_det_capture_sec_{-1e9};
+  uint64_t latest_det_seq_{0};
+  uint64_t consumed_det_seq_{0};
 
   // Red obstacle source attribution log state (YOLO vs CV vs BOTH)
   RedDetectionSource last_red_src_state_{RedDetectionSource::NONE};
