@@ -129,17 +129,17 @@ struct BevDwaConfig
   double safe_len_weight{4.2};
   double heading_weight{1.8};
   double wrong_way_penalty{4.5};
-  double branch_bias_weight{1.2};
-  double smooth_weight{0.12};
+  double branch_bias_weight{6.5};
+  double smooth_weight{0.35};
   double center_bias_weight{0.25};
 
-  // Fork & straight bonus digit strategy
+  // Fork & straight bonus digit strategy (debounced & non-twitchy)
   int fork_outer_branch{-1};
   double fork_outer_time_penalty_s{3.0};
   int fork_min_votes{2};
   double digit_min_conf{0.50};
-  double digit_bonus_weight{0.90};
-  double digit_repel_weight{2.50};
+  double digit_bonus_weight{0.45};
+  double digit_repel_weight{0.95};
   bool allow_dual_digit_cover{false};
   double max_digit_lateral_shift_m{0.12};
 
@@ -357,13 +357,26 @@ private:
   BevDwaConfig config_{};
   PreFlightStatus preflight_{};
 
-  // Fused BEV memory & distance fields
+  // Fused BEV memory & signed/unsigned distance fields
   std::array<uint8_t, kBevCells> mem_grid_{};
   std::array<float, kBevCells> mem_age_{};
   std::array<uint8_t, kBevCells> fused_grid_{};
   std::array<float, kBevCells> dist_wall_m_{};
+  std::array<float, kBevCells> dist_free_m_{};
   std::array<float, kBevCells> dist_cone_m_{};
   std::array<float, kBevCells> dist_no_entry_m_{};
+
+  // Straight digit multi-frame lock (prevents 60ms YOLO flicker twitching)
+  std::vector<GroundDetection> filter_and_lock_straight_digits(
+    const std::vector<GroundDetection> & valid_digits,
+    bool allow_digit_bonus);
+  int locked_digit_val_{0};
+  double locked_digit_y_{0.0};
+  double locked_digit_d_{0.0};
+  int locked_digit_hits_{0};
+  int locked_digit_misses_{0};
+  int cand_digit_val_{0};
+  int cand_digit_streak_{0};
 
   // Pose & self-zeroing heading compass
   bool has_prev_pose_{false};

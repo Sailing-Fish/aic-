@@ -142,26 +142,26 @@ line_follower_node:
     odom_max_age_sec: 0.20
     yellow_require_odom_still: true
     yellow_max_hold_sec: 3.0
-    # 死区穿越定值反拖急停（越过 ~0.09 m/s 电机死区，v_odom<=0.04 瞬间撤刹）
+    # 死区穿越定值反拖急停（越过 ~0.09 m/s 电机死区，延长至 0.45s 越过实测 ~0.30s 底盘响应滞后）
     yellow_brake_speed: 0.24
     yellow_brake_period_s: 0.0
     yellow_brake_pulse_s: 0.0
     yellow_brake_release_speed: 0.06
-    yellow_brake_max_time_s: 0.28
+    yellow_brake_max_time_s: 0.45
 
-    # FinishGuard & 两段式刹车距离律（终点改由视觉封口 + 累计转角>=2.2rad 双重确认，免疫随机黄线与±20%里程偏差）
+    # FinishGuard & 两段式刹车距离律（提前 0.85m 降到 0.18m/s 慢进急停区，杜绝 0.42m/s 满速冲线）
     odom_scale_factor: 1.0
     finish_min_dist_m: 6.5
     finish_force_dist_m: 11.5
     finish_min_cum_yaw_rad: 2.2
-    yellow_pre_brake_dist_m: 0.72
-    yellow_creep_speed_mps: 0.22
+    yellow_pre_brake_dist_m: 0.85
+    yellow_creep_speed_mps: 0.18
     yellow_final_ramp_dist_m: 0.35
     yellow_final_creep_speed_mps: 0.18
-    yellow_brake_decel_mps2: 0.85
+    yellow_brake_decel_mps2: 1.45
     voltage_decel_slope: 0.0
     yellow_control_latency_s: 0.09
-    yellow_bumper_margin_m: 0.09
+    yellow_bumper_margin_m: 0.10
     yellow_rearm_dist_m: 0.25
     enable_sqrt_brake_envelope: true
     enable_closed_loop_brake: true
@@ -236,7 +236,7 @@ line_follower_node:
 cmd_mux_node:
   ros__parameters:
     stop_topic: /cmd_vel_stop
-    stop_timeout: 0.5
+    stop_timeout: 0.15
     low_topic: /cmd_vel_follower
     low_timeout: 0.35
     output_topic: /cmd_vel

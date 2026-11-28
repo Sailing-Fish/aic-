@@ -206,7 +206,7 @@ void BevMapper::build_live_grid(
     }
   }
 
-  // 2) Fast LUT projection of FREE (road_span) and WALL_BLUE (blue_mask) into 160x160 BEV!
+  // 2) Fast LUT projection of FREE (road_span) and WALL_BLUE (blue_mask + outer black border) into 160x160 BEV!
   for (int i = 0; i < kBevCells; ++i) {
     const size_t idx = static_cast<size_t>(i);
     const int u = lut_u_[idx];
@@ -220,7 +220,9 @@ void BevMapper::build_live_grid(
     } else if (road_span.at<uint8_t>(vy, u) > 0) {
       out_grid[idx] = BEV_FREE;
     } else {
-      out_grid[idx] = BEV_UNKNOWN;
+      // Dark pixels strictly OUTSIDE road_span are the black track border line (never interior digits!)
+      const int l_val = static_cast<int>(lower_lab.at<cv::Vec3b>(vy, u)[0]);
+      out_grid[idx] = (l_val < 75) ? BEV_WALL_BLUE : BEV_UNKNOWN;
     }
   }
 

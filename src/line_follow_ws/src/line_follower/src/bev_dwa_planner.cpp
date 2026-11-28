@@ -129,8 +129,17 @@ void BevDwaPlanner::reset(double now_sec, const VehiclePose2D & start_pose)
   mem_age_.fill(10.0f);
   fused_grid_.fill(BEV_UNKNOWN);
   dist_wall_m_.fill(kInfDist);
+  dist_free_m_.fill(kInfDist);
   dist_cone_m_.fill(kInfDist);
   dist_no_entry_m_.fill(kInfDist);
+
+  locked_digit_val_ = 0;
+  locked_digit_y_ = 0.0;
+  locked_digit_d_ = 0.0;
+  locked_digit_hits_ = 0;
+  locked_digit_misses_ = 0;
+  cand_digit_val_ = 0;
+  cand_digit_streak_ = 0;
 
   has_prev_pose_ = start_pose.valid;
   prev_pose_ = start_pose;
@@ -673,6 +682,7 @@ void BevDwaPlanner::filter_connected_free_space()
 void BevDwaPlanner::compute_distance_fields()
 {
   compute_chamfer_dt(fused_grid_, BEV_WALL_BLUE, dist_wall_m_);
+  compute_chamfer_dt(fused_grid_, BEV_FREE, dist_free_m_);
   compute_chamfer_dt(fused_grid_, BEV_OBS_CONE, dist_cone_m_);
   compute_chamfer_dt(fused_grid_, BEV_OBS_NO_ENTRY, dist_no_entry_m_);
 }
@@ -876,16 +886,20 @@ void BevDwaPlanner::update_heading_and_topology(
         }
         break;
       case TopologyPhase::FORK_RIGHT_ENTER:
-        // Transition to vertical stem once rotated ~55 deg right and entered single lane
-        if ((err_north < 0.65 && width_m < 0.58) || phase_arc_m_ > 0.85) {
+        // Transition to vertical stem only after truly rotating North (<-64 deg) AND traveling >= 0.40m
+        if ((err_north < 0.45 && width_m < 0.56 && phase_arc_m_ >= 0.40) || phase_arc_m_ > 0.95) {
           phase_ = TopologyPhase::FORK_RIGHT_STEM;
           committed_branch_ = 0;
           phase_arc_m_ = 0.0;
         }
         break;
       case TopologyPhase::FORK_RIGHT_STEM:
-        // T-JUNCTION DETECTION: heading North (-90 deg) and approaching top horizontal bar
-        if (err_north < 0.80 && (t_junction_right_open || straight_free_len_m < 0.62)) {
+        // T-JUNCTION DETECTION: must have driven >= 0.25m up vertical stem facing North (< 29 deg)
+        // AND genuinely see top horizontal bar (never false-trigger on L=0 wall-graze!)
+        if (err_north < 0.50 && phase_arc_m_ >= 0.25 &&
+          ((t_junction_right_open && straight_free_len_m < 0.68) ||
+          (straight_free_len_m >= 0.08 && straight_free_len_m < 0.55)))
+        {
           phase_ = TopologyPhase::FORK_T_RIGHT_TURN;
           phase_arc_m_ = 0.0;
         }
@@ -959,6 +973,133 @@ void BevDwaPlanner::update_heading_and_topology(
   }
 }
 
+std::vector<GroundDetection> BevDwaPlanner::filter_and_lock_straight_digits(
+  const std::vector<GroundDetection> & valid_digits,
+  bool allow_digit_bonus)
+{
+  std::vector<GroundDetection> out;
+  if (!allow_digit_bonus) {
+    locked_digit_val_ = 0;
+    locked_digit_hits_ = 0;
+    locked_digit_misses_ = 0;
+    cand_digit_val_ = 0;
+    cand_digit_streak_ = 0;
+    return out;
+  }
+
+  // Pick highest valid in-range straight digit this frame
+  int best_val = 0;
+  double best_y = 0.0;
+  double best_d = 0.0;
+  for (const auto & gd : valid_digits) {
+    if (gd.type != SemanticObjectType::BONUS_DIGIT || gd.digit < 1 || gd.digit > 8) {
+      continue;
+    }
+    if (gd.confidence < config_.digit_min_conf) {
+      continue;
+    }
+    if (gd.d_bumper_m < 0.18 || gd.d_bumper_m > 0.90) {
+      continue;
+    }
+    if (std::abs(gd.y_lat_m) > config_.max_digit_lateral_shift_m + 0.06) {
+      continue;
+    }
+    if (gd.digit > best_val) {
+      best_val = gd.digit;
+      best_y = gd.y_lat_m;
+      best_d = gd.d_bumper_m;
+    }
+  }
+
+  // Multi-frame lock: require 3 consecutive frames to acquire; once locked, NEVER jump
+  // to a lower same-row digit when YOLO flickers for 1-5 frames!
+  if (locked_digit_val_ > 0) {
+    bool seen_locked = false;
+    for (const auto & gd : valid_digits) {
+      if (gd.type == SemanticObjectType::BONUS_DIGIT && gd.digit == locked_digit_val_ &&
+        gd.confidence >= config_.digit_min_conf && gd.d_bumper_m >= 0.14 && gd.d_bumper_m <= 0.95)
+      {
+        locked_digit_y_ = 0.65 * locked_digit_y_ + 0.35 * gd.y_lat_m;
+        locked_digit_d_ = gd.d_bumper_m;
+        locked_digit_misses_ = 0;
+        locked_digit_hits_++;
+        seen_locked = true;
+        break;
+      }
+    }
+    if (!seen_locked) {
+      // Only promote to a strictly HIGHER digit if seen 3 frames in a row
+      if (best_val > locked_digit_val_) {
+        if (best_val == cand_digit_val_) {
+          cand_digit_streak_++;
+        } else {
+          cand_digit_val_ = best_val;
+          cand_digit_streak_ = 1;
+        }
+        if (cand_digit_streak_ >= 3) {
+          locked_digit_val_ = best_val;
+          locked_digit_y_ = best_y;
+          locked_digit_d_ = best_d;
+          locked_digit_hits_ = 3;
+          locked_digit_misses_ = 0;
+          cand_digit_val_ = 0;
+          cand_digit_streak_ = 0;
+          seen_locked = true;
+        }
+      }
+      if (!seen_locked) {
+        locked_digit_misses_++;
+        if (locked_digit_misses_ >= 6 || locked_digit_d_ < 0.16) {
+          locked_digit_val_ = 0;
+          locked_digit_hits_ = 0;
+          locked_digit_misses_ = 0;
+        }
+      }
+    }
+  } else if (best_val > 0) {
+    if (best_val == cand_digit_val_) {
+      cand_digit_streak_++;
+    } else {
+      cand_digit_val_ = best_val;
+      cand_digit_streak_ = 1;
+    }
+    if (cand_digit_streak_ >= 3) {
+      locked_digit_val_ = best_val;
+      locked_digit_y_ = best_y;
+      locked_digit_d_ = best_d;
+      locked_digit_hits_ = 3;
+      locked_digit_misses_ = 0;
+      cand_digit_val_ = 0;
+      cand_digit_streak_ = 0;
+    }
+  } else {
+    cand_digit_val_ = 0;
+    cand_digit_streak_ = 0;
+  }
+
+  if (locked_digit_val_ > 0) {
+    GroundDetection locked{};
+    locked.type = SemanticObjectType::BONUS_DIGIT;
+    locked.digit = locked_digit_val_;
+    locked.confidence = 0.90;
+    locked.d_bumper_m = locked_digit_d_;
+    locked.y_lat_m = locked_digit_y_;
+    out.push_back(locked);
+
+    // Also pass through any genuinely visible smaller same-row digit for anti-dual-cover
+    for (const auto & gd : valid_digits) {
+      if (gd.type == SemanticObjectType::BONUS_DIGIT &&
+        gd.digit > 0 && gd.digit < locked_digit_val_ &&
+        gd.confidence >= config_.digit_min_conf &&
+        std::abs(gd.d_bumper_m - locked_digit_d_) <= 0.22)
+      {
+        out.push_back(gd);
+      }
+    }
+  }
+  return out;
+}
+
 void BevDwaPlanner::evaluate_arc(
   double x0,
   double y0,
@@ -1001,16 +1142,21 @@ void BevDwaPlanner::evaluate_arc(
   double min_wall_clr = 1.0;
   double min_obs_clr = 1.0;
   double soft_cost_sum = 0.0;
-  int soft_steps = 0;
+  int eval_steps = 0;
+  int recovery_free_steps = 0;
   double y_at_mid = y0;
   bool mid_captured = false;
   bool hit_hard = false;
 
-  // Evaluate exact 3-circle baseline clearances at starting pose (x0, y0, th0)
-  // so the near-wall recovery guard compares identical 3-circle geometry step-to-step!
+  // Signed Distance Field (SDF) evaluation for 3-circle chassis:
+  //   Inside white road (BEV_FREE):      dw = +dist_wall_m_ >= 0
+  //   Inside blue wall  (BEV_WALL_BLUE): dw = -dist_free_m_ <= 0 (smooth gradient back to white road!)
   auto eval_body_dists = [&](double px, double py, double pth,
-                             double & dw, double & dc, double & dne, bool & out_front) {
+                             double & dw, double & dw_mean,
+                             double & dc, double & dne, bool & out_front) {
     dw = 1.0;
+    double w_acc = 0.0;
+    int w_cnt = 0;
     dc = 1.0;
     dne = 1.0;
     out_front = false;
@@ -1027,18 +1173,26 @@ void BevDwaPlanner::evaluate_arc(
         continue;
       }
       const size_t idx = static_cast<size_t>(r * kBevCols + c);
-      if (b > 0 && fused_grid_[idx] == BEV_UNKNOWN && bx < 0.02) {
+      const uint8_t cell = fused_grid_[idx];
+      if (b > 0 && cell == BEV_UNKNOWN && bx < 0.02) {
         continue;
       }
-      dw = std::min(dw, static_cast<double>(dist_wall_m_[idx]));
+      const double signed_w = (cell == BEV_WALL_BLUE) ?
+        -static_cast<double>(dist_free_m_[idx]) :
+        static_cast<double>(dist_wall_m_[idx]);
+      dw = std::min(dw, signed_w);
+      w_acc += signed_w;
+      w_cnt++;
       dc = std::min(dc, static_cast<double>(dist_cone_m_[idx]));
       dne = std::min(dne, static_cast<double>(dist_no_entry_m_[idx]));
     }
+    dw_mean = (w_cnt > 0) ? (w_acc / static_cast<double>(w_cnt)) : dw;
   };
 
-  double prev_wall_d = 1.0, prev_cone_d = 1.0, prev_ne_d = 1.0;
+  double prev_wall_d = 1.0, prev_wall_mean = 1.0, prev_cone_d = 1.0, prev_ne_d = 1.0;
   bool dummy_out = false;
-  eval_body_dists(x0, y0, th0, prev_wall_d, prev_cone_d, prev_ne_d, dummy_out);
+  eval_body_dists(x0, y0, th0, prev_wall_d, prev_wall_mean, prev_cone_d, prev_ne_d, dummy_out);
+  (void)prev_wall_mean;
 
   // Digit bonus & anti-double-cover tracking along this arc
   double digit_bonus_score = 0.0;
@@ -1063,10 +1217,11 @@ void BevDwaPlanner::evaluate_arc(
     }
 
     double step_wall_d = 1.0;
+    double step_wall_mean = 1.0;
     double step_cone_d = 1.0;
     double step_ne_d = 1.0;
     bool out_of_bev = false;
-    eval_body_dists(x, y, th, step_wall_d, step_cone_d, step_ne_d, out_of_bev);
+    eval_body_dists(x, y, th, step_wall_d, step_wall_mean, step_cone_d, step_ne_d, out_of_bev);
 
     if (out_of_bev) {
       break;
@@ -1074,54 +1229,73 @@ void BevDwaPlanner::evaluate_arc(
 
     const double obs_d = std::min(step_cone_d, step_ne_d);
     const bool wall_bad = (step_wall_d < wall_hard) &&
-      !(step <= 7 && step_wall_d >= prev_wall_d - 0.002 && step_wall_d >= r_car - 0.025);
+      !(step <= 6 && step_wall_d >= prev_wall_d - 0.002 && step_wall_d >= r_car - 0.035);
     const bool cone_bad = (step_cone_d < cone_hard) &&
-      !(step <= 7 && step_cone_d >= prev_cone_d - 0.002 && step_cone_d >= r_car - 0.025);
+      !(step <= 6 && step_cone_d >= prev_cone_d - 0.002 && step_cone_d >= r_car - 0.030);
     const bool ne_bad = (step_ne_d < ne_hard) &&
-      !(step <= 7 && step_ne_d >= prev_ne_d - 0.002 && step_ne_d >= r_car - 0.025);
+      !(step <= 6 && step_ne_d >= prev_ne_d - 0.002 && step_ne_d >= r_car - 0.030);
     prev_wall_d = step_wall_d;
     prev_cone_d = step_cone_d;
     prev_ne_d = step_ne_d;
 
-    if (wall_bad || cone_bad || ne_bad) {
-      // Track tightest clearance at failure for Level-1 soft-clearance fallback
-      if (step == 1) {
-        min_wall_clr = step_wall_d - r_car;
-        min_obs_clr = obs_d - r_car;
-      }
+    if (!hit_hard && (wall_bad || cone_bad || ne_bad)) {
       hit_hard = true;
-      break;
+      // If the arc already ran cleanly >= 0.15m in white road, stop at the boundary
+      // (a constant-curvature circle naturally hits the far wall on sharp bends/T-junctions!).
+      // Only when the car is ALREADY grazing/inside a wall (safe_len < 0.15m) do we keep
+      // rolling out full 0.85m through the Signed Distance Field to pull back onto white road!
+      if (safe_len >= 0.15) {
+        break;
+      }
     }
 
-    safe_len = static_cast<double>(step) * ds;
+    if (!hit_hard) {
+      safe_len = static_cast<double>(step) * ds;
+    } else if (step_wall_d >= wall_hard && step_cone_d >= cone_hard && step_ne_d >= ne_hard) {
+      recovery_free_steps++;
+    }
+
     min_wall_clr = std::min(min_wall_clr, step_wall_d - r_car);
     min_obs_clr = std::min(min_obs_clr, obs_d - r_car);
 
-    // Asymmetric penalty economics inside soft safety margins (+30s no_entry > +15s/s wall > +10s cone)
+    // Continuous asymmetric penalty across BOTH soft buffer AND full-horizon SDF penetration!
+    // Blend worst circle + 3-circle mean during wall penetration so 1-2cm rear overhang swing
+    // never vetoes a front-first recovery arc back into white road.
+    const double eff_wall_d = (step_wall_d < wall_hard) ?
+      (0.55 * step_wall_d + 0.45 * step_wall_mean) : step_wall_d;
     double step_pen = 0.0;
-    if (step_wall_d < wall_soft) {
-      const double frac = (wall_soft - step_wall_d) / std::max(0.01, wall_soft - wall_hard);
+    if (eff_wall_d < wall_hard) {
+      const double pen = (wall_hard - eff_wall_d) / 0.05;
+      step_pen += config_.wall_soft_weight * (1.2 + 2.8 * pen + 2.0 * pen * pen);
+    } else if (eff_wall_d < wall_soft) {
+      const double frac = (wall_soft - eff_wall_d) / std::max(0.01, wall_soft - wall_hard);
       step_pen += config_.wall_soft_weight * frac * frac;
     }
-    if (step_cone_d < cone_soft) {
+    if (step_cone_d < cone_hard) {
+      const double pen = (cone_hard - step_cone_d) / 0.05;
+      step_pen += config_.cone_soft_weight * (1.2 + 2.5 * pen + 1.8 * pen * pen);
+    } else if (step_cone_d < cone_soft) {
       const double frac = (cone_soft - step_cone_d) / std::max(0.01, cone_soft - cone_hard);
       step_pen += config_.cone_soft_weight * frac * frac;
     }
-    if (step_ne_d < ne_soft) {
+    if (step_ne_d < ne_hard) {
+      const double pen = (ne_hard - step_ne_d) / 0.05;
+      step_pen += config_.no_entry_soft_weight * (1.4 + 3.0 * pen + 2.2 * pen * pen);
+    } else if (step_ne_d < ne_soft) {
       const double frac = (ne_soft - step_ne_d) / std::max(0.01, ne_soft - ne_hard);
       step_pen += config_.no_entry_soft_weight * frac * frac;
     }
+
     soft_cost_sum += step_pen;
-    soft_steps++;
+    eval_steps++;
   }
 
-  // Straight Bonus Digit evaluation (attraction to max digit + anti-double-cover repulsion on smaller digit)
+  // Straight Bonus Digit evaluation (debounced by filter_and_lock_straight_digits!)
   if (allow_digit_bonus && !straight_digits.empty() && safe_len >= 0.35) {
     for (const auto & gd : straight_digits) {
       if (gd.d_bumper_m < 0.15 || gd.d_bumper_m > safe_len + 0.10) {
         continue;
       }
-      // Approximate arc lateral position y at d = gd.d_bumper_m
       const double d_eval = clamp_d(gd.d_bumper_m, 0.0, safe_len);
       const double y_arc = y0 + d_eval * std::sin(th0 + 0.5 * kappa * d_eval);
       const double lat_dist = std::abs(y_arc - gd.y_lat_m);
@@ -1138,7 +1312,6 @@ void BevDwaPlanner::evaluate_arc(
           }
         }
       } else if (!config_.allow_dual_digit_cover && gd.digit < highest_digit_val) {
-        // Repel smaller same-row digit so 19.1cm car doesn't straddle both!
         const double cover_thresh = r_car + 0.045;
         if (lat_dist < cover_thresh) {
           const double overlap = (cover_thresh - lat_dist) / cover_thresh;
@@ -1148,8 +1321,8 @@ void BevDwaPlanner::evaluate_arc(
     }
   }
 
-  const double mean_soft_pen = (soft_steps > 0) ?
-    (soft_cost_sum / static_cast<double>(soft_steps)) : 30.0;
+  const double mean_soft_pen = (eval_steps > 0) ?
+    (soft_cost_sum / static_cast<double>(eval_steps)) : 30.0;
 
   // Global heading alignment at arc end
   const double world_th_end = wrap_angle_rad(rel_yaw_rad_ + th);
@@ -1157,7 +1330,6 @@ void BevDwaPlanner::evaluate_arc(
   if (goal_yaw_active) {
     const double align = std::cos(wrap_angle_rad(world_th_end - goal_yaw));
     heading_term += config_.heading_weight * align;
-    // Strong wrong-way rejection (prevents turning left backwards at Fork S T-junction!)
     if (align < -0.15) {
       heading_term -= config_.wrong_way_penalty * (-align);
     }
@@ -1170,18 +1342,21 @@ void BevDwaPlanner::evaluate_arc(
   }
 
   // Fork entry lateral preference (-1 = left -> +y, +1 = right -> -y)
+  // Scale matches soft wall penalty so committed fork branch NEVER gets overruled by minor edge graze!
   double branch_term = 0.0;
   if (branch_bias != 0) {
     const double desired_y_sign = (branch_bias < 0) ? 1.0 : -1.0;
-    branch_term = config_.branch_bias_weight * clamp_d(y_at_mid * desired_y_sign, -0.35, 0.35);
+    const double y_blend = 0.55 * (mid_captured ? y_at_mid : y) + 0.45 * y;
+    branch_term = config_.branch_bias_weight * clamp_d(y_blend * desired_y_sign, -0.45, 0.45);
   }
 
-  // Smoothness & servo dynamic window penalty
+  // Smoothness penalty
   const double dkappa = kappa - prev_kappa_;
   const double smooth_pen = config_.smooth_weight * dkappa * dkappa;
 
-  // Mild preference for higher minimum wall clearance (naturally centers car on straight!)
-  const double clr_bonus = config_.center_bias_weight * clamp_d(min_wall_clr, -0.05, 0.14);
+  // Clearance + white-road recovery bonus (strongly guides grazing car back into BEV_FREE!)
+  const double rec_bonus = 0.20 * static_cast<double>(recovery_free_steps);
+  const double clr_bonus = config_.center_bias_weight * clamp_d(min_wall_clr, -0.25, 0.14) + rec_bonus;
 
   out_cand.safe_len_m = safe_len;
   out_cand.min_wall_clr_m = min_wall_clr;
@@ -1302,8 +1477,10 @@ BevDwaPlanResult BevDwaPlanner::step(
       reverse_yaw = kPi;
       break;
     case TopologyPhase::FORK_RIGHT_ENTER:
+      // Avoid premature apex-cutting on the first 0.20m out of the yellow stop line;
+      // branch_bias=+1 guides right cleanly, then North heading engages smoothly.
       goal_yaw = -0.5 * kPi;
-      goal_yaw_active = true;
+      goal_yaw_active = (phase_arc_m_ >= 0.20);
       forbid_reverse_yaw = true;
       reverse_yaw = 0.5 * kPi;
       branch_bias = +1;
@@ -1406,9 +1583,12 @@ BevDwaPlanResult BevDwaPlanner::step(
     (phase_ == TopologyPhase::FORK_T_RIGHT_TURN) ||
     (phase_ == TopologyPhase::RB1_ACTIVE) ||
     (phase_ == TopologyPhase::RB2_ACTIVE);
+  const bool yellow_near = yellow_ahead || (yellow_dist_valid && yellow_d_bumper_m < 0.95);
   const bool allow_digit_bonus =
-    (!yellow_ahead) && (!res.has_near_obstacle) && (!in_fork_or_t) &&
+    (!yellow_near) && (!res.has_near_obstacle) && (!in_fork_or_t) &&
     (config_.max_digit_lateral_shift_m > 0.01) && (width_m < 0.58);
+  const std::vector<GroundDetection> locked_digits =
+    filter_and_lock_straight_digits(valid_digits, allow_digit_bonus);
 
   // 5) Latency forward-prediction (Smith predictor, tau ~= 0.09s)
   const double v_meas = (pose.valid && std::isfinite(pose.linear_v)) ?
@@ -1422,6 +1602,8 @@ BevDwaPlanResult BevDwaPlanner::step(
   const double y0 = 0.5 * x0 * std::sin(th0);
 
   // 6) Roll out N physically feasible Ackermann arcs across REAL asymmetric [-kappa_R, +kappa_L]
+  //    Single unified SDF score selects BOTH normal cruise arcs AND smooth wall-recovery arcs
+  //    (zero hard-cutoff blindness, zero Level-1 tie-to-i=0 deadlock!).
   const int N = config_.num_arc_samples;
   res.candidates.resize(static_cast<size_t>(N));
 
@@ -1441,7 +1623,7 @@ BevDwaPlanResult BevDwaPlanner::step(
       x0, y0, th0, kappa,
       goal_yaw, goal_yaw_active,
       forbid_reverse_yaw, reverse_yaw,
-      branch_bias, valid_digits, allow_digit_bonus,
+      branch_bias, locked_digits, allow_digit_bonus,
       res.candidates[static_cast<size_t>(i)],
       hit_digit);
 
@@ -1453,26 +1635,6 @@ BevDwaPlanResult BevDwaPlanner::step(
       best_score = cand.score;
       best_idx = i;
       best_digit = hit_digit;
-    }
-  }
-
-  // Level-1 fallback: if no arc passes hard margin, pick maximum-clearance arc
-  // while STILL respecting Topology Compass heading (never turn backwards at a T-junction!).
-  if (!any_feasible) {
-    double best_clr = -1e9;
-    for (int i = 0; i < N; ++i) {
-      const auto & cand = res.candidates[static_cast<size_t>(i)];
-      double head_bonus = 0.0;
-      if (goal_yaw_active) {
-        const double th_proj = wrap_angle_rad(rel_yaw_rad_ + th0 + cand.kappa * 0.45);
-        head_bonus = 0.12 * std::cos(wrap_angle_rad(th_proj - goal_yaw));
-      }
-      const double comb_clr = std::min(cand.min_wall_clr_m, cand.min_obs_clr_m) +
-        0.5 * cand.safe_len_m + head_bonus;
-      if (comb_clr > best_clr) {
-        best_clr = comb_clr;
-        best_idx = i;
-      }
     }
   }
 

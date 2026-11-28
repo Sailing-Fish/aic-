@@ -1493,7 +1493,8 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       publish_debug_image(msg, frame_bgr, *result_opt, finals_overlay);
     }
 
-    publish_cmd_vel(0.0, 0.0, true);
+    // Standby uses /cmd_vel_follower=0 (never locks /cmd_vel_stop for 0.5s on start!)
+    publish_cmd_vel(0.0, 0.0, false);
     return;
   }
 
@@ -1720,17 +1721,17 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
             timeout ? "timeout" : "zero_cutoff",
             finish_guard_.effective_brake_decel_mps2(now_sec));
           linear_speed = 0.0;
-          publish_stop_cmd = true;
+          publish_stop_cmd = sm_state.permanent_stop;
         }
       } else {
         linear_speed = 0.0;
-        publish_stop_cmd = true;
+        publish_stop_cmd = sm_state.permanent_stop;
       }
     } else if (line_detected_raw || bev_plan.chosen_safe_len_m > 0.05 || bev_plan.escape_active) {
       current_state = TrackState::TRACKING;
       linear_speed = bev_plan.linear_speed_mps;
       yaw_rate = bev_plan.yaw_rate_rps;
-      publish_stop_cmd = (std::abs(linear_speed) <= 1e-6 && std::abs(yaw_rate) <= 1e-6);
+      publish_stop_cmd = false;
     } else {
       current_state = step_events.base_state;
       const MotionCommand lcmd = motion_controller_.compute_lost_line_command(

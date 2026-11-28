@@ -146,20 +146,20 @@ line_follower_node:
     yellow_brake_period_s: 0.0
     yellow_brake_pulse_s: 0.0
     yellow_brake_release_speed: 0.06
-    yellow_brake_max_time_s: 0.28
+    yellow_brake_max_time_s: 0.45
 
     odom_scale_factor: 1.0
     finish_min_dist_m: 6.5
     finish_force_dist_m: 12.0
     finish_min_cum_yaw_rad: 2.2
-    yellow_pre_brake_dist_m: 0.72
-    yellow_creep_speed_mps: 0.22
+    yellow_pre_brake_dist_m: 0.85
+    yellow_creep_speed_mps: 0.18
     yellow_final_ramp_dist_m: 0.35
     yellow_final_creep_speed_mps: 0.18
-    yellow_brake_decel_mps2: 0.85
+    yellow_brake_decel_mps2: 1.45
     voltage_decel_slope: 0.0
     yellow_control_latency_s: 0.09
-    yellow_bumper_margin_m: 0.09
+    yellow_bumper_margin_m: 0.10
     yellow_rearm_dist_m: 0.25
     enable_sqrt_brake_envelope: true
     enable_closed_loop_brake: true
@@ -233,7 +233,7 @@ line_follower_node:
 cmd_mux_node:
   ros__parameters:
     stop_topic: /cmd_vel_stop
-    stop_timeout: 0.5
+    stop_timeout: 0.15
     low_topic: /cmd_vel_follower
     low_timeout: 0.35
     output_topic: /cmd_vel

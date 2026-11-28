@@ -1632,6 +1632,67 @@ void test_bev_dwa_first_principles_and_execution()
     CHECK(BevDwaPlanner::metric_to_cell(0.33, 0.0, sr, sc));
     CHECK(planner.fused_grid()[static_cast<size_t>(sr * kBevCols + sc)] == BEV_FREE);
   }
+
+  // 6) Real-car regression tests (from 2026-11-28 fork_151853 & rb_152314):
+  //    a) Half-car deep in right blue wall MUST steer LEFT back onto white road (NEVER tie-lock k=-2.80!)
+  //    b) Single-frame YOLO digit flicker (6+5 -> 5 -> 6+5) MUST NOT cause 60ms left-right twitching!
+  //    c) Fork right branch (+1) with car angled +14 deg left MUST still steer RIGHT (not overruled by soft wall)!
+  //    d) Early wall-graze 33cm past fork yellow MUST NOT prematurely jump to FORK_T_RIGHT_TURN!
+  {
+    BevDwaConfig cfg{};
+    cfg.track_mode = "roundabout";
+    BevDwaPlanner planner(cfg);
+    planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.20, 0.0, 0.0});
+
+    // (a) White road is shifted to the LEFT (y in [+0.05, +0.48]), car is deep in right blue wall (y=0)!
+    std::array<uint8_t, kBevCells> off_right{};
+    off_right.fill(BEV_WALL_BLUE);
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        if (d >= -0.30 && d <= 1.20 && y >= 0.05 && y <= 0.48) {
+          off_right[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
+        }
+      }
+    }
+    const BevDwaPlanResult rec = planner.step(
+      off_right, VehiclePose2D{true, 0.02, 0.0, 0.0, 0.14, 0.0, 0.1}, {}, false, false, 0.0, 1e9, false, 0.1);
+    CHECK(rec.chosen_kappa > 0.5);  // Strongly steers LEFT back to white road! NEVER -2.80!
+
+    // (b) Digit flicker immunity on straight road
+    planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.40, 0.0, 0.0});
+    auto straight = make_straight_grid(0.215);
+    GroundDetection d6{SemanticObjectType::BONUS_DIGIT, 6, 0.90, 0.55, +0.09, 0.04, 0.04, 1, 0.1};
+    GroundDetection d5{SemanticObjectType::BONUS_DIGIT, 5, 0.90, 0.55, -0.09, 0.04, 0.04, 2, 0.1};
+    // Lock onto digit 6 over 4 frames
+    for (int f = 1; f <= 4; ++f) {
+      planner.step(straight, VehiclePose2D{true, 0.01 * f, 0.0, 0.0, 0.40, 0.0, 0.03 * f},
+        {d6, d5}, false, false, 0.0, 1e9, false, 0.03 * f);
+    }
+    // Flicker frame: digit 6 drops out for 2 frames, only right digit 5 remains -> MUST NOT swing right!
+    const BevDwaPlanResult flk = planner.step(
+      straight, VehiclePose2D{true, 0.05, 0.0, 0.0, 0.40, 0.0, 0.15},
+      {d5}, false, false, 0.0, 1e9, false, 0.15);
+    CHECK(flk.chosen_kappa >= -0.05);  // Holds leftward/straight lock, ZERO 60ms right snap!
+
+    // (d) Fork premature T-junction anti-jump guard: 0.35m past fork with L=0 graze MUST stay in FORK_RIGHT_ENTER
+    BevDwaConfig fcfg{};
+    fcfg.track_mode = "fork";
+    BevDwaPlanner fplanner(fcfg);
+    fplanner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+    GroundDetection fr5{SemanticObjectType::BONUS_DIGIT, 5, 0.90, 0.55, -0.10, 0.04, 0.04, 1, 1.0};
+    fplanner.update_fork_votes({fr5}, true);
+    fplanner.update_fork_votes({fr5}, true);
+    CHECK(fplanner.finalize_fork_decision() == +1);
+    CHECK(fplanner.phase() == TopologyPhase::FORK_RIGHT_ENTER);
+    // Move only 0.33m turning to -53 deg while grazing wall -> must NOT jump to FORK_T_RIGHT_TURN!
+    for (int step_i = 1; step_i <= 6; ++step_i) {
+      VehiclePose2D pp{true, 0.055 * step_i, -0.02 * step_i, -0.155 * step_i, 0.14, -0.5, 0.1 * step_i};
+      fplanner.step(off_right, pp, {}, false, false, 0.0, 1e9, false, 0.1 * step_i);
+    }
+    CHECK(fplanner.phase() != TopologyPhase::FORK_T_RIGHT_TURN);
+  }
 }
 
 }  // namespace
