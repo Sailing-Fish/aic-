@@ -14,7 +14,8 @@ line_follower_node:
     segment_topic: "line_follower/segment"
     voltage_topic: "/PowerVoltage"
 
-    # 决赛模式总开关（lane_seg_mode 支持 relative_border / hybrid / legacy_hsv）
+    # 决赛模式总开关（bev_planner_mode 支持 bev_dwa / legacy）
+    bev_planner_mode: "bev_dwa"
     track_mode: "fork"
     lane_seg_mode: "relative_border"
     yellow_detect_mode: "geometric_cv"
@@ -26,12 +27,26 @@ line_follower_node:
     enable_risk_aware_decision: true
     enable_brake_adaptation: true
 
-    # 正交巡线控制与 ROI
+    # 正交巡线控制与 BEV 安全走廊/弯道弧度纯跟踪参数
     target_speed: 0.44
     max_speed: 0.85
     min_speed: 0.0
     max_yaw_rate: 1.6
     speed_gain_damping: 0.45
+    bev_wheelbase_m: 0.1395
+    bev_kappa_max_left: 2.38
+    bev_kappa_max_right: 2.80
+    bev_control_latency_s: 0.15
+    bev_imu_yaw_kp: 0.35
+    bev_steer_launch_v_floor: 0.16
+    bev_max_lat_accel_mps2: 0.42
+    bev_memory_ttl_sec: 0.45
+    bev_rollout_horizon_m: 0.85
+    bev_lookahead_min_m: 0.28
+    bev_lookahead_time_s: 0.65
+    bev_curv_ff_gain: 0.55
+    bev_stanley_k_y: 1.20
+    enable_anti_stall_escape: true
     roi_top_ratio: 0.68
     roi_bottom_ratio: 0.18
     yellow_roi_bottom_ratio: 0.0
@@ -89,10 +104,10 @@ line_follower_node:
 
     # 几何黄线 + 停稳 + FinishGuard
     use_yellow_filter: true
-    yellow_h_low: 20
-    yellow_h_high: 40
-    yellow_s_min: 80
-    yellow_v_min: 120
+    yellow_h_low: 16
+    yellow_h_high: 42
+    yellow_s_min: 52
+    yellow_v_min: 48
     yellow_min_aspect_ratio: 2.5
     yellow_min_width_ratio: 0.20
     yellow_min_area_px: 120.0
@@ -167,7 +182,7 @@ line_follower_node:
     default_lane_width_m: 0.430
     border_margin_m: 0.025
     cone_margin_m: 0.025
-    no_entry_margin_m: 0.030
+    no_entry_margin_m: 0.035
     obstacle_lookahead_m: 1.10
     obstacle_steer_horizon_m: 0.65
     obstacle_curve_min_horizon_m: 0.45
@@ -178,9 +193,9 @@ line_follower_node:
     blocked_creep_speed_mps: 0.12
     fork_outer_branch: -1
     fork_outer_time_penalty_s: 3.0
-    fork_min_votes: 3
+    fork_min_votes: 2
     fork_commit_dist_m: 1.10
-    digit_min_conf: 0.55
+    digit_min_conf: 0.35
     digit_min_frames: 2
     digit_lookahead_max_m: 1.15
     max_digit_lateral_shift_m: 0.12

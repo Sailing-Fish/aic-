@@ -43,3 +43,6 @@ weights/
 
 # 本地白盒交互式可视化手册（按需生成，不入库）
 finals_whitebox_guide.html
+
+# 本地实车调试压缩包（体积大，不入库）
+debug/

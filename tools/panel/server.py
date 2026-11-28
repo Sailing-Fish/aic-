@@ -1448,6 +1448,9 @@ def empty_bev_state():
         'mode': '',
         'branch': 0,
         'kappa': None,
+        'road_kappa': None,
+        'lat_err_m': None,
+        'lookahead_m': None,
         'safe_len_m': None,
         'score': None,
         'speed_mps': None,
@@ -1493,7 +1496,8 @@ def parse_bev_kv(kv):
         return _parse_metric_num(raw, digits=digits)
 
     for key, field in (
-        ('k', 'kappa'), ('L', 'safe_len_m'), ('score', 'score'),
+        ('k', 'kappa'), ('kr', 'road_kappa'), ('ey', 'lat_err_m'), ('ld', 'lookahead_m'),
+        ('L', 'safe_len_m'), ('score', 'score'),
         ('v', 'speed_mps'), ('yaw', 'yaw_rps'), ('cap', 'speed_cap_mps'),
         ('goal', 'goal_yaw_deg'), ('th', 'rel_yaw_deg'), ('rel', 'rel_yaw_deg'),
         ('w_bev', 'lane_width_m'), ('s', 'arc_deg'),

@@ -1177,14 +1177,14 @@
                 </div>
               </div>
               <div class="bev-cell">
-                <div class="bev-cell-lbl">选中轨迹</div>
-                <div class="bev-kv"><span>κ</span><b id="bevHudKappa">--</b></div>
-                <div class="bev-kv"><span>安全长度 L</span><b id="bevHudSafe">--</b></div>
-                <div class="bev-kv"><span>速度帽 / 得分</span><b id="bevHudCap">--</b></div>
-                <div class="bev-kv"><span>可行弧</span><b id="bevHudArc">--</b></div>
+                <div class="bev-cell-lbl">安全走廊与弧度控制</div>
+                <div class="bev-kv"><span>输出 κ / 弯道 κr</span><b id="bevHudKappa">--</b></div>
+                <div class="bev-kv"><span>前瞻 Ld / 偏离 ey</span><b id="bevHudSafe">--</b></div>
+                <div class="bev-kv"><span>速度帽 / 安全长</span><b id="bevHudCap">--</b></div>
+                <div class="bev-kv"><span>有效走廊切片</span><b id="bevHudArc">--</b></div>
               </div>
               <div class="bev-cell">
-                <div class="bev-cell-lbl">代价分解 (选中弧)</div>
+                <div class="bev-cell-lbl">控制项分解 (安全走廊)</div>
                 <div class="cost-bars" id="bevCostBars"><span class="bev-empty">等待摘要…</span></div>
               </div>
               <div class="bev-cell">
@@ -1734,7 +1734,10 @@ function renderMilestoneStrip(d, milestones){
   strip.innerHTML = pills.join('');
 }
 
-const COST_LABELS = {sa:'安全长度', so:'软惩罚', hd:'航向', br:'分支', di:'数字', cl:'净空', sm:'平滑'};
+const COST_LABELS = {
+  kr:'弯道弧度', pp:'纯跟踪', lt:'横向拉回', ff:'弧度前馈', dg:'数字偏置', ey:'横向偏离', dk:'曲率变化',
+  sa:'安全长度', so:'软惩罚', hd:'航向', br:'分支', di:'数字', cl:'净空', sm:'平滑'
+};
 function numOrDash(v, digits){
   return (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(digits === undefined ? 2 : digits) : '--';
 }
@@ -1753,9 +1756,13 @@ function renderBevHud(d){
   const arrow = $('bevCompassArrow');
   if(arrow) arrow.setAttribute('transform', `rotate(${Number.isFinite(b.rel_yaw_deg) ? -b.rel_yaw_deg : 0} 32 32)`);
 
-  $('bevHudKappa').textContent = numOrDash(b.kappa, 2) + (Number.isFinite(b.kappa) ? ' /m' : '');
-  $('bevHudSafe').textContent = numOrDash(b.safe_len_m, 2) + (Number.isFinite(b.safe_len_m) ? ' m' : '');
-  $('bevHudCap').textContent = numOrDash(b.speed_cap_mps, 2) + ' / ' + numOrDash(b.score, 2);
+  $('bevHudKappa').textContent = Number.isFinite(b.road_kappa)
+    ? `${numOrDash(b.kappa, 2)} / ${numOrDash(b.road_kappa, 2)}`
+    : (numOrDash(b.kappa, 2) + (Number.isFinite(b.kappa) ? ' /m' : ''));
+  $('bevHudSafe').textContent = Number.isFinite(b.lookahead_m)
+    ? `${numOrDash(b.lookahead_m, 2)}m / ${numOrDash(b.lat_err_m, 3)}m`
+    : (numOrDash(b.safe_len_m, 2) + (Number.isFinite(b.safe_len_m) ? ' m' : ''));
+  $('bevHudCap').textContent = numOrDash(b.speed_cap_mps, 2) + ' / ' + numOrDash(b.safe_len_m, 2) + 'm';
   $('bevHudArc').textContent = (Number.isFinite(b.arc_feasible) && Number.isFinite(b.arc_total))
     ? `${b.arc_feasible} / ${b.arc_total}` : '--';
 
@@ -1781,7 +1788,7 @@ function renderBevHud(d){
   const flags = b.flags || {};
   $('bevHudFlags').innerHTML = Object.keys(flags).map(k=>{
     const on = !!flags[k];
-    const label = {feasible:'可行弧', escape:'脱困', dead_end:'死胡同', no_entry:'禁行区', finish:'终点'}[k] || k;
+    const label = {feasible:'有效走廊', escape:'脱困', dead_end:'死胡同', no_entry:'禁行区', finish:'终点'}[k] || k;
     return `<span class="bev-flag${on?' on':''}">${label}</span>`;
   }).join('');
 }

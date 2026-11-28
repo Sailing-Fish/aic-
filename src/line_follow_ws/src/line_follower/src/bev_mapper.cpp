@@ -290,6 +290,14 @@ void BevMapper::build_live_grid(
     }
   }
 
+  struct ClassifiedRedBlob
+  {
+    cv::Rect r_roi;
+    bool is_3d_cone{false};
+  };
+  std::vector<ClassifiedRedBlob> classified_blobs;
+  classified_blobs.reserve(blobs.size());
+
   for (const auto & r_roi : blobs) {
     const int u_mid = std::clamp(r_roi.x + r_roi.width / 2, 0, img_w - 1);
     const int v_bot_roi = std::clamp(r_roi.y + r_roi.height - 1, 0, full_roi_h - 1);
@@ -332,6 +340,43 @@ void BevMapper::build_live_grid(
     //   - Tall solid object or extends above ROI top -> 3D cone (project ONLY ground base!)
     //   - Hollow striped / low flat patch -> flat no-entry (project exact ground footprint!)
     const bool is_3d_cone = red_above_roi || (aspect_hw > 0.68 && fill_ratio > 0.30);
+    classified_blobs.push_back(ClassifiedRedBlob{r_roi, is_3d_cone});
+  }
+
+  // Close-range cone-base fragment guard:
+  // When a 3D cone gets within d < 0.25m, its shadowed base flange can detach from the upper body
+  // into a low-aspect-ratio strip sitting directly beneath the cone. Merge it back into the cone
+  // instead of falsely spawning a phantom +30s flat no-entry box!
+  for (size_t i = 0; i < classified_blobs.size(); ++i) {
+    if (classified_blobs[i].is_3d_cone) {
+      continue;
+    }
+    const cv::Rect & sub = classified_blobs[i].r_roi;
+    const double sub_u = static_cast<double>(sub.x) + 0.5 * static_cast<double>(sub.width);
+    for (size_t j = 0; j < classified_blobs.size(); ++j) {
+      if (i == j || !classified_blobs[j].is_3d_cone) {
+        continue;
+      }
+      const cv::Rect & cone = classified_blobs[j].r_roi;
+      const double cone_u = static_cast<double>(cone.x) + 0.5 * static_cast<double>(cone.width);
+      const int cone_bot = cone.y + cone.height;
+      const bool horiz_aligned = std::abs(sub_u - cone_u) <= std::max(28.0, 0.70 * cone.width);
+      const bool directly_below = (sub.y >= cone.y) && (sub.y <= cone_bot + 30);
+      if (horiz_aligned && directly_below) {
+        classified_blobs[j].r_roi = cone | sub;
+        classified_blobs.erase(classified_blobs.begin() + static_cast<std::ptrdiff_t>(i));
+        if (i < j) {
+          --j;
+        }
+        --i;
+        break;
+      }
+    }
+  }
+
+  for (const auto & cb : classified_blobs) {
+    const cv::Rect & r_roi = cb.r_roi;
+    const bool is_3d_cone = cb.is_3d_cone;
 
     const double v_bot_full = static_cast<double>(r_top + r_roi.y + r_roi.height - 1);
     const double u_center_full = static_cast<double>(r_roi.x) + 0.5 * static_cast<double>(r_roi.width);
@@ -524,7 +569,30 @@ cv::Mat BevMapper::render_bev_inset(
     cv::line(vis, to_px(yellow_d_m, 0.30), to_px(yellow_d_m, -0.30), cv::Scalar(0, 255, 255), 2);
   }
 
-  // Draw candidate Ackermann arcs
+  // Draw 1D Safe Corridor bounds (cyan) and smoothed centerline target (bright green)
+  if (!plan.corridor_slices.empty()) {
+    std::vector<cv::Point> left_pts;
+    std::vector<cv::Point> right_pts;
+    std::vector<cv::Point> mid_pts;
+    left_pts.reserve(plan.corridor_slices.size());
+    right_pts.reserve(plan.corridor_slices.size());
+    mid_pts.reserve(plan.corridor_slices.size());
+    for (const auto & sl : plan.corridor_slices) {
+      if (!sl.valid) {
+        continue;
+      }
+      left_pts.push_back(to_px(sl.d_m, sl.y_safe_left));
+      right_pts.push_back(to_px(sl.d_m, sl.y_safe_right));
+      mid_pts.push_back(to_px(sl.d_m, sl.y_target));
+    }
+    if (left_pts.size() >= 2U) {
+      cv::polylines(vis, left_pts, false, cv::Scalar(235, 210, 40), 1, cv::LINE_AA);
+      cv::polylines(vis, right_pts, false, cv::Scalar(235, 210, 40), 1, cv::LINE_AA);
+      cv::polylines(vis, mid_pts, false, cv::Scalar(40, 230, 80), 2, cv::LINE_AA);
+    }
+  }
+
+  // Draw chosen Ackermann predicted arc (yellow) + Pure Pursuit lookahead target (magenta dot)
   auto draw_arc = [&](double kappa, double len_m, const cv::Scalar & color, int thick) {
     if (len_m < 0.03) {
       return;
@@ -543,13 +611,12 @@ cv::Mat BevMapper::render_bev_inset(
     }
   };
 
-  for (size_t i = 0; i < plan.candidates.size(); i += 2) {
-    const auto & cand = plan.candidates[i];
-    const cv::Scalar col = cand.hard_feasible ? cv::Scalar(155, 165, 160) : cv::Scalar(70, 70, 170);
-    draw_arc(cand.kappa, std::max(0.15, cand.safe_len_m), col, 1);
+  draw_arc(plan.chosen_kappa, std::max(0.25, std::min(0.65, plan.lookahead_m + 0.10)), cv::Scalar(0, 220, 255), 2);
+  if (plan.valid_slice_count >= 3) {
+    const cv::Point la_pt = to_px(plan.lookahead_x_m, plan.lookahead_y_m);
+    cv::circle(vis, la_pt, 4, cv::Scalar(255, 60, 255), -1, cv::LINE_AA);
+    cv::circle(vis, la_pt, 5, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
   }
-  // Highlight chosen optimal arc in bright green
-  draw_arc(plan.chosen_kappa, std::max(0.20, plan.chosen_safe_len_m), cv::Scalar(0, 240, 60), 2);
 
   // Draw exact physical car rectangle (0.191m x 0.280m, bumper at d=0, tail at d=-0.28m)
   const cv::Point car_tl = to_px(0.0, 0.0955);
@@ -580,9 +647,9 @@ cv::Mat BevMapper::render_bev_inset(
 
   char txt2[64];
   std::snprintf(
-    txt2, sizeof(txt2), "th=%+.0fd L=%.2f w=%.2f",
-    plan.rel_yaw_rad * (180.0 / kPi), plan.chosen_safe_len_m, plan.measured_lane_width_m);
-  cv::putText(vis, txt2, cv::Point(44, 29), cv::FONT_HERSHEY_SIMPLEX, 0.33, cv::Scalar(200, 245, 255), 1);
+    txt2, sizeof(txt2), "kr=%+.2f ey=%+.2f Ld=%.2f",
+    plan.road_kappa_fit, plan.lat_err_m, plan.lookahead_m);
+  cv::putText(vis, txt2, cv::Point(44, 29), cv::FONT_HERSHEY_SIMPLEX, 0.32, cv::Scalar(200, 245, 255), 1);
 
   if (preflight.checked && !preflight.homography_ok) {
     cv::rectangle(vis, cv::Point(0, inset_size - 18), cv::Point(inset_size, inset_size), cv::Scalar(0, 0, 200), -1);

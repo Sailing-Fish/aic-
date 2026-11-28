@@ -1693,6 +1693,98 @@ void test_bev_dwa_first_principles_and_execution()
     }
     CHECK(fplanner.phase() != TopologyPhase::FORK_T_RIGHT_TURN);
   }
+
+  // 7) Safe Corridor + Curve-Arc Pure Pursuit real-car bug regressions (from 16:33-16:56 bundles):
+  //    a) Curve + inner-side cone S-bypass (fork2 F230): left-curving lane with cone on left
+  //       MUST steer RIGHT to bypass cone instead of cutting LEFT into cone!
+  //    b) Sharp 90 deg right bend: MUST measure negative road_kappa_fit, stay feasible, turn right!
+  //    c) Yellow-missed autonomous roundabout entry: wide throat + YOLO votes MUST commit RB1_ACTIVE!
+  //    d) Single-sided window glare blowout (>0.62m) MUST lock continuous wall and stay straight!
+  {
+    // (7a) Left-curving road + left-side cone at d=0.40m
+    BevDwaConfig cfg{};
+    cfg.track_mode = "fork";
+    BevDwaPlanner planner(cfg);
+    planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0});
+    std::array<uint8_t, kBevCells> curve_cone{};
+    curve_cone.fill(BEV_WALL_BLUE);
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        const double yc = 0.45 * std::max(0.0, d) * std::max(0.0, d);
+        if (d >= -0.30 && d <= 1.00 && std::abs(y - yc) <= 0.215) {
+          curve_cone[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
+        }
+        // Cone on the left side of the left-curving lane at d in [0.34, 0.48], y in [yc+0.02, yc+0.16]
+        if (d >= 0.34 && d <= 0.48 && y >= yc + 0.02 && y <= yc + 0.16) {
+          curve_cone[static_cast<size_t>(r * kBevCols + c)] = BEV_OBS_CONE;
+        }
+      }
+    }
+    const BevDwaPlanResult cc_res = planner.step(
+      curve_cone, VehiclePose2D{true, 0.05, 0.0, 0.0, 0.25, 0.0, 0.1}, {}, false, false, 0.0, 1e9, false, 0.1);
+    CHECK(cc_res.has_near_obstacle);
+    CHECK(cc_res.has_feasible_arc);
+    CHECK(cc_res.chosen_kappa < -0.10);  // Carves S-bend RIGHT around cone!
+
+    // (7b) Sharp right bend curve-arc curvature feedforward
+    planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.35, 0.0, 0.0});
+    std::array<uint8_t, kBevCells> sharp_right{};
+    sharp_right.fill(BEV_WALL_BLUE);
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        const double yc = -0.95 * std::max(0.0, d) * std::max(0.0, d);
+        if (d >= -0.30 && d <= 0.90 && std::abs(y - yc) <= 0.215) {
+          sharp_right[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
+        }
+      }
+    }
+    const BevDwaPlanResult sr_res = planner.step(
+      sharp_right, VehiclePose2D{true, 0.05, 0.0, 0.0, 0.35, 0.0, 0.1}, {}, false, false, 0.0, 1e9, false, 0.1);
+    CHECK(sr_res.valid_slice_count >= 15);
+    CHECK(sr_res.has_feasible_arc);
+    CHECK(sr_res.road_kappa_fit < -0.8);
+    CHECK(sr_res.chosen_kappa < -1.0);
+
+    // (7c) Autonomous roundabout entry without yellow stop
+    BevDwaConfig rb_cfg{};
+    rb_cfg.track_mode = "roundabout";
+    rb_cfg.fork_outer_branch = 0;
+    rb_cfg.fork_outer_time_penalty_s = 0.0;
+    rb_cfg.fork_min_votes = 2;
+    rb_cfg.digit_min_conf = 0.35;
+    BevDwaPlanner rb_planner(rb_cfg);
+    rb_planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.30, 0.0, 0.0});
+    auto wide_rb = make_straight_grid(0.35);  // 0.70m wide split throat
+    GroundDetection r2{SemanticObjectType::BONUS_DIGIT, 2, 0.45, 0.55, +0.16, 0.04, 0.04, 1, 0.1};
+    GroundDetection r5{SemanticObjectType::BONUS_DIGIT, 5, 0.45, 0.55, -0.16, 0.04, 0.04, 2, 0.1};
+    rb_planner.step(wide_rb, VehiclePose2D{true, 0.10, 0.0, 0.0, 0.30, 0.0, 0.1}, {r2, r5}, false, false, 0.0, 1e9, false, 0.1);
+    const BevDwaPlanResult rb_res = rb_planner.step(
+      wide_rb, VehiclePose2D{true, 0.20, 0.0, 0.0, 0.30, 0.0, 0.2}, {r2, r5}, false, false, 0.0, 1e9, false, 0.2);
+    CHECK(rb_res.phase == TopologyPhase::RB1_ACTIVE);
+    CHECK(rb_res.committed_branch == +1);  // R=5 > L=2 -> commits right autonomously!
+
+    // (7d) Single-sided window glare blowout guard
+    planner.reset(0.0, VehiclePose2D{true, 0.0, 0.0, 0.0, 0.35, 0.0, 0.0});
+    std::array<uint8_t, kBevCells> glare_grid{};
+    glare_grid.fill(BEV_WALL_BLUE);
+    for (int r = 0; r < kBevRows; ++r) {
+      for (int c = 0; c < kBevCols; ++c) {
+        double d = 0.0, y = 0.0;
+        BevDwaPlanner::cell_to_metric(r, c, d, y);
+        const double y_left_edge = (d >= 0.32) ? 0.55 : 0.215;
+        if (d >= -0.30 && d <= 0.95 && y >= -0.215 && y <= y_left_edge) {
+          glare_grid[static_cast<size_t>(r * kBevCols + c)] = BEV_FREE;
+        }
+      }
+    }
+    const BevDwaPlanResult gl_res = planner.step(
+      glare_grid, VehiclePose2D{true, 0.05, 0.0, 0.0, 0.35, 0.0, 0.1}, {}, false, false, 0.0, 1e9, false, 0.1);
+    CHECK(std::abs(gl_res.chosen_kappa) < 0.35);  // Does NOT swerve into glared left blue mat!
+  }
 }
 
 }  // namespace

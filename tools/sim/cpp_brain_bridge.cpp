@@ -367,17 +367,21 @@ struct BrainInstance
   double brake_min_cmd_mps{0.0};
   double brake_zero_cutoff_mps{0.025};
 
-  // First-principles BEV DWA params
+  // First-principles BEV Safe Corridor + Curve-Arc Pure Pursuit params
   std::string bev_planner_mode{"bev_dwa"};
   double bev_wheelbase_m{0.1395};
   double bev_kappa_max_left{2.38};
   double bev_kappa_max_right{2.80};
-  double bev_control_latency_s{0.09};
+  double bev_control_latency_s{0.15};
   double bev_imu_yaw_kp{0.35};
   double bev_steer_launch_v_floor{0.16};
   double bev_max_lat_accel_mps2{0.42};
-  double bev_memory_ttl_sec{0.55};
+  double bev_memory_ttl_sec{0.45};
   double bev_rollout_horizon_m{0.85};
+  double bev_lookahead_min_m{0.28};
+  double bev_lookahead_time_s{0.65};
+  double bev_curv_ff_gain{0.55};
+  double bev_stanley_k_y{1.20};
   bool enable_anti_stall_escape{true};
 
   // The 8 pure C++17 modules
@@ -594,6 +598,13 @@ struct BrainInstance
     bev_cfg.control_latency_s = bev_control_latency_s;
     bev_cfg.imu_yaw_kp = bev_imu_yaw_kp;
     bev_cfg.steer_launch_v_floor = bev_steer_launch_v_floor;
+    bev_cfg.lookahead_min_m = bev_lookahead_min_m;
+    bev_cfg.lookahead_time_s = bev_lookahead_time_s;
+    bev_cfg.curv_ff_gain = bev_curv_ff_gain;
+    bev_cfg.stanley_k_y = bev_stanley_k_y;
+    bev_cfg.border_margin_m = border_margin_m;
+    bev_cfg.cone_margin_m = cone_margin_m;
+    bev_cfg.no_entry_margin_m = no_entry_margin_m;
     bev_cfg.cruise_speed_mps = target_speed;
     bev_cfg.clear_straight_speed_mps = clear_straight_speed;
     bev_cfg.enable_clear_straight_boost = enable_clear_path_speed;
@@ -1807,6 +1818,14 @@ BRAIN_API int32_t brain_set_param_double(void * handle, const char * name, doubl
     inst->bev_memory_ttl_sec = value;
   } else if (k == "bev_rollout_horizon_m") {
     inst->bev_rollout_horizon_m = value;
+  } else if (k == "bev_lookahead_min_m") {
+    inst->bev_lookahead_min_m = value;
+  } else if (k == "bev_lookahead_time_s") {
+    inst->bev_lookahead_time_s = value;
+  } else if (k == "bev_curv_ff_gain") {
+    inst->bev_curv_ff_gain = value;
+  } else if (k == "bev_stanley_k_y") {
+    inst->bev_stanley_k_y = value;
   } else if (k == "clear_straight_speed") {
     inst->clear_straight_speed = value;
   } else if (k == "clear_preview_dist_m") {

@@ -468,12 +468,16 @@ class TestPanelAndTelemetry(unittest.TestCase):
                          "bev_kappa_max_right", "bev_control_latency_s", "bev_imu_yaw_kp",
                          "bev_steer_launch_v_floor", "bev_max_lat_accel_mps2",
                          "bev_memory_ttl_sec", "bev_rollout_horizon_m",
+                         "bev_lookahead_min_m", "bev_lookahead_time_s",
+                         "bev_curv_ff_gain", "bev_stanley_k_y",
+                         "border_margin_m", "cone_margin_m", "no_entry_margin_m",
+                         "yellow_bumper_margin_m", "yellow_s_min", "yellow_v_min",
                          "enable_anti_stall_escape", "finish_min_cum_yaw_rad",
                          "fork_outer_branch", "fork_outer_time_penalty_s", "fork_min_votes"):
             self.assertIn(core_key, by_tier["bev_core"], f"Missing BEV key: {core_key}")
 
         for legacy_key in ("speed_gain_damping", "corridor_kp_y", "corridor_heading_gain",
-                           "cone_margin_m", "no_entry_margin_m", "yellow_bumper_margin_m"):
+                           "digit_approach_speed_mps", "finish_min_dist_m"):
             self.assertIn(legacy_key, by_tier["legacy_core"], f"Missing legacy key: {legacy_key}")
 
         for b_key in ("yellow_roi_bottom_ratio", "obstacle_steer_horizon_m",
@@ -1519,6 +1523,27 @@ class TestPanelBevWhitebox(unittest.TestCase):
         self.assertTrue(p['flags']['feasible'])
         self.assertTrue(p['flags']['no_entry'])
         self.assertFalse(p['flags']['escape'])
+
+    def test_parse_bev_kv_corridor_curve_arc_summary(self):
+        kv = (
+            "phase=fork_S_curve br=0 k=-1.45 kr=-1.60 ey=-0.042 ld=0.34 L=0.68 score=-1.45 "
+            "cost=[kr=-1.60,pp=-1.05,lt=-0.15,ff=-0.25,dg=+0.00,ey=-0.04,dk=-0.12] "
+            "goal=+180d rel=+140d cap=0.40 arc=41/38 clr=[w=+0.06,o=+0.90] "
+            "dig=L0(0)R0(0) flg=1"
+        )
+        p = panel_server.parse_bev_kv(kv)
+        self.assertEqual(p['phase'], 'fork_S_curve')
+        self.assertEqual(p['branch'], 0)
+        self.assertAlmostEqual(p['kappa'], -1.45)
+        self.assertAlmostEqual(p['road_kappa'], -1.60)
+        self.assertAlmostEqual(p['lat_err_m'], -0.042)
+        self.assertAlmostEqual(p['lookahead_m'], 0.34)
+        self.assertEqual(p['arc_total'], 41)
+        self.assertEqual(p['arc_feasible'], 38)
+        self.assertAlmostEqual(p['cost']['kr'], -1.60)
+        self.assertAlmostEqual(p['cost']['pp'], -1.05)
+        self.assertAlmostEqual(p['cost']['ff'], -0.25)
+        self.assertTrue(p['flags']['feasible'])
 
     def test_ctrl_kv_does_not_corrupt_branch_from_cost(self):
         p = panel_server.parse_bev_kv(

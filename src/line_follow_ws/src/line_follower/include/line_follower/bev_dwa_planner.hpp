@@ -91,10 +91,19 @@ struct BevDwaConfig
   double servo_slew_rps2{2.70};
 
   // Control latency compensation & IMU yaw-rate inner loop
-  double control_latency_s{0.09};
+  double control_latency_s{0.15};
   double imu_yaw_kp{0.35};
   double large_angle_boost_max{0.18};
   double steer_launch_v_floor{0.16};
+
+  // Safe Corridor + Curve-Arc Curvature Feedforward + Regulated Pure Pursuit
+  double lookahead_min_m{0.28};
+  double lookahead_time_s{0.65};
+  double curv_ff_gain{0.55};
+  double stanley_k_y{1.20};
+  double border_margin_m{0.025};
+  double cone_margin_m{0.025};
+  double no_entry_margin_m{0.035};
 
   // Speed envelope (single clean physics pipeline)
   double cruise_speed_mps{0.44};
@@ -111,9 +120,9 @@ struct BevDwaConfig
   double creep_speed_mps{0.14};
 
   // BEV short-horizon EKF memory (protects rear inner wheel, erased instantly by white)
-  double bev_memory_ttl_sec{0.55};
+  double bev_memory_ttl_sec{0.45};
 
-  // DWA rollout geometry & asymmetric penalty economics (+30s no_entry > +15s/s wall > +10s cone)
+  // Corridor rollout geometry & legacy compatibility fields
   int num_arc_samples{29};
   double rollout_horizon_m{0.85};
   double rollout_step_m{0.025};
@@ -137,7 +146,7 @@ struct BevDwaConfig
   int fork_outer_branch{-1};
   double fork_outer_time_penalty_s{3.0};
   int fork_min_votes{2};
-  double digit_min_conf{0.50};
+  double digit_min_conf{0.35};
   double digit_bonus_weight{0.45};
   double digit_repel_weight{0.95};
   bool allow_dual_digit_cover{false};
@@ -174,6 +183,17 @@ struct PreFlightStatus
   std::string warning_msg{};
 };
 
+struct BevCorridorSlice
+{
+  double d_m{0.0};
+  double y_raw_right{0.0};
+  double y_raw_left{0.0};
+  double y_safe_right{0.0};
+  double y_safe_left{0.0};
+  double y_target{0.0};
+  bool valid{false};
+};
+
 struct BevArcCandidate
 {
   double kappa{0.0};
@@ -182,7 +202,7 @@ struct BevArcCandidate
   double min_obs_clr_m{0.0};
   double score{-1e9};
   bool hard_feasible{false};
-  // 白盒代价分解（面板 HUD 用；与 score 严格同源）
+  // 白盒控制分解（面板 HUD 用：kr/pp/lt/ff/dg/ey/dk 严格同源）
   double cost_safe_len{0.0};
   double cost_soft{0.0};
   double cost_heading{0.0};
@@ -201,6 +221,21 @@ struct BevDwaPlanResult
   double min_wall_clearance_m{0.0};
   double min_obs_clearance_m{0.0};
   double speed_cap_mps{0.0};
+
+  // 1D Safe Corridor & Curve-Arc Pure Pursuit telemetry
+  double road_kappa_fit{0.0};
+  double lat_err_m{0.0};
+  double heading_err_rad{0.0};
+  double lookahead_m{0.35};
+  double lookahead_x_m{0.35};
+  double lookahead_y_m{0.0};
+  double kappa_pp{0.0};
+  double kappa_lat{0.0};
+  double kappa_curv_ff{0.0};
+  double kappa_digit_shift{0.0};
+  int valid_slice_count{0};
+  int total_slice_count{0};
+  std::vector<BevCorridorSlice> corridor_slices{};
 
   bool has_feasible_arc{false};
   bool has_near_obstacle{false};
@@ -227,7 +262,7 @@ struct BevDwaPlanResult
   std::string mode_tag{"bev_cruise"};
   std::vector<BevArcCandidate> candidates{};
 
-  // 选中弧快照（面板白盒 HUD：代价分解 + 可行弧统计）
+  // 选中弧快照（面板白盒 HUD：控制分解 + 有效走廊统计）
   BevArcCandidate chosen_candidate{};
   int feasible_arc_count{0};
 };
@@ -337,20 +372,57 @@ private:
     bool t_junction_right_open,
     bool is_holding_yellow_stop);
 
-  void evaluate_arc(
+  struct ObstacleCluster
+  {
+    double d_min{0.0};
+    double d_max{0.0};
+    double y_min{0.0};
+    double y_max{0.0};
+    bool is_no_entry{false};
+    int cell_count{0};
+  };
+
+  void extract_safe_corridor(
+    double y0,
+    int branch_bias,
+    double goal_yaw,
+    bool goal_yaw_active,
+    bool allow_glare_guard,
+    std::vector<BevCorridorSlice> & out_slices) const;
+
+  std::vector<ObstacleCluster> extract_obstacle_clusters() const;
+
+  void carve_obstacles_into_corridor(
+    const std::vector<ObstacleCluster> & clusters,
+    std::vector<BevCorridorSlice> & slices);
+
+  void apply_digit_bias_to_corridor(
+    const std::vector<GroundDetection> & locked_digits,
+    bool allow_digit_bonus,
+    std::vector<BevCorridorSlice> & slices,
+    int & out_hit_digit,
+    double & out_digit_shift_m) const;
+
+  void smooth_corridor_centerline(std::vector<BevCorridorSlice> & slices) const;
+
+  void fit_corridor_curve_arc(
+    const std::vector<BevCorridorSlice> & slices,
+    double x0,
+    double y0,
+    double th0,
+    double & out_road_kappa,
+    double & out_lat_err_m,
+    double & out_heading_err_rad,
+    double & out_corridor_len_m) const;
+
+  void check_chosen_arc_clearance(
     double x0,
     double y0,
     double th0,
     double kappa,
-    double goal_yaw,
-    bool goal_yaw_active,
-    bool forbid_reverse_yaw,
-    double reverse_yaw,
-    int branch_bias,
-    const std::vector<GroundDetection> & straight_digits,
-    bool allow_digit_bonus,
-    BevArcCandidate & out_cand,
-    int & out_hit_digit) const;
+    double & out_safe_len_m,
+    double & out_min_wall_clr_m,
+    double & out_min_obs_clr_m) const;
 
   double sample_dist_field(const std::array<float, kBevCells> & field, double d_m, double y_m) const;
 
@@ -410,6 +482,12 @@ private:
   bool escape_active_{false};
   double escape_elapsed_sec_{0.0};
   int escape_retries_used_{0};
+
+  // Hysteresis memory for primary obstacle bypass side (+1 = pass left, -1 = pass right, 0 = none)
+  int prev_obs_pass_side_{0};
+  double prev_obs_d_{0.0};
+  double prev_obs_y_{0.0};
+  int prev_obs_miss_frames_{10};
 
   // Standstill calibration accumulators
   double gyro_bias_sum_{0.0};

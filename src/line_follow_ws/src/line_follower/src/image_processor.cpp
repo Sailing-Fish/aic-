@@ -336,18 +336,19 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
   cv::Rect yellow_bbox_full{};
 
   if (config_.use_yellow_filter) {
+    cv::Mat yellow_bgr_blur;
     cv::Mat yellow_hsv;
     if (yellow_roi_bottom == roi_bottom) {
+      yellow_bgr_blur = blurred;
       yellow_hsv = hsv;
     } else {
       const cv::Mat yellow_roi = frame_bgr(yellow_roi_rect);
-      cv::Mat yellow_blurred;
       cv::GaussianBlur(
         yellow_roi,
-        yellow_blurred,
+        yellow_bgr_blur,
         cv::Size(config_.gaussian_kernel, config_.gaussian_kernel),
         0);
-      cv::cvtColor(yellow_blurred, yellow_hsv, cv::COLOR_BGR2HSV);
+      cv::cvtColor(yellow_bgr_blur, yellow_hsv, cv::COLOR_BGR2HSV);
     }
 
     cv::Mat yellow_mask;
@@ -362,12 +363,32 @@ std::optional<SegmentedFrame> ImageProcessor::segment(
 
     cv::inRange(yellow_hsv, lower_yellow, upper_yellow, yellow_mask);
 
+    // Anti-shadow chroma dominance gate (R-B >= 18 && G-B >= 12):
+    // Allows yellow_v_min down to ~45-55 so yellow tape inside the car's own shadow (V=55..75)
+    // is still captured, while strictly rejecting neutral gray/dark shadows & dim white paper!
+    for (int y = 0; y < yellow_mask.rows; ++y) {
+      uint8_t * m_row = yellow_mask.ptr<uint8_t>(y);
+      const cv::Vec3b * bgr_row = yellow_bgr_blur.ptr<cv::Vec3b>(y);
+      for (int x = 0; x < yellow_mask.cols; ++x) {
+        if (m_row[x] == 0) {
+          continue;
+        }
+        const int b = static_cast<int>(bgr_row[x][0]);
+        const int g = static_cast<int>(bgr_row[x][1]);
+        const int r = static_cast<int>(bgr_row[x][2]);
+        if ((r - b) < 18 || (g - b) < 12) {
+          m_row[x] = 0;
+        }
+      }
+    }
+
     const int yellow_pixels = cv::countNonZero(yellow_mask);
 
-    // Clean mask for geometric bar extraction
+    // Clean mask for geometric bar extraction: wide horizontal close (15x3) bridges small
+    // lighting/shadow gaps across the horizontal yellow stop strip without inflating height.
     cv::Mat yellow_clean;
     const cv::Mat open_k = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
-    const cv::Mat close_k = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 3));
+    const cv::Mat close_k = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(15, 3));
     cv::morphologyEx(yellow_mask, yellow_clean, cv::MORPH_OPEN, open_k, cv::Point(-1, -1), 1);
     cv::morphologyEx(yellow_clean, yellow_clean, cv::MORPH_CLOSE, close_k, cv::Point(-1, -1), 1);
 

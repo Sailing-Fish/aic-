@@ -239,10 +239,10 @@ void LineFollowerNode::declare_parameters()
   // Geometric yellow stop line & dead-end-ahead cues
   // ============================================================
   this->declare_parameter("use_yellow_filter", true);
-  this->declare_parameter("yellow_h_low", 20);
-  this->declare_parameter("yellow_h_high", 40);
-  this->declare_parameter("yellow_s_min", 80);
-  this->declare_parameter("yellow_v_min", 120);
+  this->declare_parameter("yellow_h_low", 16);
+  this->declare_parameter("yellow_h_high", 42);
+  this->declare_parameter("yellow_s_min", 52);
+  this->declare_parameter("yellow_v_min", 48);
   this->declare_parameter("yellow_min_aspect_ratio", 2.5);
   this->declare_parameter("yellow_min_width_ratio", 0.20);
   this->declare_parameter("yellow_min_area_px", 120.0);
@@ -321,7 +321,7 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("default_lane_width_m", 0.430);
   this->declare_parameter("border_margin_m", 0.025);
   this->declare_parameter("cone_margin_m", 0.025);
-  this->declare_parameter("no_entry_margin_m", 0.030);
+  this->declare_parameter("no_entry_margin_m", 0.035);
   this->declare_parameter("obstacle_lookahead_m", 1.10);
   this->declare_parameter("obstacle_steer_horizon_m", 0.65);
   this->declare_parameter("obstacle_curve_min_horizon_m", 0.45);
@@ -332,9 +332,9 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("blocked_creep_speed_mps", 0.12);
   this->declare_parameter("fork_outer_branch", -1);
   this->declare_parameter("fork_outer_time_penalty_s", 3.0);
-  this->declare_parameter("fork_min_votes", 3);
+  this->declare_parameter("fork_min_votes", 2);
   this->declare_parameter("fork_commit_dist_m", 1.10);
-  this->declare_parameter("digit_min_conf", 0.55);
+  this->declare_parameter("digit_min_conf", 0.35);
   this->declare_parameter("digit_min_frames", 2);
   this->declare_parameter("digit_lookahead_max_m", 1.15);
   this->declare_parameter("max_digit_lateral_shift_m", 0.12);
@@ -377,18 +377,22 @@ void LineFollowerNode::declare_parameters()
   this->declare_parameter("brake_zero_cutoff_mps", 0.025);
 
   // ============================================================
-  // First-Principles BEV + Topology Compass + Ackermann DWA parameters
+  // First-Principles BEV Safe Corridor + Curve-Arc Pure Pursuit parameters
   // (Calibrated to measured Wheeltec mini_akm: +18.0 deg left / -21.4 deg right)
   // ============================================================
   this->declare_parameter("bev_wheelbase_m", 0.1395);
   this->declare_parameter("bev_kappa_max_left", 2.38);
   this->declare_parameter("bev_kappa_max_right", 2.80);
-  this->declare_parameter("bev_control_latency_s", 0.09);
+  this->declare_parameter("bev_control_latency_s", 0.15);
   this->declare_parameter("bev_imu_yaw_kp", 0.35);
   this->declare_parameter("bev_steer_launch_v_floor", 0.16);
   this->declare_parameter("bev_max_lat_accel_mps2", 0.42);
-  this->declare_parameter("bev_memory_ttl_sec", 0.55);
+  this->declare_parameter("bev_memory_ttl_sec", 0.45);
   this->declare_parameter("bev_rollout_horizon_m", 0.85);
+  this->declare_parameter("bev_lookahead_min_m", 0.28);
+  this->declare_parameter("bev_lookahead_time_s", 0.65);
+  this->declare_parameter("bev_curv_ff_gain", 0.55);
+  this->declare_parameter("bev_stanley_k_y", 1.20);
   this->declare_parameter("enable_anti_stall_escape", true);
 
   image_topic_ = this->get_parameter("image_topic").as_string();
@@ -811,6 +815,13 @@ void LineFollowerNode::sync_runtime_parameters()
   bev_cfg.control_latency_s = this->get_parameter("bev_control_latency_s").as_double();
   bev_cfg.imu_yaw_kp = this->get_parameter("bev_imu_yaw_kp").as_double();
   bev_cfg.steer_launch_v_floor = this->get_parameter("bev_steer_launch_v_floor").as_double();
+  bev_cfg.lookahead_min_m = this->get_parameter("bev_lookahead_min_m").as_double();
+  bev_cfg.lookahead_time_s = this->get_parameter("bev_lookahead_time_s").as_double();
+  bev_cfg.curv_ff_gain = this->get_parameter("bev_curv_ff_gain").as_double();
+  bev_cfg.stanley_k_y = this->get_parameter("bev_stanley_k_y").as_double();
+  bev_cfg.border_margin_m = cor_cfg.border_margin_m;
+  bev_cfg.cone_margin_m = cor_cfg.cone_margin_m;
+  bev_cfg.no_entry_margin_m = cor_cfg.no_entry_margin_m;
   bev_cfg.cruise_speed_mps = target_speed_;
   bev_cfg.clear_straight_speed_mps = motion_cfg.clear_straight_speed;
   bev_cfg.enable_clear_straight_boost = motion_cfg.enable_clear_path_speed;
@@ -1750,13 +1761,16 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     if (ctrl_changed || (now_sec - last_ctrl_log_sec_) >= 0.20) {
       RCLCPP_INFO(
         this->get_logger(),
-        "[DEC] ctrl mode=%s phase=%s branch=%d k=%+.2f L=%.2f th=%+.1fd "
+        "[DEC] ctrl mode=%s phase=%s branch=%d k=%+.2f kr=%+.2f ey=%+.3f ld=%.2f L=%.2f th=%+.1fd "
         "v=%.2f yaw=%+.2f w_bev=%.2f s=%.2f clr=[w=%+.2f,o=%+.2f] obs=%d "
         "arc=%d/%d cap=%.2f goal=%+.0fd dig=L%d(%d)R%d(%d) flg=%d",
         bev_plan.mode_tag.c_str(),
         topology_phase_to_string(bev_plan.phase),
         bev_plan.committed_branch,
         bev_plan.chosen_kappa,
+        bev_plan.road_kappa_fit,
+        bev_plan.lat_err_m,
+        bev_plan.lookahead_m,
         bev_plan.chosen_safe_len_m,
         bev_plan.rel_yaw_rad * (180.0 / kPi),
         linear_speed,
@@ -1766,8 +1780,8 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         bev_plan.min_wall_clearance_m,
         bev_plan.min_obs_clearance_m,
         bev_plan.has_near_obstacle ? 1 : 0,
-        static_cast<int>(bev_plan.candidates.size()),
-        bev_plan.feasible_arc_count,
+        bev_plan.total_slice_count,
+        bev_plan.valid_slice_count,
         bev_plan.speed_cap_mps,
         bev_plan.goal_yaw_rad * (180.0 / kPi),
         bev_plan.fork_left_digit, bev_plan.fork_left_votes,
@@ -1782,26 +1796,27 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       last_ctrl_log_sec_ = now_sec;
     }
 
-    // 1s 低频白盒摘要：面板 HUD 专用，含选中弧代价分解与 Top-3 候选。
-    // 放在 ctrl 之后独立节流，避免把完整代价分解塞进 5Hz 日志造成 CPU/IO 浪费。
+    // 1s 低频白盒摘要：面板 HUD 专用，含弯道弧度与纯跟踪控制项分解。
+    // 放在 ctrl 之后独立节流，避免把完整分解塞进 5Hz 日志造成 CPU/IO 浪费。
     if (ctrl_changed || (now_sec - last_bev_summary_sec_) >= 1.0) {
       const BevArcCandidate & c = bev_plan.chosen_candidate;
       RCLCPP_INFO(
         this->get_logger(),
-        "[DEC] bev summary phase=%s br=%d k=%+.2f L=%.2f score=%+.2f "
-        "cost=[sa=%+.2f,so=%+.2f,hd=%+.2f,br=%+.2f,di=%+.2f,cl=%+.2f,sm=%+.2f] "
+        "[DEC] bev summary phase=%s br=%d k=%+.2f kr=%+.2f ey=%+.3f ld=%.2f L=%.2f score=%+.2f "
+        "cost=[kr=%+.2f,pp=%+.2f,lt=%+.2f,ff=%+.2f,dg=%+.2f,ey=%+.2f,dk=%+.2f] "
         "goal=%+.0fd rel=%+.0fd cap=%.2f arc=%d/%d clr=[w=%+.2f,o=%+.2f] "
         "dig=L%d(%d)R%d(%d) flg=%d",
         topology_phase_to_string(bev_plan.phase),
         bev_plan.committed_branch,
-        c.kappa, c.safe_len_m, c.score,
-        c.cost_safe_len, c.cost_soft, c.cost_heading,
-        c.cost_branch, c.cost_digit, c.cost_clearance, c.cost_smooth,
+        c.kappa, bev_plan.road_kappa_fit, bev_plan.lat_err_m, bev_plan.lookahead_m,
+        c.safe_len_m, c.score,
+        bev_plan.road_kappa_fit, bev_plan.kappa_pp, bev_plan.kappa_lat,
+        bev_plan.kappa_curv_ff, bev_plan.kappa_digit_shift, bev_plan.lat_err_m, c.cost_smooth,
         bev_plan.goal_yaw_rad * (180.0 / kPi),
         bev_plan.rel_yaw_rad * (180.0 / kPi),
         bev_plan.speed_cap_mps,
-        static_cast<int>(bev_plan.candidates.size()),
-        bev_plan.feasible_arc_count,
+        bev_plan.total_slice_count,
+        bev_plan.valid_slice_count,
         c.min_wall_clr_m, c.min_obs_clr_m,
         bev_plan.fork_left_digit, bev_plan.fork_left_votes,
         bev_plan.fork_right_digit, bev_plan.fork_right_votes,
@@ -1836,11 +1851,11 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
     char gbuf[96];
     std::snprintf(
-      gbuf, sizeof(gbuf), "k=%+.2f L=%.2fm th=%+.0fd cyaw=%.1f s=%.2fm",
+      gbuf, sizeof(gbuf), "k=%+.2f kr=%+.2f ey=%+.2f Ld=%.2f s=%.2fm",
       bev_plan.chosen_kappa,
-      bev_plan.chosen_safe_len_m,
-      bev_plan.rel_yaw_rad * (180.0 / kPi),
-      bev_dwa_planner_.cum_abs_yaw_rad(),
+      bev_plan.road_kappa_fit,
+      bev_plan.lat_err_m,
+      bev_plan.lookahead_m,
       finish_guard_.total_arc_m());
     finals_overlay.finish_guard_status = gbuf;
 
