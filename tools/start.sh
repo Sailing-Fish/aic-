@@ -86,7 +86,10 @@ fi
 [[ -f "$WS/install/setup.bash" ]] || die "工作区未编译: $WS/install/setup.bash 不存在"
 
 LINE_FOLLOWER_BIN="$WS/install/line_follower/lib/line_follower/line_follower_node"
-if [[ -f "$LINE_FOLLOWER_BIN" ]]; then
+# symlink-install 模式下 install/ 里是符号链接，find -newer 会拿到链接自身
+# (创建于首次编译时) 的旧 mtime，导致任意后续源码都被误判为更新。解析成真实路径再比。
+LINE_FOLLOWER_BIN_REAL="$(readlink -f "$LINE_FOLLOWER_BIN" 2>/dev/null || echo "$LINE_FOLLOWER_BIN")"
+if [[ -f "$LINE_FOLLOWER_BIN_REAL" ]]; then
   STALE_SRC=""
   for src_dir in \
     "$WS/src/line_follow_ws/src/line_follower/src" \
@@ -94,7 +97,7 @@ if [[ -f "$LINE_FOLLOWER_BIN" ]]; then
     "$WS/src/line_follower/src" \
     "$WS/src/line_follower/include"; do
     if [[ -d "$src_dir" ]]; then
-      found="$(find "$src_dir" -type f \( -name '*.cpp' -o -name '*.hpp' \) -newer "$LINE_FOLLOWER_BIN" -print -quit 2>/dev/null || true)"
+      found="$(find "$src_dir" -type f \( -name '*.cpp' -o -name '*.hpp' \) -newer "$LINE_FOLLOWER_BIN_REAL" -print -quit 2>/dev/null || true)"
       if [[ -n "$found" ]]; then
         STALE_SRC="$found"
         break

@@ -1521,11 +1521,6 @@ void test_bev_dwa_first_principles_and_execution()
 
     VehiclePose2D p_t{true, 0.55, -0.80, -kHalfPi, 0.22, 0.0, 1.5};
     const BevDwaPlanResult t_res = planner.step(t_grid, p_t, {}, false, false, 0.0, 1e9, false, 1.5);
-    if (!(t_res.chosen_kappa < -0.5 && t_res.chosen_kappa2 < -1.5)) {
-      std::cerr << "[DBG T2] k1=" << t_res.chosen_kappa << " k2=" << t_res.chosen_kappa2
-                << " split=" << t_res.chosen_s_split_m << " w=" << t_res.min_wall_clearance_m
-                << " o=" << t_res.min_obs_clearance_m << " feas=" << t_res.has_feasible_arc << "\n";
-    }
     CHECK(t_res.phase == TopologyPhase::FORK_T_RIGHT_TURN);
     // Exact rear-axle Ackermann apexing: strong right entry without rear-wheel inner cut + full right lock
     CHECK(t_res.chosen_kappa < -0.5 && t_res.chosen_kappa2 < -1.5);

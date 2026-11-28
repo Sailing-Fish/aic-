@@ -4,9 +4,9 @@
 面板参数表单的 schema：按“正交层级 (tier)”组织，聚焦 BEV DWA 白盒算法。
 
 三大层级（前端渲染为 3 个独立标签页）：
-    1. bev_core     — ★ BEV 白盒核心（日常只看这一页：曲率/栅格/数字经济学/终点脱困）
-    2. legacy_core  — ↩ 旧算法兼容（走廊规划参数，仅 bev_planner_mode=legacy 时生效）
-    3. calibration  — ⚙ 开关与标定（视觉标定、黄线执行层、看门狗）
+    1. bev_core     — ★ 实车核心调参（日常只看这一页：两段时间曲率/净空/停稳/数字/硬件，全部真实生效）
+    2. legacy_core  — ↩ 已停用 / 旁路参数（已锁死或 BEV 模式下不读取，仅保留 YAML 键兼容）
+    3. calibration  — ⚙ 视觉与底层标定（视觉分割、黄线执行层、看门狗，标完即冻结）
 
 类型约定：
     float | int | bool | enum
@@ -20,17 +20,17 @@
 TIERS = [
     {
         "id": "bev_core",
-        "label": "★ BEV 白盒核心",
-        "subtitle": "安全走廊 + 弯道弧度前馈 + 延迟补偿纯跟踪：所有日常核心调参统一归口本页，前后完全一致",
+        "label": "★ 实车核心调参",
+        "subtitle": "两段式阿克曼状态栅格 + 测地线规划：日常赛道只看这一页，所有旋钮真实生效",
     },
     {
         "id": "legacy_core",
-        "label": "↩ 旧算法兼容",
-        "subtitle": "仅 bev_planner_mode=legacy 时生效；BEV 模式下以下 5 项旧参数被旁路，改了不生效",
+        "label": "↩ 已停用 / 旁路参数",
+        "subtitle": "⚠ 已锁死或 BEV 模式下旁路：bev_planner_mode 强制 bev_dwa，以下参数改了不生效，仅保留 YAML 键兼容",
     },
     {
         "id": "calibration",
-        "label": "⚙ 开关与标定",
+        "label": "⚙ 视觉与底层标定",
         "subtitle": "视觉标定、反拖执行层、Tier 1 安全护栏与看门狗（标完即冻结）",
     },
 ]
@@ -38,56 +38,42 @@ TIERS = [
 
 SCHEMA = [
     # =====================================================================
-    # TIER 1: ★ BEV 白盒核心（日常只看这一页；全部参数与新安全走廊+弧度纯跟踪 100% 一致）
+    # TIER 1: ★ 实车核心调参（全部参数对当前两段式状态栅格 100% 生效）
     # =====================================================================
     {
         "tier": "bev_core",
         "section": "line_follower_node",
-        "group": "① 总开关与巡航速度",
-        "desc": "bev_dwa=BEV 安全走廊+弯道弧度纯跟踪+拓扑罗盘；legacy=旧走廊回退",
+        "group": "① 速度与两段式过弯核心（最常调）",
+        "desc": "唯一过弯快慢总旋钮是 bev_max_lat_accel_mps2；延迟 τ 与两段前滚视距决定入弯提前量",
         "default_open": True,
         "items": [
-            ("bev_planner_mode", "核心规划架构模式", "enum",
-             ["bev_dwa", "legacy"], None, None,
-             "★ 改这里必须「保存并重启巡线」；默认 bev_dwa 启用安全走廊 + 弯道弧度纯跟踪"),
             ("target_speed", "巡航速度 (m/s)", "float", 0.10, 1.00, 0.01,
-             "映射到 BEV 基准巡航速；弯道降速由向心加速度与弯道弧度自动提前计算"),
+             "映射到 BEV 基准巡航速；弯道降速由向心加速度与两段曲率自动提前计算"),
+            ("bev_max_lat_accel_mps2", "弯道向心加速度上限 (m/s²)", "float", 0.10, 1.50, 0.01,
+             "★ 唯一过弯快慢总旋钮：v≤√(a/max(|κ1|,0.95|κ2|,0.85|κ_road|))；Run 1 起步 0.26，往上调线性提速"),
             ("max_yaw_rate", "最大偏航角速度 (rad/s)", "float", 0.4, 3.0, 0.05,
              "环岛建议 1.8–2.0，岔路 S 建议 1.5–1.7"),
-        ],
-    },
-    {
-        "tier": "bev_core",
-        "section": "line_follower_node",
-        "group": "② 弯道弧度拉回与纯跟踪核心（过弯/直线最常调）",
-        "desc": "根据 BEV 弯道二次拟合弧度提前打角+入弯减速，结合延迟补偿纯跟踪与横向拉回",
-        "default_open": True,
-        "items": [
-            ("bev_lookahead_min_m", "最小前瞻距离 Ld_min (m)", "float", 0.16, 0.55, 0.01,
-             "急弯/绕障时最短前瞻；↓过急弯更紧贴但易晃，↑更稳但可能切内弯（默认 0.28）"),
-            ("bev_lookahead_time_s", "速度前瞻系数 Ld_t (s)", "float", 0.00, 1.50, 0.05,
-             "前瞻随车速放大 Ld=min+t·v；↑高速直线更丝滑防画龙（默认 0.65）"),
-            ("bev_curv_ff_gain", "弯道弧度前馈增益", "float", 0.00, 1.50, 0.05,
-             "★ 画面弯道弧度前馈：入弯前按超额弯道弧度提前把车拉向正轨（默认 0.55，0=关闭）"),
-            ("bev_stanley_k_y", "近车头横向拉回增益", "float", 0.00, 4.00, 0.05,
-             "偏离中线时的 Stanley 横向纠偏力度；↑拉回更快，太大易画龙（默认 1.20）"),
-            ("bev_max_lat_accel_mps2", "弯道向心加速度上限 (m/s²)", "float", 0.10, 1.50, 0.01,
-             "结合弯道弧度提前限速 v≤√(a/max(|κ|,0.9|κ_road|))；↑过弯更快（默认 0.42）"),
             ("bev_control_latency_s", "底盘延迟前推补偿 τ (s)", "float", 0.00, 0.30, 0.01,
              "Smith 前推补偿 STM32 Smooth_control 舵机/电机响应滞后（实车默认 0.15）"),
+            ("bev_rollout_horizon_m", "两段式轨迹前滚视距 (m)", "float", 0.40, 1.20, 0.05,
+             "两段式阿克曼状态栅格的前向采样长度（默认 0.85m）"),
             ("bev_imu_yaw_kp", "IMU 陀螺仪内环增益", "float", 0.00, 1.20, 0.05,
              "补偿大角转向衰减与机械偏航（默认 0.35；0=关内环）"),
+            ("enable_clear_path_speed", "启用畅通直道物理包络提速", "bool", 0, 1, 1,
+             "开：畅通直道按物理包络提速至 clear_straight_speed，遇弯/障立即受安全速帽回落"),
+            ("clear_straight_speed", "畅通直道提速上限 (m/s)", "float", 0.35, 0.95, 0.01,
+             "Run 2 冲刺建议 0.78；与 bev_max_lat_accel_mps2 联动决定直道/弯道速度差"),
         ],
     },
     {
         "tier": "bev_core",
         "section": "line_follower_node",
-        "group": "③ 安全走廊与避障留白（S 弯削切实时生效）",
-        "desc": "蓝边/红锥/禁行区全部以真实米数削切安全走廊边界，自动生成 S 弯绕行线",
+        "group": "② 安全净空与避障限速（S 弯绕障实时生效）",
+        "desc": "蓝边/红锥/禁行区以真实米数削切 2D BEV 栅格；嫌贴弯直接调大 border_margin_m",
         "default_open": True,
         "items": [
             ("border_margin_m", "蓝边安全留白 (m)", "float", 0.00, 0.08, 0.005,
-             "车身外缘到蓝色赛道边界的最小安全距离（防 +15s/s 压线，默认 0.025m）"),
+             "车身外缘到蓝色赛道边界的最小安全距离；急弯贴内弯可上调到 0.025~0.030（默认 0.020）"),
             ("cone_margin_m", "红锥侧向留白 (m)", "float", 0.00, 0.10, 0.005,
              "安全走廊绕开红锥的额外侧向留白（+10s，默认 0.025m）"),
             ("no_entry_margin_m", "禁行区侧向留白 (m)", "float", 0.00, 0.12, 0.005,
@@ -96,8 +82,6 @@ SCHEMA = [
              "BEV 栅格内出现红锥时的独立速度上限（默认 0.26）"),
             ("no_entry_speed_mps", "禁行区绕行限速 (m/s)", "float", 0.08, 0.50, 0.01,
              "绕行 +30s 红禁行区时的独立速度上限（宁慢勿碰，默认 0.22）"),
-            ("bev_rollout_horizon_m", "BEV 走廊前视视距 (m)", "float", 0.40, 1.20, 0.05,
-             "安全走廊提取与弯道弧度拟合的前向长度（默认 0.85m）"),
             ("bev_memory_ttl_sec", "后轮盲区障碍记忆 TTL (s)", "float", 0.10, 1.50, 0.05,
              "仅保留红障在后轮盲区的短时记忆，防后轮切内蹭锥桶（默认 0.45s）"),
         ],
@@ -105,7 +89,7 @@ SCHEMA = [
     {
         "tier": "bev_core",
         "section": "line_follower_node",
-        "group": "④ 黄线精准停稳与抗阴影检测",
+        "group": "③ 黄线精准停稳与抗阴影检测",
         "desc": "已启用色度差抗阴影门控(R-B/G-B)，低 V 阈值也能在车体阴影下稳检黄线",
         "default_open": True,
         "items": [
@@ -126,10 +110,12 @@ SCHEMA = [
     {
         "tier": "bev_core",
         "section": "line_follower_node",
-        "group": "⑤ 岔路与直道数字策略（拓扑罗盘选边）",
-        "desc": "岔路按 5·数字 − 外道罚时自动选边；直道数字硬钳位在安全走廊内，绝不抢道撞墙",
+        "group": "④ 岔路与直道数字策略（拓扑罗盘选边）",
+        "desc": "新增暴露 YOLO 新鲜度窗口；岔路按 5·数字 − 外道罚时自动选边，直道数字硬钳位在安全走廊内",
         "default_open": True,
         "items": [
+            ("detection_timeout_sec", "YOLO 检测新鲜度窗口 (s)", "float", 0.05, 1.00, 0.01,
+             "★ 真实采集时间戳 + QoS(1) 零排队后，age 超过该窗口的框直接丢弃（默认 0.22s）；现场先看 HUD 的 age"),
             ("fork_outer_branch", "外道分支 (-1左/0无/1右)", "int", -1, 1, 1,
              "岔路罚时施加在哪一侧；岔路 S 默认 -1，环岛默认 0"),
             ("fork_outer_time_penalty_s", "外道罚时 (s)", "float", 0.0, 10.0, 0.1,
@@ -147,8 +133,8 @@ SCHEMA = [
     {
         "tier": "bev_core",
         "section": "line_follower_node",
-        "group": "⑥ 终点判定、物理脱困与底盘硬件常量（标完即冻结）",
-        "desc": "实测阿克曼物理尺寸、非对称满舵曲率、加速度包络与终点/卡死脱困阈值",
+        "group": "⑤ 终点、脱困与实车硬件常量（标完即冻结）",
+        "desc": "实测阿克曼物理尺寸、非对称满舵曲率、加速度包络与终点/卡死脱困阈值；标定后请勿再动",
         "default_open": False,
         "items": [
             ("finish_min_cum_yaw_rad", "终点最小累计偏航 (rad)", "float", 0.5, 6.0, 0.1,
@@ -183,15 +169,26 @@ SCHEMA = [
     },
 
     # =====================================================================
-    # TIER 2: ↩ 旧算法兼容（仅 bev_planner_mode=legacy 生效；BEV 下全部旁路）
+    # TIER 2: ↩ 已停用 / 旁路参数（锁死 + BEV 下不读取，仅保留 YAML 键兼容）
     # =====================================================================
     {
         "tier": "legacy_core",
         "section": "line_follower_node",
-        "group": "旧走廊规划器专用参数（仅 bev_planner_mode=legacy 时生效）",
-        "desc": "切换到 legacy 应急回退时才读取这 5 项；BEV 模式下安全走廊留白与黄线停稳已统一归口「BEV 白盒核心」",
-        "default_open": True,
+        "group": "⚠ 已锁死 / 已旁路：改了不生效，请勿在现场调这些",
+        "desc": "bev_planner_mode 强制 bev_dwa；4 项纯跟踪旋钮与 5 项旧走廊参数在当前两段式状态栅格下全部旁路",
+        "default_open": False,
         "items": [
+            ("bev_planner_mode", "核心规划架构模式（已强制 bev_dwa）", "enum",
+             ["bev_dwa", "legacy"], None, None,
+             "⚠ 节点强制锁定 bev_dwa，此项改了不生效；仅保留 YAML 键兼容"),
+            ("bev_lookahead_min_m", "最小前瞻距离 Ld_min (m)【已旁路】", "float", 0.16, 0.55, 0.01,
+             "⚠ 两段式状态栅格不再读取；原急弯最短前瞻（默认 0.28）"),
+            ("bev_lookahead_time_s", "速度前瞻系数 Ld_t (s)【已旁路】", "float", 0.00, 1.50, 0.05,
+             "⚠ 两段式状态栅格不再读取；原 Ld=min+t·v（默认 0.65）"),
+            ("bev_curv_ff_gain", "弯道弧度前馈增益【已旁路】", "float", 0.00, 1.50, 0.05,
+             "⚠ 入弯提前打角已由两段 κ1/κ2 状态栅格统一求解（默认 0.55）"),
+            ("bev_stanley_k_y", "近车头横向拉回增益【已旁路】", "float", 0.00, 4.00, 0.05,
+             "⚠ Stanley 横向纠偏已被测地线软墙惩罚替代（默认 1.20）"),
             ("speed_gain_damping", "弯道自适应降速比例（仅 legacy）", "float", 0.00, 0.90, 0.05,
              "0=弯道不降速，0.5=满弯降一半；BEV 模式下无效"),
             ("corridor_kp_y", "走廊横向刚度 (rad/s/m)（仅 legacy）", "float", 0.5, 8.0, 0.1,

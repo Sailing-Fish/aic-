@@ -2354,16 +2354,17 @@ void BevDwaPlanner::evaluate_two_stage_candidate(
       soft_steps++;
 
       if (allow_digit_bonus && !straight_digits.empty() && x >= 0.14 && x <= 0.85) {
-        for (const auto & gd : straight_digits) {
-          const double d2 = (x - gd.d_bumper_m) * (x - gd.d_bumper_m) +
-            (y - gd.y_lat_m) * (y - gd.y_lat_m);
-          if (d2 < 0.015) {
-            const double rew = config_.digit_bonus_weight *
-              std::max(0.0, 1.0 - std::sqrt(d2) / 0.125);
-            if (rew > best_digit_bonus) {
-              best_digit_bonus = rew;
-              best_digit_id = gd.digit;
-            }
+        // 只奖励锁定的主数字。同行小数字仅用于 anti-dual-cover 推离；若也发奖励，
+        // 主数字单帧闪失时右侧轨迹会瞬间拿到 bonus，造成 60ms 向右甩（实车 flk 回归）。
+        const auto & gd = straight_digits.front();
+        const double d2 = (x - gd.d_bumper_m) * (x - gd.d_bumper_m) +
+          (y - gd.y_lat_m) * (y - gd.y_lat_m);
+        if (d2 < 0.015) {
+          const double rew = config_.digit_bonus_weight *
+            std::max(0.0, 1.0 - std::sqrt(d2) / 0.125);
+          if (rew > best_digit_bonus) {
+            best_digit_bonus = rew;
+            best_digit_id = gd.digit;
           }
         }
       }
@@ -2379,7 +2380,7 @@ void BevDwaPlanner::evaluate_two_stage_candidate(
   const double pc_65 = std::max(0.0, (0.065 - std::max(0.0, min_safe_cone_clr)) / 0.065);
   const double pne_85 = std::max(0.0, (0.085 - std::max(0.0, min_safe_ne_clr)) / 0.085);
 
-  out_soft_wall = 2.2 * soft_wall_sum * inv_steps + 11.0 * (pw_75 * pw_75) + 28.0 * (pw_35 * pw_35);
+  out_soft_wall = 2.2 * soft_wall_sum * inv_steps + 7.0 * (pw_75 * pw_75) + 16.0 * (pw_35 * pw_35);
   out_soft_cone = 6.0 * soft_cone_sum * inv_steps + 12.0 * (pc_65 * pc_65);
   out_soft_ne = 10.0 * soft_ne_sum * inv_steps + 18.0 * (pne_85 * pne_85);
 
@@ -2397,7 +2398,7 @@ void BevDwaPlanner::evaluate_two_stage_candidate(
     }
   }
   if (phase_ == TopologyPhase::FORK_T_RIGHT_TURN) {
-    cost_branch += 2.5 * std::max(0.0, kappa1 + 0.35) + 2.5 * std::max(0.0, kappa2 + 0.35);
+    cost_branch += 3.5 * std::max(0.0, kappa1 + 0.55) + 2.5 * std::max(0.0, kappa2 + 1.50);
   }
   if (goal_yaw_active) {
     const double goal_err = std::abs(wrap_angle_rad(th_proj - goal_yaw));
@@ -2960,12 +2961,7 @@ BevDwaPlanResult BevDwaPlanner::step(
     0.95 * std::abs(chosen_snap.kappa2),
     0.85 * std::abs(road_kappa),
     0.65 * std::abs(kappa_init)});
-  double v_curve = std::sqrt(std::min(config_.max_lat_accel_mps2, 0.24) / (k_speed + 0.15));
-  if (std::abs(chosen_snap.kappa2) > 1.6) {
-    v_curve = std::min(v_curve, config_.corner_approach_speed_mps);
-  } else if (k_speed > 1.25) {
-    v_curve = std::min(v_curve, config_.corner_approach_speed_mps + 0.04);
-  }
+  double v_curve = std::sqrt(config_.max_lat_accel_mps2 / (k_speed + 0.15));
   v_target = std::min(v_target, v_curve);
 
   if (chosen_snap.min_wall_clr_m < 0.065) {

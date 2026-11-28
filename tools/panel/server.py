@@ -116,18 +116,24 @@ BRAKE_SPEED_SCHEMA_GROUPS = [
 SPEED_BRAKE_PRESETS = [
     {
         'id': 'run1_safe',
-        'label': 'Run 1 稳健保底（双层刹车 + 0.62 畅通直道）',
-        'desc': '推荐初赛/Run 1：闭环零倒车刹车 + 0.62 m/s 畅通直道包络',
+        'label': 'Run 1 稳健完赛（0.42 巡航 + 0.26 过弯）',
+        'desc': '推荐初赛/Run 1：闭环零倒车刹车 + 两段式向心加速度 0.26 起步，弯前主动降速',
         'values': {
-            'line_follower_node': dict(BRAKE_SPEED_DEFAULTS),
+            'line_follower_node': dict(
+                BRAKE_SPEED_DEFAULTS,
+                target_speed=0.42,
+                bev_max_lat_accel_mps2=0.26,
+            ),
         },
     },
     {
         'id': 'run2_fast',
-        'label': 'Run 2 畅通提速（0.78 m/s 直道冲刺）',
-        'desc': '在 Run 1 跑通基础上提高直道上限与加减速响应',
+        'label': 'Run 2 提速冲刺（0.50 巡航 + 0.38 过弯 + 0.78 直道）',
+        'desc': '在 Run 1 跑通基础上提高两段式过弯上限与直道冲刺速度，遇弯/障仍受安全速帽回落',
         'values': {
             'line_follower_node': {
+                'target_speed': 0.50,
+                'bev_max_lat_accel_mps2': 0.38,
                 'enable_sqrt_brake_envelope': True,
                 'enable_closed_loop_brake': True,
                 'brake_damping_gain': 0.95,
@@ -1448,6 +1454,7 @@ def empty_bev_state():
         'mode': '',
         'branch': 0,
         'kappa': None,
+        'kappa2': None,
         'road_kappa': None,
         'lat_err_m': None,
         'lookahead_m': None,
@@ -1456,6 +1463,7 @@ def empty_bev_state():
         'speed_mps': None,
         'yaw_rps': None,
         'speed_cap_mps': None,
+        'yolo_age_ms': None,
         'goal_yaw_deg': None,
         'rel_yaw_deg': None,
         'wall_clr_m': None,
@@ -1496,9 +1504,11 @@ def parse_bev_kv(kv):
         return _parse_metric_num(raw, digits=digits)
 
     for key, field in (
-        ('k', 'kappa'), ('kr', 'road_kappa'), ('ey', 'lat_err_m'), ('ld', 'lookahead_m'),
+        ('k', 'kappa'), ('k1', 'kappa'), ('k2', 'kappa2'),
+        ('kr', 'road_kappa'), ('ey', 'lat_err_m'), ('ld', 'lookahead_m'),
         ('L', 'safe_len_m'), ('score', 'score'),
         ('v', 'speed_mps'), ('yaw', 'yaw_rps'), ('cap', 'speed_cap_mps'),
+        ('age', 'yolo_age_ms'),
         ('goal', 'goal_yaw_deg'), ('th', 'rel_yaw_deg'), ('rel', 'rel_yaw_deg'),
         ('w_bev', 'lane_width_m'), ('s', 'arc_deg'),
     ):
@@ -1764,19 +1774,14 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
             continue
 
         if area == 'ctrl':
-            # 高频 5Hz 行只补摘要缺失的字段（cost/arc 由 1Hz summary 提供），不入里程碑
-            ctrl_fields = ('phase', 'mode', 'branch', 'speed_mps', 'yaw_rps',
-                           'arc_deg', 'wall_clr_m', 'obs_clr_m',
-                           'lane_width_m', 'digits', 'flags', 'kappa', 'safe_len_m',
-                           'speed_cap_mps', 'goal_yaw_deg', 'rel_yaw_deg', 'arc_total',
-                           'arc_feasible')
-            if not bev['available']:
-                parsed = parse_bev_kv(kv)
-                for f in ctrl_fields:
-                    if f in parsed:
-                        bev[f] = parsed[f]
-                bev['available'] = True
-                bev['last_t'] = t_str
+            # 高频 5Hz 行刷新实时字段（k2 / age / speed / clr 等）；
+            # cost 仍由 1Hz summary 独家提供，ctrl 行不入里程碑
+            parsed = parse_bev_kv(kv)
+            for f, v in parsed.items():
+                if f != 'cost':
+                    bev[f] = v
+            bev['available'] = True
+            bev['last_t'] = t_str
             continue
 
         if area == 'state' and event == 'change' and 'to=lost' not in kv:

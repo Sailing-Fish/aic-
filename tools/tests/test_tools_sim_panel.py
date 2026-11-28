@@ -464,19 +464,23 @@ class TestPanelAndTelemetry(unittest.TestCase):
             for it in g["items"]:
                 by_tier[g["tier"]].add(it["key"])
 
-        for core_key in ("bev_planner_mode", "bev_wheelbase_m", "bev_kappa_max_left",
-                         "bev_kappa_max_right", "bev_control_latency_s", "bev_imu_yaw_kp",
-                         "bev_steer_launch_v_floor", "bev_max_lat_accel_mps2",
-                         "bev_memory_ttl_sec", "bev_rollout_horizon_m",
-                         "bev_lookahead_min_m", "bev_lookahead_time_s",
-                         "bev_curv_ff_gain", "bev_stanley_k_y",
+        for core_key in ("target_speed", "bev_max_lat_accel_mps2", "max_yaw_rate",
+                         "bev_control_latency_s", "bev_rollout_horizon_m", "bev_imu_yaw_kp",
+                         "enable_clear_path_speed", "clear_straight_speed",
+                         "bev_wheelbase_m", "bev_kappa_max_left",
+                         "bev_kappa_max_right", "bev_steer_launch_v_floor",
+                         "bev_memory_ttl_sec",
                          "border_margin_m", "cone_margin_m", "no_entry_margin_m",
+                         "obstacle_speed_mps", "no_entry_speed_mps",
+                         "detection_timeout_sec",
                          "yellow_bumper_margin_m", "yellow_s_min", "yellow_v_min",
                          "enable_anti_stall_escape", "finish_min_cum_yaw_rad",
                          "fork_outer_branch", "fork_outer_time_penalty_s", "fork_min_votes"):
             self.assertIn(core_key, by_tier["bev_core"], f"Missing BEV key: {core_key}")
 
-        for legacy_key in ("speed_gain_damping", "corridor_kp_y", "corridor_heading_gain",
+        for legacy_key in ("bev_planner_mode", "bev_lookahead_min_m", "bev_lookahead_time_s",
+                           "bev_curv_ff_gain", "bev_stanley_k_y",
+                           "speed_gain_damping", "corridor_kp_y", "corridor_heading_gain",
                            "digit_approach_speed_mps", "finish_min_dist_m"):
             self.assertIn(legacy_key, by_tier["legacy_core"], f"Missing legacy key: {legacy_key}")
 
@@ -1544,6 +1548,56 @@ class TestPanelBevWhitebox(unittest.TestCase):
         self.assertAlmostEqual(p['cost']['pp'], -1.05)
         self.assertAlmostEqual(p['cost']['ff'], -0.25)
         self.assertTrue(p['flags']['feasible'])
+
+    def test_parse_bev_kv_two_stage_k2_age_and_ctrl_refresh(self):
+        summary_kv = (
+            "phase=fork_S_curve br=0 k1=-0.60 k2=-1.80 kr=-1.60 L=0.68 score=-1.45 "
+            "cost=[sa=+3.02,so=-0.41,hd=+0.18,br=+0.09,di=+0.90,cl=+0.02,sm=-0.01] "
+            "goal=+180d rel=+140d cap=0.42 arc=41/38 age=25ms clr=[w=+0.06,o=+0.90] "
+            "dig=L0(0)R0(0) flg=1"
+        )
+        p = panel_server.parse_bev_kv(summary_kv)
+        self.assertAlmostEqual(p['kappa'], -0.60)
+        self.assertAlmostEqual(p['kappa2'], -1.80)
+        self.assertEqual(p['yolo_age_ms'], 25)
+        self.assertEqual(p['cost']['sa'], 3.02)
+        self.assertEqual(p['arc_total'], 41)
+        self.assertEqual(p['arc_feasible'], 38)
+
+        # 高频 ctrl 行必须在 1Hz summary 之后继续刷新 k2 / age / speed / clr
+        ctrl_kv = (
+            "mode=bev_cruise phase=fork_S_curve branch=0 k1=-0.75 k2=-2.10 v=0.48 cap=0.45 "
+            "clr=[w=+0.03,o=+0.12] age=42ms"
+        )
+        orig_logroot, orig_state_dir = panel_server.LOGROOT, panel_server.STATE_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            run_id = 'test_bev_k2_age'
+            log_dir = Path(tmp) / 'logs' / run_id
+            state_dir = Path(tmp) / 'state'
+            log_dir.mkdir(parents=True)
+            state_dir.mkdir(parents=True)
+            (state_dir / 'status.json').write_text(
+                json.dumps({'run_id': run_id}), encoding='utf-8'
+            )
+            (log_dir / 'events.csv').write_text(
+                "ts,t,src,area,event,kv\n"
+                f"100.1,1.0,follow,bev,summary,{summary_kv}\n"
+                f"100.2,1.2,follow,ctrl,log,{ctrl_kv}\n",
+                encoding='utf-8',
+            )
+            panel_server.LOGROOT = str(Path(tmp) / 'logs')
+            panel_server.STATE_DIR = str(state_dir)
+            try:
+                bev = panel_server.read_diagnostics()['bev']
+                self.assertAlmostEqual(bev['kappa2'], -2.10)
+                self.assertEqual(bev['yolo_age_ms'], 42)
+                self.assertAlmostEqual(bev['speed_mps'], 0.48)
+                self.assertAlmostEqual(bev['wall_clr_m'], 0.03)
+                # cost 仍来自 1Hz summary，不被 ctrl 行覆盖
+                self.assertAlmostEqual(bev['cost']['sa'], 3.02)
+            finally:
+                panel_server.LOGROOT = orig_logroot
+                panel_server.STATE_DIR = orig_state_dir
 
     def test_ctrl_kv_does_not_corrupt_branch_from_cost(self):
         p = panel_server.parse_bev_kv(

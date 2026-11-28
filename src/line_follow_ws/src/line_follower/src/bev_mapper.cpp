@@ -668,16 +668,16 @@ cv::Mat BevMapper::render_bev_inset(
   }
 
   // Compact HUD text inside BEV inset
-  char txt1[64];
+  char txt1[72];
   std::snprintf(
-    txt1, sizeof(txt1), "BEV %s k=%.2f/%.2f",
+    txt1, sizeof(txt1), "BEV %s k1=%+.2f k2=%+.2f",
     topology_phase_to_string(plan.phase), plan.chosen_kappa, plan.chosen_kappa2);
   cv::putText(vis, txt1, cv::Point(44, 15), cv::FONT_HERSHEY_SIMPLEX, 0.33, cv::Scalar(255, 255, 255), 1);
 
-  char txt2[64];
+  char txt2[72];
   std::snprintf(
-    txt2, sizeof(txt2), "kr=%+.2f ey=%+.2f arc=%d",
-    plan.road_kappa_fit, plan.lat_err_m, plan.feasible_arc_count);
+    txt2, sizeof(txt2), "s=%.2fm feas=%d kr=%+.2f",
+    plan.chosen_s_split_m, plan.feasible_arc_count, plan.road_kappa_fit);
   cv::putText(vis, txt2, cv::Point(44, 29), cv::FONT_HERSHEY_SIMPLEX, 0.32, cv::Scalar(200, 245, 255), 1);
 
   if (preflight.checked && !preflight.homography_ok) {

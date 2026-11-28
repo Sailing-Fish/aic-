@@ -39,7 +39,7 @@ line_follower_node:
     bev_control_latency_s: 0.15
     bev_imu_yaw_kp: 0.35
     bev_steer_launch_v_floor: 0.16
-    bev_max_lat_accel_mps2: 0.42
+    bev_max_lat_accel_mps2: 0.26
     bev_memory_ttl_sec: 0.45
     bev_rollout_horizon_m: 0.85
     bev_lookahead_min_m: 0.28

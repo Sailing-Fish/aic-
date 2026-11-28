@@ -942,22 +942,33 @@ void LineFollowerNode::log_effective_parameters() const
     mcfg.max_decel_mps2,
     mcfg.active_decel_kp);
 
+  const BevDwaConfig & bevcfg = bev_dwa_planner_.config();
   RCLCPP_INFO(
     this->get_logger(),
-    "[DEC] param effective #bev bev_planner_mode=%s bev_wb=%.4f bev_kappa=[L:%.2f,R:%.2f] "
-    "bev_lat=%.3f bev_imu_kp=%.2f bev_launch_v=%.2f bev_a_lat=%.2f bev_ttl=%.2f "
-    "brake_min_cmd=%.2f finish_min_yaw=%.2f",
+    "[DEC] param effective #bev bev_planner_mode=%s "
+    "target_speed=%.2f max_yaw_rate=%.2f bev_max_lat_accel_mps2=%.2f "
+    "bev_control_latency_s=%.3f bev_rollout_horizon_m=%.2f bev_imu_yaw_kp=%.2f "
+    "enable_clear_path_speed=%d clear_straight_speed=%.2f "
+    "border_margin_m=%.3f cone_margin_m=%.3f no_entry_margin_m=%.3f "
+    "obstacle_speed_mps=%.2f no_entry_speed_mps=%.2f bev_memory_ttl_sec=%.2f "
+    "detection_timeout_sec=%.2f "
+    "bev_wheelbase_m=%.4f bev_kappa_max_left=%.2f bev_kappa_max_right=%.2f "
+    "bev_steer_launch_v_floor=%.2f car_width_m=%.3f car_length_m=%.3f "
+    "rear_axle_to_bumper_m=%.3f max_accel_mps2=%.2f max_decel_mps2=%.2f "
+    "max_speed=%.2f min_speed=%.2f enable_anti_stall_escape=%d "
+    "finish_min_cum_yaw_rad=%.2f finish_force_dist_m=%.2f brake_min_cmd_mps=%.2f",
     planner_mode_.c_str(),
-    bev_dwa_planner_.config().wheelbase_m,
-    bev_dwa_planner_.config().kappa_max_left,
-    bev_dwa_planner_.config().kappa_max_right,
-    bev_dwa_planner_.config().control_latency_s,
-    bev_dwa_planner_.config().imu_yaw_kp,
-    bev_dwa_planner_.config().steer_launch_v_floor,
-    bev_dwa_planner_.config().max_lat_accel_mps2,
-    bev_dwa_planner_.config().bev_memory_ttl_sec,
-    fcfg.brake_min_cmd_mps,
-    bev_dwa_planner_.config().finish_min_cum_yaw_rad);
+    target_speed_, max_yaw_rate_, bevcfg.max_lat_accel_mps2,
+    bevcfg.control_latency_s, bevcfg.rollout_horizon_m, bevcfg.imu_yaw_kp,
+    mcfg.enable_clear_path_speed ? 1 : 0, mcfg.clear_straight_speed,
+    bevcfg.border_margin_m, bevcfg.cone_margin_m, bevcfg.no_entry_margin_m,
+    bevcfg.obstacle_speed_mps, bevcfg.no_entry_speed_mps, bevcfg.bev_memory_ttl_sec,
+    detection_timeout_sec_,
+    bevcfg.wheelbase_m, bevcfg.kappa_max_left, bevcfg.kappa_max_right,
+    bevcfg.steer_launch_v_floor, bevcfg.car_width_m, bevcfg.car_length_m,
+    bevcfg.rear_axle_to_bumper_m, mcfg.max_accel_mps2, mcfg.max_decel_mps2,
+    max_speed_, min_speed_, bevcfg.enable_anti_stall_escape ? 1 : 0,
+    bevcfg.finish_min_cum_yaw_rad, bevcfg.finish_force_dist_m, fcfg.brake_min_cmd_mps);
 }
 
 bool LineFollowerNode::brake_pulse_on(double elapsed_s) const
@@ -1821,23 +1832,25 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
     // 放在 ctrl 之后独立节流，避免把完整分解塞进 5Hz 日志造成 CPU/IO 浪费。
     if (ctrl_changed || (now_sec - last_bev_summary_sec_) >= 1.0) {
       const BevArcCandidate & c = bev_plan.chosen_candidate;
+      const int summary_age_ms = (det_ref_sec > -1e8) ?
+        static_cast<int>(std::round((now_sec - det_ref_sec) * 1000.0)) : -1;
       RCLCPP_INFO(
         this->get_logger(),
-        "[DEC] bev summary phase=%s br=%d k=%+.2f kr=%+.2f ey=%+.3f ld=%.2f L=%.2f score=%+.2f "
-        "cost=[kr=%+.2f,pp=%+.2f,lt=%+.2f,ff=%+.2f,dg=%+.2f,ey=%+.2f,dk=%+.2f] "
-        "goal=%+.0fd rel=%+.0fd cap=%.2f arc=%d/%d clr=[w=%+.2f,o=%+.2f] "
+        "[DEC] bev summary phase=%s br=%d k1=%+.2f k2=%+.2f kr=%+.2f L=%.2f score=%+.2f "
+        "cost=[sa=%+.2f,so=%+.2f,hd=%+.2f,br=%+.2f,di=%+.2f,cl=%+.2f,sm=%+.2f] "
+        "goal=%+.0fd rel=%+.0fd cap=%.2f arc=%d/%d age=%dms clr=[w=%+.2f,o=%+.2f] "
         "dig=L%d(%d)R%d(%d) flg=%d",
         topology_phase_to_string(bev_plan.phase),
         bev_plan.committed_branch,
-        c.kappa, bev_plan.road_kappa_fit, bev_plan.lat_err_m, bev_plan.lookahead_m,
-        c.safe_len_m, c.score,
-        bev_plan.road_kappa_fit, bev_plan.kappa_pp, bev_plan.kappa_lat,
-        bev_plan.kappa_curv_ff, bev_plan.kappa_digit_shift, bev_plan.lat_err_m, c.cost_smooth,
+        c.kappa, c.kappa2, bev_plan.road_kappa_fit, c.safe_len_m, c.score,
+        c.cost_safe_len, -c.cost_soft, -c.cost_heading, -c.cost_branch,
+        c.cost_digit, c.cost_clearance, -c.cost_smooth,
         bev_plan.goal_yaw_rad * (180.0 / kPi),
         bev_plan.rel_yaw_rad * (180.0 / kPi),
         bev_plan.speed_cap_mps,
-        bev_plan.total_slice_count,
-        bev_plan.valid_slice_count,
+        static_cast<int>(bev_plan.candidates.size()),
+        bev_plan.feasible_arc_count,
+        summary_age_ms,
         c.min_wall_clr_m, c.min_obs_clr_m,
         bev_plan.fork_left_digit, bev_plan.fork_left_votes,
         bev_plan.fork_right_digit, bev_plan.fork_right_votes,
@@ -1872,11 +1885,11 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
 
     char gbuf[96];
     std::snprintf(
-      gbuf, sizeof(gbuf), "k=%+.2f kr=%+.2f ey=%+.2f Ld=%.2f s=%.2fm",
+      gbuf, sizeof(gbuf), "k1=%+.2f k2=%+.2f feas=%d s=%.2fm arc=%.2fm",
       bev_plan.chosen_kappa,
-      bev_plan.road_kappa_fit,
-      bev_plan.lat_err_m,
-      bev_plan.lookahead_m,
+      bev_plan.chosen_kappa2,
+      bev_plan.feasible_arc_count,
+      bev_plan.chosen_s_split_m,
       finish_guard_.total_arc_m());
     finals_overlay.finish_guard_status = gbuf;
 
