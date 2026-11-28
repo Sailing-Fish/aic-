@@ -1395,6 +1395,55 @@ class TestPanelStartToggleState(unittest.TestCase):
             finally:
                 panel_server.STATE_DIR = orig_state_dir
 
+    def test_stale_start_echo_does_not_revert_button_state(self):
+        class _Msg:
+            def __init__(self, data):
+                self.data = data
+
+        import tempfile
+        node = panel_server.PanelNode.__new__(panel_server.PanelNode)
+        node._last_started = False
+        node._last_start_rx_ts = 0.0
+        node._local_start_guard_until = 0.0
+        orig_state_dir = panel_server.STATE_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            panel_server.STATE_DIR = tmp
+            try:
+                with panel_server.SH.lock:
+                    panel_server.SH.started = False
+                    panel_server.SH.start_cmd = False
+                    panel_server.SH.locked = False
+                    panel_server.SH.round = 1
+                    panel_server.SH.timer_start = None
+
+                # 面板点发车：本地状态立刻变成 true（按钮应变停止）
+                node.apply_local_start_state(True)
+                with panel_server.SH.lock:
+                    self.assertTrue(panel_server.SH.started)
+                    self.assertTrue(panel_server.SH.start_cmd)
+
+                # start_toggle 的 10Hz timer 还有一条切换前的 false 在途：
+                # 保护窗口内必须丢弃，否则会把按钮打回「发车」
+                node._on_start(_Msg(False))
+                with panel_server.SH.lock:
+                    self.assertTrue(panel_server.SH.started)
+                    self.assertTrue(panel_server.SH.start_cmd)
+
+                # 新值 true 的回环正常接受
+                node._on_start(_Msg(True))
+                with panel_server.SH.lock:
+                    self.assertTrue(panel_server.SH.started)
+                    self.assertEqual(panel_server.SH.round, 2)
+
+                # 保护窗口过期后，真实的停车回环才生效
+                node._local_start_guard_until = 0.0
+                node._on_start(_Msg(False))
+                with panel_server.SH.lock:
+                    self.assertFalse(panel_server.SH.started)
+                    self.assertFalse(panel_server.SH.start_cmd)
+            finally:
+                panel_server.STATE_DIR = orig_state_dir
+
     def test_ui_map_pill_tracks_running_map(self):
         html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
         self.assertIn("const activeMap = runningMap ||", html)

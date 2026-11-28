@@ -975,6 +975,7 @@ class PanelNode(Node):
         self.start_cmd_fallback_pub = self.create_publisher(Bool, 'line_follower/start_cmd', 10)
         self._fallback_start_desired = None
         self._last_start_rx_ts = 0.0
+        self._local_start_guard_until = 0.0
         self._start_fallback_timer = self.create_timer(0.1, self._on_start_fallback_tick)
 
         self.get_logger().info('panel_node ready')
@@ -1021,6 +1022,17 @@ class PanelNode(Node):
     def _on_start(self, msg):
         new_val = bool(msg.data)
         self._last_start_rx_ts = time.time()
+
+        # start_toggle 以 10Hz 持续发布。面板主动发车/停车后，on_set_cmd 是异步的，
+        # timer 里可能还有一条“切换前”的旧值在途到达这里，把刚同步好的状态打回去
+        # （典型症状：点了发车，按钮闪一下又变回「发车」）。
+        # 在保护窗口内只接受与本地期望一致的回环，其余视为过期数据丢弃。
+        now = time.time()
+        if getattr(self, '_local_start_guard_until', 0.0) > now:
+            with SH.lock:
+                expected = bool(SH.started)
+            if new_val != expected:
+                return
 
         # 原始值单独存一份：判断"重启安不安全"要用它。
         # start_toggle 以 10Hz 重复发布同一个值，这里只认跳变沿。
@@ -1096,6 +1108,9 @@ class PanelNode(Node):
         val = bool(desired)
         self._last_started = val
         self._last_start_rx_ts = time.time()
+        # 0.35s 保护窗口：覆盖 10Hz timer 在途旧值 + on_set_cmd 处理延迟；
+        # 之后 start_toggle 已稳定发布新值，回环正常生效。
+        self._local_start_guard_until = time.time() + 0.35
         with SH.lock:
             SH.start_cmd = val
             if val:
