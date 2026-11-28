@@ -2199,16 +2199,24 @@ async function pollStatus(){
     syncVideoSlot('yolo', $('wrapYolo'), $('imgYolo'), $('yoloLivePill'), streamOn && frames.yolo);
 
     lastStatusSnapshot = d;
-    updateHealthDots(d);
-    renderMilestoneStrip(d, evPool);
-    renderBevHud(d);
-    renderClinic(d);
-    updateCompanions(d);
-
+    // 状态关键路径：即使某个展示渲染抛错，也必须更新按钮/锁/重启状态，
+    // 否则会出现「后端已发车但按钮还是发车」「地图切完 pill 一直灰」的假死。
     lastStarted = d.started;
     const lk = !!d.locked;
     if(lk !== lastLocked){ setLocked(lk); }
     syncTopActionButtons(d);
+    handleRestart(d.restart);
+
+    try{
+      updateHealthDots(d);
+      const evPool = (d.milestones && d.milestones.length) ? d.milestones : (d.events || []);
+      renderMilestoneStrip(d, evPool);
+      renderBevHud(d);
+      renderClinic(d);
+      updateCompanions(d);
+    }catch(renderErr){
+      console.warn('[panel] non-critical render failed:', renderErr);
+    }
 
     const segTag = ' · 决赛走廊' + (typeof si.s === 'number' ? (' s=' + si.s.toFixed(2) + 'm') : '');
     $('paramTag').textContent = (runningMap ? ('当前 ' + runningMap + '.yaml') : '-')
@@ -2219,7 +2227,6 @@ async function pollStatus(){
     $('logTag').textContent = d.run_id || '-';
 
     $('navTune').classList.toggle('has-dot', !!(dirty || yamlStale || effMismatch));
-    handleRestart(d.restart);
     if(d.recording) renderRecording(d.recording);
   }catch(e){
     statusFailCount++;
@@ -2689,7 +2696,20 @@ async function switchRunningMap(targetMap){
 }
 
 function handleRestart(rs){
-  if(!rs || !restarting) return;
+  if(!restarting) return;
+  // 后端 restart 到达 ready 后会自动清除（返回 null）。
+  // 这时候前端若还在 restarting，视为已完成，用已保存的目标地图收尾。
+  if(!rs){
+    restarting = false;
+    if(pendingChanged){
+      toast(`✅ ④巡线已就绪：${pendingChanged}`);
+      pendingChanged = '';
+    }
+    if($('memo')) $('memo').textContent = '已就绪，参数已生效';
+    updateButtons();
+    syncTopActionButtons(lastStatusSnapshot);
+    return;
+  }
   if(rs.state === 'ready'){
     restarting = false;
     const mapDone = rs.map ? `（当前地图 ${rs.map}）` : '';

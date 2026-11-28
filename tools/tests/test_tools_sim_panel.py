@@ -11,6 +11,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -1449,6 +1450,46 @@ class TestPanelStartToggleState(unittest.TestCase):
         self.assertIn("const activeMap = runningMap ||", html)
         self.assertIn("if(rf && !restarting) runningMap = rf", html)
         self.assertIn("runningMap = targetMap;", html)
+
+    def test_restart_state_clears_on_ready(self):
+        import tempfile
+        old_dir, old_state = panel_server.LOGROOT, panel_server.STATE_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path
+            rd = Path(tmp) / 'logs' / 'run_x'
+            rd.mkdir(parents=True)
+            (Path(tmp) / 'state').mkdir()
+            (rd / 'follow.log').write_text(
+                '[DEC] proc start name=follow pid=1\n'
+                '[DEC] param effective #bev bev_planner_mode=bev_dwa\n',
+                encoding='utf-8',
+            )
+            (Path(tmp) / 'state' / 'status.json').write_text(
+                json.dumps({'run_id': 'run_x', 'params_file': 'finals_fork'}),
+                encoding='utf-8',
+            )
+            panel_server.LOGROOT = str(Path(tmp) / 'logs')
+            panel_server.STATE_DIR = str(Path(tmp) / 'state')
+            try:
+                with panel_server.SH.lock:
+                    panel_server.SH.restart = {
+                        'name': 'follow', 't0': time.time() - 5.0, 'off': 0,
+                    }
+                rs = panel_server.restart_state()
+                self.assertEqual(rs['state'], 'ready')
+                with panel_server.SH.lock:
+                    self.assertIsNone(panel_server.SH.restart)
+            finally:
+                panel_server.LOGROOT, panel_server.STATE_DIR = old_dir, old_state
+
+    def test_ui_poll_status_keeps_state_updates_before_renders(self):
+        html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("const evPool = (d.milestones && d.milestones.length)", html)
+        self.assertLess(
+            html.index("syncTopActionButtons(d);\n    handleRestart(d.restart);"),
+            html.index("renderMilestoneStrip(d, evPool);"),
+        )
+        self.assertIn("if(!rs){", html)
 
 
 class TestPanelBevWhitebox(unittest.TestCase):

@@ -1301,7 +1301,14 @@ def restart_state():
     pat = READY_PAT.get(name)
     ready = (pat in chunk) if pat else started
 
-    if ready:
+    if ready and elapsed > 1.0:
+        # ready 是最终态：清掉 SH.restart，避免 /api/status 永远返回 ready
+        # 让前端 handleRestart 反复进入 ready 分支、或把 UI 卡在"重启中"灰态。
+        # elapsed>1s 保护：刚设置 restart 的响应里还能拿到 ready/queued 快照。
+        with SH.lock:
+            SH.restart = None
+        state = 'ready'
+    elif ready:
         state = 'ready'
     elif elapsed > 30:
         state = 'timeout'
