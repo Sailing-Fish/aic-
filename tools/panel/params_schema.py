@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-面板参数表单的 schema：按“正交层级 (tier)”组织，聚焦全国决赛两页式调参。
+面板参数表单的 schema：按“正交层级 (tier)”组织，聚焦 BEV DWA 白盒算法。
 
-两大层级（前端渲染为 2 个独立标签页）：
-    1. finals_core  — ★ 决赛核心调参（现场只看这一页：19 个正交物理参数，零重叠）
-    2. calibration  — ⚙ 开关与标定（模式切换、B1/B3/B5/B10 标定与应急覆盖、看门狗）
+三大层级（前端渲染为 3 个独立标签页）：
+    1. bev_core     — ★ BEV 白盒核心（日常只看这一页：曲率/栅格/数字经济学/终点脱困）
+    2. legacy_core  — ↩ 旧算法兼容（走廊规划参数，仅 bev_planner_mode=legacy 时生效）
+    3. calibration  — ⚙ 开关与标定（视觉标定、黄线执行层、看门狗）
 
 类型约定：
     float | int | bool | enum
@@ -18,43 +19,163 @@
 
 TIERS = [
     {
-        "id": "finals_core",
-        "label": "★ 决赛核心",
-        "subtitle": "日常只调这 4 组正交物理量：速度、刹车留白、避障余量、终点里程互不打架",
+        "id": "bev_core",
+        "label": "★ BEV 白盒核心",
+        "subtitle": "第一性原理 BEV + 拓扑罗盘 + DWA：曲率/栅格/数字经济学/终点脱困，日常只调这一页",
+    },
+    {
+        "id": "legacy_core",
+        "label": "↩ 旧算法兼容",
+        "subtitle": "仅 bev_planner_mode=legacy 时生效；BEV 模式下这些参数被旁路，改了不会有任何效果",
     },
     {
         "id": "calibration",
         "label": "⚙ 开关与标定",
-        "subtitle": "模式切换、B1/B3/B5 几何标定、B10 红障 HSV 应急覆盖与看门狗",
+        "subtitle": "视觉标定、黄线执行层、安全护栏与看门狗（标完即冻结）",
     },
 ]
 
 
 SCHEMA = [
     # =====================================================================
-    # TIER 1: ★ 决赛核心调参（严格正交，日常调试只需关注这 4 组）
+    # TIER 1: ★ BEV 白盒核心（日常只看这一页；全部参数为第一性原理正交量）
     # =====================================================================
     {
-        "tier": "finals_core",
+        "tier": "bev_core",
+        "section": "line_follower_node",
+        "group": "① BEV 规划器总览（一键灰度切换）",
+        "desc": "bev_dwa=米制占据栅格+拓扑罗盘+阿克曼 DWA；legacy=旧走廊规划回退",
+        "default_open": True,
+        "items": [
+            ("bev_planner_mode", "核心规划架构模式", "enum",
+             ["bev_dwa", "legacy"], None, None,
+             "★ 改这里必须「保存并重启巡线」；BEV 模式下 legacy_core 整页参数全部旁路"),
+            ("target_speed", "BEV 巡航速度 (m/s)", "float", 0.10, 1.00, 0.01,
+             "映射到 bev_cfg.cruise_speed_mps；弯道限速由向心加速度上限自动算，不需要手动比例"),
+            ("max_yaw_rate", "最大偏航角速度 (rad/s)", "float", 0.4, 3.0, 0.05,
+             "环岛建议 1.8–2.0，岔路 S 建议 1.5–1.7"),
+        ],
+    },
+    {
+        "tier": "bev_core",
+        "section": "line_follower_node",
+        "group": "② 阿克曼运动学与非对称曲率（实测一次即冻结）",
+        "desc": "左/右最大曲率来自实车满舵标定；Smith 延迟前推与 IMU 内环补偿执行衰减",
+        "default_open": True,
+        "items": [
+            ("bev_wheelbase_m", "阿克曼轴距 (m)", "float", 0.08, 0.30, 0.002,
+             "前后轴距 L（硬件固定 0.1395m，非换底盘勿改）"),
+            ("bev_kappa_max_left", "左转最大曲率 (1/m)", "float", 1.0, 4.0, 0.05,
+             "实车满舵左转实测曲率；DWA 候选弧左边界"),
+            ("bev_kappa_max_right", "右转最大曲率 (1/m)", "float", 1.0, 4.0, 0.05,
+             "实车满舵右转实测曲率；DWA 候选弧右边界（非对称）"),
+            ("bev_max_lat_accel_mps2", "最大侧向加速度 (m/s²)", "float", 0.10, 1.50, 0.01,
+             "曲率限速 v≤√(a/|κ|)；↑过弯更快但有侧滑风险，默认 0.42"),
+            ("bev_steer_launch_v_floor", "起步转向虚拟速度下限 (m/s)", "float", 0.05, 0.40, 0.01,
+             "低速时仍保留有效转向的物理下限，防起步打不动方向"),
+            ("bev_control_latency_s", "控制延迟 Smith 前推 (s)", "float", 0.0, 0.30, 0.01,
+             "把决策点前推 v·τ 补偿串口+舵机延迟；默认 0.09"),
+            ("bev_imu_yaw_kp", "IMU 陀螺仪内环增益", "float", 0.00, 1.20, 0.05,
+             "补偿大角转向 20% 衰减与舵机中位偏置（默认 0.35；0=关内环）"),
+            ("max_accel_mps2", "最大平滑加速度 (m/s²)", "float", 0.3, 2.5, 0.05,
+             "BEV 速度包络的加速度斜率上限"),
+            ("max_decel_mps2", "最大平滑减速度 (m/s²)", "float", 0.8, 4.0, 0.1,
+             "BEV 速度包络的减速度斜率上限"),
+        ],
+    },
+    {
+        "tier": "bev_core",
+        "section": "line_follower_node",
+        "group": "③ BEV 栅格记忆与前滚视距（决定 DWA 看得见多远）",
+        "desc": "160×160 米制占据栅格 1cm/cell；短时 EKF 记忆只保留后轮盲区",
+        "default_open": False,
+        "items": [
+            ("bev_memory_ttl_sec", "BEV 障碍记忆 TTL (s)", "float", 0.10, 1.50, 0.05,
+             "旧栅格 warp 回当前车体系的保留时长；当前帧看到 FREE 立即擦除（默认 0.55）"),
+            ("bev_rollout_horizon_m", "DWA 弧线前滚长度 (m)", "float", 0.30, 1.50, 0.05,
+             "候选弧评估距离；↑看得远但 CPU 线性增加（默认 0.85）"),
+            ("car_width_m", "车体宽度 (m)", "float", 0.10, 0.30, 0.005,
+             "DWA 三点圆盘保护半径 r=宽/2；默认 0.191"),
+            ("car_length_m", "车体长度 (m)", "float", 0.15, 0.45, 0.005,
+             "三点圆盘沿车长分布；默认 0.280"),
+            ("rear_axle_to_bumper_m", "后轴到前防撞条 (m)", "float", 0.05, 0.40, 0.01,
+             "BEV 记忆绕后轴旋转的三点几何基准（默认 0.18m）"),
+        ],
+    },
+    {
+        "tier": "bev_core",
+        "section": "line_follower_node",
+        "group": "④ 岔路数字经济学（拓扑罗盘选边）",
+        "desc": "净收益 = 5·有效数字 − 外道罚时；单侧缺失用期望值 4.5 兜底",
+        "default_open": True,
+        "items": [
+            ("fork_outer_branch", "外道分支 (-1左/0无/1右)", "int", -1, 1, 1,
+             "岔路罚时施加在哪一侧；岔路 S 默认 -1，环岛默认 0"),
+            ("fork_outer_time_penalty_s", "外道罚时 (s)", "float", 0.0, 10.0, 0.1,
+             "外道分支的期望时间惩罚，直接影响选边净收益"),
+            ("fork_min_votes", "数字投票最小票数", "int", 1, 8, 1,
+             "黄线停稳时权重×2；低于该票数的数字不计入决策"),
+            ("digit_min_conf", "吃数字置信度门槛", "float", 0.20, 0.95, 0.05,
+             "Run 1 保底拉高到 0.85 少冒险；Run 2/3 放回 0.55 吃 Bonus"),
+            ("allow_dual_digit_cover", "允许直道双数字同压", "bool", 0, 1, 1,
+             "关=偏向大数字避开小数字（防 19.1cm 车身同时压两个）"),
+            ("max_digit_lateral_shift_m", "吃数字最大横移 (m)", "float", 0.00, 0.20, 0.01,
+             "直道为吃数字允许偏离中线最大距离；0=关闭直道吃数字"),
+        ],
+    },
+    {
+        "tier": "bev_core",
+        "section": "line_follower_node",
+        "group": "⑤ 终点判定与物理脱困",
+        "desc": "BEV 终点不再依赖黄线计数，改看视觉死胡同+累计偏航/里程",
+        "default_open": True,
+        "items": [
+            ("finish_min_cum_yaw_rad", "终点最小累计偏航 (rad)", "float", 0.5, 6.0, 0.1,
+             "视觉死胡同 + 累计偏航 ≥ 此值才判终点（默认 2.2）"),
+            ("finish_force_dist_m", "终点强判兜底里程 (m)", "float", 6.0, 18.0, 0.1,
+             "累计弧长超过此值遇黄线无条件判终点"),
+            ("enable_anti_stall_escape", "启用物理卡死倒车脱困", "bool", 0, 1, 1,
+             "有速度命令但 odom 近零超 1.5s 时倒车反打，最多 2 次"),
+        ],
+    },
+    {
+        "tier": "bev_core",
+        "section": "line_follower_node",
+        "group": "⑥ 障碍速度帽与安全护栏",
+        "desc": "DWA 轨迹代价之外的硬限速与全局上限",
+        "default_open": False,
+        "items": [
+            ("obstacle_speed_mps", "红锥绕行限速 (m/s)", "float", 0.08, 0.60, 0.01,
+             "BEV 栅格内有红锥时的独立速度上限"),
+            ("no_entry_speed_mps", "禁行区绕行限速 (m/s)", "float", 0.08, 0.50, 0.01,
+             "绕行 +30s 红禁行区时的独立速度上限（宁慢勿碰）"),
+            ("max_speed", "全局速度硬上限 (m/s)", "float", 0.1, 1.5, 0.05,
+             "必须 ≥ 巡航速度，平时 0.85 即可"),
+            ("min_speed", "全局速度硬下限 (m/s)", "float", 0.0, 0.5, 0.01,
+             "通常保持 0.0"),
+        ],
+    },
+
+    # =====================================================================
+    # TIER 2: ↩ 旧算法兼容（仅 bev_planner_mode=legacy 生效；BEV 下全部旁路）
+    # =====================================================================
+    {
+        "tier": "legacy_core",
         "section": "line_follower_node",
         "group": "① 巡线速度与转向（基准速 × 弯道比例，零暗限速）",
         "desc": "直道快慢只调「巡航速度」；过弯稳不稳只调「弯道降速比例」和「横向刚度/阻尼」",
         "default_open": True,
         "items": [
-            ("target_speed", "巡航速度 (m/s)", "float", 0.10, 1.00, 0.01,
-             "唯一总速度基准（Run 1 保底 0.40–0.44，Run 2/3 可逐步提速）；不影响黄线停车点"),
-            ("speed_gain_damping", "弯道自适应降速比例", "float", 0.00, 0.90, 0.05,
-             "0=弯道不降速，0.5=满弯降一半；与巡航速度成比例正交，不再与事件限速叠乘"),
-            ("corridor_kp_y", "走廊横向刚度 (rad/s/m)", "float", 0.5, 8.0, 0.1,
-             "↑更紧贴目标轨迹（避障贴边更准），过大直道摆头；↓更柔顺但大弯慢半拍"),
-            ("corridor_heading_gain", "航向阻尼增益", "float", 0.0, 3.0, 0.05,
-             "抑制过弯回正与绕障后的摆头震荡"),
-            ("max_yaw_rate", "最大转向角速度 (rad/s)", "float", 0.4, 3.0, 0.05,
-             "转向硬上限；环岛建议 1.8–2.0，岔路 S 建议 1.5–1.7"),
+            ("speed_gain_damping", "弯道自适应降速比例（仅 legacy）", "float", 0.00, 0.90, 0.05,
+             "0=弯道不降速，0.5=满弯降一半；BEV 模式下无效"),
+            ("corridor_kp_y", "走廊横向刚度 (rad/s/m)（仅 legacy）", "float", 0.5, 8.0, 0.1,
+             "↑更紧贴目标轨迹；BEV 模式下无效"),
+            ("corridor_heading_gain", "航向阻尼增益（仅 legacy）", "float", 0.0, 3.0, 0.05,
+             "抑制过弯摆头；BEV 模式下无效"),
         ],
     },
     {
-        "tier": "finals_core",
+        "tier": "legacy_core",
         "section": "line_follower_node",
         "group": "② 黄线精准停稳（已彻底与 ROI / 巡航速解耦）",
         "desc": "停车位置只看「车头留白距离」；系统会自动先降到爬行速再按物理刹车公式停稳",
@@ -71,41 +192,31 @@ SCHEMA = [
         ],
     },
     {
-        "tier": "finals_core",
+        "tier": "legacy_core",
         "section": "line_follower_node",
         "group": "③ 避障余量与 Bonus 策略（全部为独立物理上限/米数）",
         "desc": "事件限速只作用于对应障碍物出现时；余量单位均为真实地面米数",
         "default_open": True,
         "items": [
-            ("obstacle_speed_mps", "红锥绕行限速 (m/s)", "float", 0.08, 0.60, 0.01,
-             "视野/记忆内有红锥时的独立速度上限（不影响无障碍直道）"),
-            ("no_entry_speed_mps", "禁行区绕行限速 (m/s)", "float", 0.08, 0.50, 0.01,
-             "绕行 +30s 红禁行区时的独立速度上限（宁慢勿碰）"),
-            ("cone_margin_m", "红锥侧向留白 (m)", "float", 0.00, 0.08, 0.005,
+            ("cone_margin_m", "红锥侧向留白 (m)（仅 legacy）", "float", 0.00, 0.08, 0.005,
              "车身外缘到红锥的最小物理间距（默认 0.025m）"),
             ("no_entry_margin_m", "禁行区侧向留白 (m)", "float", 0.00, 0.08, 0.005,
              "车身外缘到 +30s 空心红禁行区的最小物理间距（默认 0.030m）"),
-            ("border_margin_m", "车道黑边留白 (m)", "float", 0.00, 0.08, 0.005,
+            ("border_margin_m", "车道黑边留白 (m)（仅 legacy）", "float", 0.00, 0.08, 0.005,
              "车身外缘到黑线的保护间距（防压边 +15s/s，默认 0.025m）"),
-            ("digit_min_conf", "吃数字置信度门槛", "float", 0.20, 0.95, 0.05,
-             "Run 1 保底可拉高到 0.85 少冒险；Run 2/3 放回 0.55 吃 Bonus (-5s/个)"),
-            ("max_digit_lateral_shift_m", "吃数字最大横移 (m)", "float", 0.00, 0.20, 0.01,
-             "直道为吃数字允许偏离中线的最大距离；设为 0 = 本轮关闭直道吃数字"),
-            ("digit_approach_speed_mps", "吃数字接近限速 (m/s)", "float", 0.08, 0.60, 0.01,
+            ("digit_approach_speed_mps", "吃数字接近限速 (m/s)（仅 legacy）", "float", 0.08, 0.60, 0.01,
              "直道对准高分数字时的独立速度上限"),
         ],
     },
     {
-        "tier": "finals_core",
+        "tier": "legacy_core",
         "section": "line_follower_node",
         "group": "④ 终点门控（按地图总长设好即冻结）",
         "desc": "防止决赛随机中途黄线误判为终点提前停赛",
         "default_open": False,
         "items": [
-            ("finish_min_dist_m", "终点门控最短里程 (m)", "float", 4.0, 15.0, 0.1,
+            ("finish_min_dist_m", "终点门控最短里程 (m)（仅 legacy）", "float", 4.0, 15.0, 0.1,
              "累计里程未达该值前，任何黄线只做临时停车不判终点"),
-            ("finish_force_dist_m", "终点强判兜底里程 (m)", "float", 6.0, 18.0, 0.1,
-             "超过该里程遇到黄线无条件判终点（即使视觉封口误漏）"),
         ],
     },
 
@@ -135,11 +246,6 @@ SCHEMA = [
         "group": "模式总开关与 B10 白道 CV 红障兜底",
         "default_open": True,
         "items": [
-            ("bev_planner_mode", "核心规划架构模式（一键灰度切换）", "enum",
-             ["bev_dwa", "legacy"], None, None,
-             "bev_dwa=第一性原理 BEV 米制占据栅格+拓扑指南针+阿克曼 DWA（推荐）；legacy=旧版走廊规划一键回退"),
-            ("bev_imu_yaw_kp", "BEV IMU 陀螺仪内环增益", "float", 0.00, 1.20, 0.05,
-             "补偿大角转向 20% 衰减与舵机机械中位偏置（默认 0.35；0=关闭内环）"),
             ("brake_min_cmd_mps", "黄线反拖死区下限 (m/s)", "float", 0.00, 0.40, 0.02,
              "越过 Wheeltec 电机 ~0.09 m/s 静摩擦死区，杜绝黄线刹车 timeout 滑行（默认 0.20）"),
             ("lane_seg_mode", "车道视觉分割模式", "enum",
@@ -152,8 +258,6 @@ SCHEMA = [
              "把检测到的彩色/涂鸦数字区域回填白色，防止赛道二值图断裂"),
             ("enable_obstacle_memory", "启用障碍物世界坐标记忆", "bool", 0, 1, 1,
              "在 /odom_combined 保留车侧后轮区间障碍，防后轮切内蹭 +30s 禁行区"),
-            ("allow_dual_digit_cover", "允许直道双数字同压", "bool", 0, 1, 1,
-             "关=直道 10cm 双数字时偏向大数字避开小数字；开=允许同时覆盖"),
             ("use_homography", "启用 4 点 IPM 单应矩阵", "bool", 0, 1, 1,
              "true 使用 calibrate_homography.py 标定的矩阵；false 用针孔模型回退"),
             ("yellow_require_odom_still", "黄线严格要求里程计停稳", "bool", 0, 1, 1,
@@ -181,8 +285,6 @@ SCHEMA = [
         "items": [
             ("odom_scale_factor", "里程计卷尺标定比例", "float", 0.70, 1.30, 0.005,
              "实测卷尺距离 / 里程计读数；修正终点门控与障碍记忆漂移"),
-            ("rear_axle_to_bumper_m", "B3 后轴到前防撞条距离 (m)", "float", 0.05, 0.40, 0.01,
-             "用于围绕后轴(EKF pose)旋转障碍物世界坐标，消除急弯车尾盲区旋转漂移（默认 0.18m）"),
             ("obstacle_steer_horizon_m", "B5 走廊避障前瞻距离 (m)", "float", 0.25, 1.20, 0.05,
              "走廊只优先响应前瞻地平线内的障碍，避免远处障碍过早偏离（默认 0.65m）"),
             ("obstacle_curve_min_horizon_m", "B5 急弯最小避障前瞻 (m)", "float", 0.20, 1.00, 0.05,
@@ -284,9 +386,6 @@ SCHEMA = [
         "group": "安全护栏（停稳判定 / 丢线保护 / 速度硬限幅）",
         "default_open": False,
         "items": [
-            ("max_speed", "全局速度硬上限 (m/s)", "float", 0.1, 1.5, 0.05,
-             "安全护栏：必须 ≥ 巡航速度，平时设为 0.85 即可"),
-            ("min_speed", "全局速度硬下限 (m/s)", "float", 0.0, 0.5, 0.01, "通常保持 0.0"),
             ("odom_still_threshold", "停稳速度阈值 (m/s)", "float", 0.0, 0.2, 0.005,
              "低于该速度记为静止（默认 0.02）"),
             ("odom_still_hold", "停稳保持时长 (s)", "float", 0.0, 1.0, 0.05,

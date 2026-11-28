@@ -1187,14 +1187,17 @@ void BevDwaPlanner::evaluate_arc(
   out_cand.min_wall_clr_m = min_wall_clr;
   out_cand.min_obs_clr_m = min_obs_clr;
   out_cand.hard_feasible = (!hit_hard) || (safe_len >= 0.20);
+  out_cand.cost_safe_len = config_.safe_len_weight * safe_len;
+  out_cand.cost_soft = -mean_soft_pen;
+  out_cand.cost_heading = heading_term;
+  out_cand.cost_branch = branch_term;
+  out_cand.cost_digit = digit_bonus_score;
+  out_cand.cost_clearance = clr_bonus;
+  out_cand.cost_smooth = -smooth_pen;
   out_cand.score =
-    config_.safe_len_weight * safe_len -
-    mean_soft_pen +
-    heading_term +
-    branch_term +
-    digit_bonus_score +
-    clr_bonus -
-    smooth_pen;
+    out_cand.cost_safe_len + out_cand.cost_soft + out_cand.cost_heading +
+    out_cand.cost_branch + out_cand.cost_digit + out_cand.cost_clearance +
+    out_cand.cost_smooth;
 }
 
 BevDwaPlanResult BevDwaPlanner::step(
@@ -1482,6 +1485,10 @@ BevDwaPlanResult BevDwaPlanner::step(
   res.min_wall_clearance_m = chosen.min_wall_clr_m;
   res.min_obs_clearance_m = chosen.min_obs_clr_m;
   res.has_feasible_arc = any_feasible;
+  res.chosen_candidate = chosen;
+  res.feasible_arc_count = static_cast<int>(std::count_if(
+    res.candidates.begin(), res.candidates.end(),
+    [](const BevArcCandidate & c) { return c.hard_feasible; }));
   res.digit_target_active = (best_digit > 0);
   res.target_digit = best_digit;
 

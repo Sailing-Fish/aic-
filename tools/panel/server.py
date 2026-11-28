@@ -1385,6 +1385,145 @@ def extract_brake_speed_telemetry(lines, require_dec_tag=True):
     return out
 
 
+# ---------------------------------------------------------------- BEV 白盒解析
+BEV_FLAG_NAMES = ('feasible', 'escape', 'dead_end', 'no_entry', 'finish')
+
+
+def empty_bev_state():
+    return {
+        'available': False,
+        'phase': '',
+        'mode': '',
+        'branch': 0,
+        'kappa': None,
+        'safe_len_m': None,
+        'score': None,
+        'speed_mps': None,
+        'yaw_rps': None,
+        'speed_cap_mps': None,
+        'goal_yaw_deg': None,
+        'rel_yaw_deg': None,
+        'wall_clr_m': None,
+        'obs_clr_m': None,
+        'lane_width_m': None,
+        'arc_total': None,
+        'arc_feasible': None,
+        'arc_deg': None,
+        'digits': {'left': 0, 'left_votes': 0, 'right': 0, 'right_votes': 0},
+        'flags': {k: False for k in BEV_FLAG_NAMES},
+        'cost': {},
+        'preflight': {},
+        'last_t': '',
+    }
+
+
+def parse_bev_kv(kv):
+    """解析 [DEC] bev summary / [DEC] ctrl 的 kv 字符串为白盒字段。"""
+    text = str(kv or '')
+    # 先摘出方括号字段（clr=[...] / cost=[...]），否则 _parse_kv_tokens 按逗号
+    # 展开后会用 cost 内部的 br= 覆盖真正的顶层 br=！
+    bracket = {}
+    for name in ('clr', 'cost'):
+        bm = re.search(r'\b' + name + r'=\[([^\]]*)\]', text)
+        if bm:
+            bracket[name] = bm.group(1)
+            text = text.replace(bm.group(0), ' ')
+    m = _parse_kv_tokens(text)
+    out = {}
+
+    def num(key, digits=2):
+        raw = m.get(key)
+        if raw is not None:
+            # 角度日志格式为 %+.0fd / %+.1fd（如 +90d）
+            raw = str(raw).strip()
+            if raw.endswith('d') and not raw.endswith('deg'):
+                raw = raw[:-1]
+        return _parse_metric_num(raw, digits=digits)
+
+    for key, field in (
+        ('k', 'kappa'), ('L', 'safe_len_m'), ('score', 'score'),
+        ('v', 'speed_mps'), ('yaw', 'yaw_rps'), ('cap', 'speed_cap_mps'),
+        ('goal', 'goal_yaw_deg'), ('th', 'rel_yaw_deg'), ('rel', 'rel_yaw_deg'),
+        ('w_bev', 'lane_width_m'), ('s', 'arc_deg'),
+    ):
+        val = num(key, digits=3)
+        if val is not None:
+            out[field] = val
+
+    for brk in ('br', 'branch'):
+        if brk in m:
+            out['branch'] = _parse_metric_num(m[brk], as_int=True)
+    if 'phase' in m:
+        out['phase'] = str(m['phase'])
+    if 'mode' in m:
+        out['mode'] = str(m['mode'])
+
+    # clr=[w=+0.05,o=+0.08]
+    clr = bracket.get('clr', '')
+    for tok in str(clr).replace(',', ' ').split():
+        if '=' in tok:
+            k, v = tok.split('=', 1)
+            val = _parse_metric_num(v, digits=3)
+            if k == 'w' and val is not None:
+                out['wall_clr_m'] = val
+            elif k == 'o' and val is not None:
+                out['obs_clr_m'] = val
+
+    # arc=N/M
+    arc = m.get('arc', '')
+    if isinstance(arc, str) and '/' in arc:
+        a, b = arc.split('/', 1)
+        total = _parse_metric_num(a, as_int=True)
+        feasible = _parse_metric_num(b, as_int=True)
+        if total is not None:
+            out['arc_total'] = total
+        if feasible is not None:
+            out['arc_feasible'] = feasible
+
+    # dig=L7(3)R0(0)
+    dig = m.get('dig', '')
+    dm = re.search(r'L(-?\d+)\((\d+)\)R(-?\d+)\((\d+)\)', str(dig))
+    if dm:
+        out['digits'] = {
+            'left': int(dm.group(1)), 'left_votes': int(dm.group(2)),
+            'right': int(dm.group(3)), 'right_votes': int(dm.group(4)),
+        }
+
+    # flg=bitmask  1=feasible 2=escape 4=dead_end 8=no_entry 16=finish
+    if 'flg' in m:
+        bits = _parse_metric_num(m['flg'], as_int=True)
+        if bits is not None:
+            out['flags'] = {
+                name: bool(bits & (1 << i)) for i, name in enumerate(BEV_FLAG_NAMES)
+            }
+
+    # cost=[sa=+,so=+,hd=+,br=+,di=+,cl=+,sm=+]
+    cost_raw = bracket.get('cost', '')
+    if cost_raw:
+        cost = {}
+        for tok in str(cost_raw).replace(',', ' ').split():
+            if '=' in tok:
+                k, v = tok.split('=', 1)
+                val = _parse_metric_num(v, digits=3)
+                if val is not None:
+                    cost[k] = val
+        if cost:
+            out['cost'] = cost
+    return out
+
+
+def parse_bev_preflight(kv):
+    m = _parse_kv_tokens(kv)
+    return {
+        'checked': str(m.get('ok', '')).lower() in ('1', 'true', 'yes'),
+        'lane_width_m': _parse_metric_num(m.get('width'), digits=3),
+        'center_y_m': _parse_metric_num(m.get('center'), digits=3),
+        'edge_angle_deg': _parse_metric_num(m.get('angle'), digits=2),
+        'gyro_bias_rps': _parse_metric_num(m.get('gyro_bias'), digits=3),
+        'warning': str(m.get('warn', '')),
+    }
+
+
 def _read_follow_dec_telemetry(rd, tail_bytes=32768):
     """从当前运行轮次的 follow.log 尾部解析最新 [DEC] 刹车/提速遥测。"""
     if not rd:
@@ -1453,12 +1592,14 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
     }
     milestones = []
     safety_active = False
+    bev = empty_bev_state()
 
     rd = run_dir()
     if not rd:
         return {
             'perf': perf, 'milestones': milestones, 'red_hint': red_hint,
             'tier1': tier1, 'brake_speed': brake_speed, 'safety_active': safety_active,
+            'bev': bev,
         }
     path = os.path.join(rd, 'events.csv')
     rows = []
@@ -1556,8 +1697,32 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
             elif event == 'deadman_off':
                 safety_active = False
 
-        if area == 'ctrl':
+        if area == 'bev' and event == 'summary':
+            bev.update(parse_bev_kv(kv))
+            bev['available'] = True
+            bev['last_t'] = t_str
             continue
+
+        if area == 'preflight':
+            bev['preflight'] = parse_bev_preflight(kv)
+            continue
+
+        if area == 'ctrl':
+            # 高频 5Hz 行只补摘要缺失的字段（cost/arc 由 1Hz summary 提供），不入里程碑
+            ctrl_fields = ('phase', 'mode', 'branch', 'speed_mps', 'yaw_rps',
+                           'arc_deg', 'wall_clr_m', 'obs_clr_m',
+                           'lane_width_m', 'digits', 'flags', 'kappa', 'safe_len_m',
+                           'speed_cap_mps', 'goal_yaw_deg', 'rel_yaw_deg', 'arc_total',
+                           'arc_feasible')
+            if not bev['available']:
+                parsed = parse_bev_kv(kv)
+                for f in ctrl_fields:
+                    if f in parsed:
+                        bev[f] = parsed[f]
+                bev['available'] = True
+                bev['last_t'] = t_str
+            continue
+
         if area == 'state' and event == 'change' and 'to=lost' not in kv:
             continue
         if area == 'mux' and event == 'change' and 'active=stop' not in kv:
@@ -1579,6 +1744,7 @@ def read_diagnostics(scan_lines=400, milestone_limit=40):
         'tier1': tier1,
         'brake_speed': brake_speed,
         'safety_active': safety_active,
+        'bev': bev,
     }
 
 
@@ -2080,6 +2246,7 @@ class Handler(BaseHTTPRequestHandler):
             'red_hint': diag['red_hint'],
             'tier1': diag['tier1'],
             'brake_speed': brake_speed,
+            'bev': diag.get('bev') or empty_bev_state(),
             'safety_active': bool(diag.get('safety_active', False)),
             'run_elapsed_sec': round(run_elapsed, 2) if run_elapsed is not None else None,
             'frames': frames_ok,
@@ -2177,6 +2344,34 @@ class Handler(BaseHTTPRequestHandler):
 
         if only_dec:
             lines = [ln for ln in lines if '[DEC]' in ln]
+
+        # BEV 白盒过滤：只保留决策相关行，避免 5Hz ctrl 全量推给浏览器。
+        # 后端做连续同 phase/branch 的 ctrl 合并，进一步压缩传输量（原始日志照常落盘）。
+        area = str(query.get('area', '') or '').strip().lower()
+        if area == 'bev':
+            merged = []
+            last_ctrl_sig = None
+            last_ctrl_idx = -1
+            for ln in lines:
+                if '[DEC]' not in ln:
+                    continue
+                body = ln.split('[DEC]', 1)[1].strip()
+                parts = body.split()
+                if len(parts) < 2:
+                    continue
+                log_area = parts[0]
+                keep = log_area in ('bev', 'ctrl', 'preflight', 'fork_decision', 'yellow', 'finish')
+                if log_area == 'ctrl':
+                    kv = _parse_kv_tokens(' '.join(parts[2:]))
+                    sig = (kv.get('phase', ''), kv.get('branch', ''))
+                    if sig == last_ctrl_sig and last_ctrl_idx >= 0:
+                        # 用最新一条覆盖，同时累计重复次数（前端显示为 ×N）
+                        merged[last_ctrl_idx] = ln + f' repeat=+1'
+                        continue
+                    last_ctrl_sig, last_ctrl_idx = sig, len(merged)
+                if keep:
+                    merged.append(ln)
+            lines = merged
 
         return self._json({'lines': lines, 'offset': offset, 'eof': False})
 

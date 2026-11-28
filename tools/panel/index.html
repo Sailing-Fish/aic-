@@ -227,7 +227,7 @@
   }
   .nav-err-cnt.show{display:inline-block}
 
-  /* 右岛：计时、电量与急停 */
+  /* 右岛：BEV 决策胶囊、计时、电量与发车 */
   .volt{
     font:700 12px/1 var(--num);padding:6px 10px;border-radius:var(--radius-pill);
     background:var(--glass-soft);border:1px solid var(--border-soft);color:var(--dim);white-space:nowrap;
@@ -297,6 +297,22 @@
     background:linear-gradient(135deg, var(--gem-soft), var(--ds-soft));
     border-color:var(--border-strong);color:var(--fg);
   }
+
+  /* BEV 白盒决策胶囊（顶栏 / 状态芯片 / HUD 共用配色） */
+  .bev-top-pill{
+    display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:var(--radius-pill);
+    background:linear-gradient(135deg, var(--gem-soft), var(--ds-soft));
+    border:1px solid var(--border-strong);font-size:11px;font-weight:800;color:var(--fg);white-space:nowrap;
+    max-width:330px;overflow:hidden;
+  }
+  .bev-top-pill .btp-phase{overflow:hidden;text-overflow:ellipsis;max-width:120px}
+  .bev-top-pill .btp-sep{color:var(--mute)}
+  .bev-top-pill .btp-branch{color:var(--ds)}
+  .bev-top-pill .btp-kappa,.bev-top-pill .btp-safe{color:var(--dim);font-family:var(--font-num)}
+  .bev-top-pill.alert{background:var(--bad-soft);border-color:rgba(224,62,82,.45);color:var(--bad)}
+  .bev-top-pill.warn{background:var(--warn-soft);border-color:rgba(212,130,10,.42);color:var(--warn)}
+  .stat-chip.bev-alert{border-color:rgba(224,62,82,.45);background:var(--bad-soft)}
+  .stat-chip.bev-alert .cv{color:var(--bad)}
 
   .conn-banner{
     position:fixed;top:74px;left:50%;transform:translateX(-50%);z-index:50;
@@ -513,6 +529,44 @@
   .preset-ctrl select:focus{border-color:var(--ds)}
   .preset-ctrl button{padding:4px 10px;font-size:11.5px}
 
+  /* BEV 白盒决策 HUD（常驻，异常诊室压缩为下方小卡） */
+  .bev-hud{
+    flex-shrink:0;border-radius:var(--radius-lg);padding:9px 11px;
+    background:linear-gradient(135deg, var(--gem-soft), var(--ds-soft));
+    border:1px solid var(--border-strong);display:flex;flex-direction:column;gap:7px;
+  }
+  .bev-hud-head{display:flex;align-items:center;gap:8px}
+  .bev-hud-title{font-size:12px;font-weight:800;color:var(--fg)}
+  .bev-hud-tag{margin-left:auto;font-size:10px;color:var(--mute);font-family:var(--font-mono)}
+  .bev-hud-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .bev-cell{
+    background:var(--glass-2);border:1px solid var(--border-soft);border-radius:var(--radius-md);
+    padding:6px 8px;display:flex;flex-direction:column;gap:3px;min-width:0;
+  }
+  .bev-cell-lbl{font-size:9.5px;font-weight:800;color:var(--mute);letter-spacing:.3px}
+  .bev-cell .bev-empty{font-size:10.5px;color:var(--mute)}
+  .bev-kv{display:flex;align-items:baseline;justify-content:space-between;gap:5px;font-size:10.5px}
+  .bev-kv span{color:var(--dim);white-space:nowrap}
+  .bev-kv b{font:800 11px/1.3 var(--font-num);color:var(--fg);white-space:nowrap}
+  .compass-cell{flex-direction:row;align-items:center;gap:8px}
+  .compass{width:48px;height:48px;flex-shrink:0}
+  .compass-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .compass-txt b{font-size:11.5px;font-weight:800;color:var(--gem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .compass-txt span{font-size:9.5px;color:var(--mute);white-space:nowrap}
+  .compass-txt em{font-style:normal;color:var(--ds);font-weight:700}
+  .cost-bars{display:flex;flex-direction:column;gap:3px}
+  .cost-row{display:flex;align-items:center;gap:5px;font-size:9.5px}
+  .cost-row span{width:42px;color:var(--dim);flex-shrink:0}
+  .cost-track{flex:1;height:5px;border-radius:3px;background:var(--glass-soft);overflow:hidden}
+  .cost-fill{height:100%;border-radius:3px;transition:width .25s}
+  .cost-fill.pos{background:linear-gradient(90deg, var(--ok), var(--ds))}
+  .cost-fill.neg{background:linear-gradient(90deg, var(--warn), var(--bad))}
+  .cost-row b{width:36px;text-align:right;font:700 9.5px var(--font-num);color:var(--fg)}
+  .bev-flags{display:flex;gap:3px;flex-wrap:wrap}
+  .bev-flag{padding:1px 5px;border-radius:var(--radius-pill);font-size:9px;font-weight:800;
+    background:var(--glass-soft);border:1px solid var(--border-soft);color:var(--mute)}
+  .bev-flag.on{background:var(--bad-soft);border-color:rgba(224,62,82,.4);color:var(--bad)}
+
   /* 人话诊室 */
   .clinic-head{
     display:flex;align-items:center;gap:7px;flex-shrink:0;padding-top:2px;
@@ -532,16 +586,16 @@
   .hdot.bad i{background:var(--bad)}
 
   .clinic-feed{
-    flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px;
+    flex:0 1 auto;max-height:32%;min-height:60px;overflow:auto;display:flex;flex-direction:column;gap:6px;padding-right:2px;
   }
   .calm-card{
-    flex:1;min-height:140px;border-radius:var(--radius-lg);padding:18px 16px;
+    flex-shrink:0;min-height:56px;border-radius:var(--radius-md);padding:8px 12px;
     background:linear-gradient(135deg, var(--gem-soft), var(--ds-soft));
     border:1px solid var(--border-soft);
-    display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;
+    display:flex;flex-direction:row;align-items:center;justify-content:center;text-align:center;gap:8px;
   }
-  .calm-card h4{margin:0;font-size:15px;font-weight:800;color:var(--fg)}
-  .calm-card p{margin:0;font-size:12px;color:var(--dim);max-width:300px;line-height:1.55}
+  .calm-card h4{margin:0;font-size:11.5px;font-weight:800;color:var(--fg);white-space:nowrap}
+  .calm-card p{margin:0;font-size:10.5px;color:var(--dim);line-height:1.4}
   .calm-link{
     margin-top:4px;font-size:11.5px;font-weight:700;color:var(--ds);background:var(--glass-2);
     border:1px solid var(--border-soft);padding:5px 12px;
@@ -965,8 +1019,17 @@
       </button>
     </nav>
 
-    <!-- 右岛：地图切换、电压、轮次、艺术计时与发车/急停 -->
+    <!-- 右岛：BEV 决策胶囊 + 地图/电压/轮次/计时 + 发车（急停已移除，发车按钮可停车） -->
     <div class="top-island island">
+      <div class="bev-top-pill" id="bevTopPill" title="BEV DWA 当前拓扑阶段 / 分支 / 选中曲率与安全长度">
+        <span class="btp-phase" id="btpPhase">BEV 待命</span>
+        <span class="btp-sep">·</span>
+        <span class="btp-branch" id="btpBranch">--</span>
+        <span class="btp-sep">·</span>
+        <span class="btp-kappa" id="btpKappa">κ --</span>
+        <span class="btp-sep">·</span>
+        <span class="btp-safe" id="btpSafe">L --</span>
+      </div>
       <div class="map-pills" id="topMapSwitch" title="在线切换地图并自动重启巡线（未发车时可用）">
         <button class="map-pill active" data-map="finals_fork" type="button">岔路 S</button>
         <button class="map-pill" data-map="finals_roundabout" type="button">环岛</button>
@@ -980,7 +1043,6 @@
       <button class="icon-btn" id="btnHelp" title="使用说明与指标规则">?</button>
       <button id="btnReset" title="清零本轮计时与计数（不控制车）">重置本轮</button>
       <button class="go-btn" id="btnStartToggle" title="一键发车或停止发车（与 ⑤窗口空格键双向同步）">▶ 发车</button>
-      <button class="estop" id="estop">立即停车</button>
     </div>
   </header>
 
@@ -992,25 +1054,25 @@
         <!-- 左岛：大画幅双路取景窗 + 状态芯片 + 录制胶囊 -->
         <div class="stage-card island">
           <div class="chips-row">
-            <div class="stat-chip">
-              <div class="ck"><span>黄线停稳 / 里程</span></div>
-              <div class="cv" id="stYellow">已停 0 次</div>
-              <div class="cs" id="stYellowSub">里程 --</div>
+            <div class="stat-chip" title="拓扑罗盘当前阶段（BEV 白盒决策）">
+              <div class="ck"><span>BEV 拓扑阶段</span></div>
+              <div class="cv" id="stBevPhase">待命</div>
+              <div class="cs" id="stBevPhaseSub">等待发车</div>
             </div>
-            <div class="stat-chip">
-              <div class="ck"><span>车辆状态</span></div>
-              <div class="cv" id="stState">未发车</div>
-              <div class="cs" id="stStateSub">在 ⑤发车窗口按空格</div>
+            <div class="stat-chip" title="DWA 选中轨迹的曲率与安全前滚长度">
+              <div class="ck"><span>选中轨迹</span></div>
+              <div class="cv" id="stBevTraj">κ -- · L --</div>
+              <div class="cs" id="stBevTrajSub">可行弧 --/--</div>
             </div>
-            <div class="stat-chip">
-              <div class="ck"><span>识别数字</span></div>
-              <div class="cv" id="stDigit" style="color:var(--gem)">-</div>
-              <div class="cs" id="stDigitSub">最近一次转向</div>
+            <div class="stat-chip" title="当前车速与墙/障最小净空">
+              <div class="ck"><span>速度与净空</span></div>
+              <div class="cv" id="stBevSpeed">v --</div>
+              <div class="cs" id="stBevClear">墙 -- · 障 --</div>
             </div>
-            <div class="stat-chip clickable" id="chipGoTune" title="点击切到星海调参工坊">
-              <div class="ck"><span>生效参数</span><span style="color:var(--ds)">去调参 →</span></div>
-              <div class="cv" id="stParam">v=- kp=-</div>
-              <div class="cs" id="stParamSub">与 YAML 是否一致</div>
+            <div class="stat-chip" title="岔路左右数字投票与已提交的分支">
+              <div class="ck"><span>数字投票 / 分支</span></div>
+              <div class="cv" id="stBevDigit" style="color:var(--gem)">L - · R -</div>
+              <div class="cs" id="stBevDigitSub">分支 --</div>
             </div>
           </div>
 
@@ -1110,11 +1172,49 @@
             <span class="mile-pill">⏳ 等待本轮发车</span>
           </div>
 
-          <div class="telem-strip" id="brakeSpeedStrip" title="双层闭环刹车与畅通直道物理包络实时遥测（未上报时显示 -）">
-            <span class="telem-badge" id="bsVSafeCapBadge" title="运动学安全速帽 (v_safe_cap_mps)">⚡ 速帽 <b id="bsVSafeCap">-</b></span>
-            <span class="telem-badge" id="bsClearScoreBadge" title="畅通直道评分 (clear_path_score)">🛣 畅通 <b id="bsClearScore">-</b></span>
-            <span class="telem-badge" id="bsBrakeCmdBadge" title="闭环反拖刹车指令 (brake_cmd_mps)">🛑 反拖 <b id="bsBrakeCmd">-</b></span>
-            <span class="telem-badge" id="bsAEffBadge" title="生效刹车减速度 (effective_brake_decel_mps2)">📉 a_eff <b id="bsAEff">-</b></span>
+          <!-- BEV 白盒决策 HUD：常驻显示，数据来自 /api/status.bev（1Hz summary 聚合） -->
+          <div class="bev-hud" id="bevHud">
+            <div class="bev-hud-head">
+              <span class="bev-hud-title">◆ BEV 白盒决策 HUD</span>
+              <span class="bev-hud-tag" id="bevHudTag">等待 1Hz 摘要…</span>
+            </div>
+            <div class="bev-hud-grid">
+              <div class="bev-cell compass-cell">
+                <div class="bev-cell-lbl">拓扑罗盘</div>
+                <div class="compass-wrap">
+                  <svg class="compass" viewBox="0 0 64 64">
+                    <circle cx="32" cy="32" r="26" fill="none" stroke="var(--border-strong)" stroke-width="1.5"/>
+                    <line x1="32" y1="6" x2="32" y2="58" stroke="var(--border-soft)" stroke-width="1"/>
+                    <line x1="6" y1="32" x2="58" y2="32" stroke="var(--border-soft)" stroke-width="1"/>
+                    <g id="bevCompassArrow" transform="rotate(0 32 32)">
+                      <path d="M32 10 L37 34 L32 30 L27 34 Z" fill="var(--ds)"/>
+                    </g>
+                    <circle cx="32" cy="32" r="3" fill="var(--gem)"/>
+                  </svg>
+                  <div class="compass-txt">
+                    <b id="bevHudPhase">--</b>
+                    <span>目标 <em id="bevHudGoal">--</em>° · 相对 <em id="bevHudRel">--</em>°</span>
+                  </div>
+                </div>
+              </div>
+              <div class="bev-cell">
+                <div class="bev-cell-lbl">选中轨迹</div>
+                <div class="bev-kv"><span>κ</span><b id="bevHudKappa">--</b></div>
+                <div class="bev-kv"><span>安全长度 L</span><b id="bevHudSafe">--</b></div>
+                <div class="bev-kv"><span>速度帽 / 得分</span><b id="bevHudCap">--</b></div>
+                <div class="bev-kv"><span>可行弧</span><b id="bevHudArc">--</b></div>
+              </div>
+              <div class="bev-cell">
+                <div class="bev-cell-lbl">代价分解 (选中弧)</div>
+                <div class="cost-bars" id="bevCostBars"><span class="bev-empty">等待摘要…</span></div>
+              </div>
+              <div class="bev-cell">
+                <div class="bev-cell-lbl">数字投票 / 安全标志</div>
+                <div class="bev-kv"><span>左 / 右</span><b id="bevHudDigits">--</b></div>
+                <div class="bev-kv"><span>墙 / 障净空</span><b id="bevHudClr">--</b></div>
+                <div class="bev-flags" id="bevHudFlags"><span class="bev-empty">--</span></div>
+              </div>
+            </div>
           </div>
 
           <div class="clinic-head">
@@ -1149,7 +1249,8 @@
             <div class="atelier-head-row">
               <span class="atelier-title">星海调参工坊</span>
               <div class="tier-pills" id="paramTabs">
-                <button class="ptab active" data-tier="finals_core">★ 决赛核心<span class="dot-dirty"></span></button>
+                <button class="ptab active" data-tier="bev_core">★ BEV 白盒核心<span class="dot-dirty"></span></button>
+                <button class="ptab" data-tier="legacy_core">↩ 旧算法兼容<span class="dot-dirty"></span></button>
                 <button class="ptab" data-tier="calibration">⚙ 开关与标定<span class="dot-dirty"></span></button>
               </div>
               <span id="paramTag">-</span>
@@ -1204,13 +1305,14 @@
           </select>
           <div class="log-lvls" id="logLvls">
             <button class="pill-btn active" data-lvl="all">全部</button>
-            <button class="pill-btn warn" data-lvl="err">⚠ 仅错误</button>
-            <button class="pill-btn" data-lvl="dec">◆ 决策</button>
+            <button class="pill-btn warn" data-lvl="err">⚠ 异常</button>
+            <button class="pill-btn" data-lvl="bev">◆ BEV 决策</button>
             <button class="pill-btn" data-lvl="pe">⚙ 参数</button>
+            <button class="pill-btn" data-lvl="info">ℹ 运行</button>
           </div>
-          <label style="display:none"><input type="checkbox" id="onlyDec"> 只看决策</label>
           <label title="进程重启后自动从本次启动的分界线开始显示"><input type="checkbox" id="onlyCurrent" checked> 只看本次启动</label>
-          <input type="text" id="search" placeholder="搜索关键字…">
+          <input type="text" id="search" placeholder="搜索 phase / branch / κ / clearance / digit…">
+          <button id="btnLogFollowHud" type="button" title="把右侧 HUD 当前阶段填入搜索框并切到 BEV 档">↔ 跟随 HUD</button>
           <label><input type="checkbox" id="autoscroll" checked> 自动滚动</label>
           <button id="btnReloadAll">从头看</button>
           <button id="btnClear">清屏</button>
@@ -1270,7 +1372,9 @@
     <h4>一、怎么用才最顺手</h4>
     <ul>
       <li><b>平时看「✦ 实况伴行」</b>：小车一切正常时，右侧诊室保持安静不刷屏；只要出现丢线、卡顿、节点掉线或兜底急刹，诊室会立刻用直观中文告诉您哪里出了问题，并附带一键跳转日志按钮。</li>
-      <li><b>调参数切「⚙ 星海调参」</b>：决赛核心 4 组参数平铺一屏，支持<b>紫蓝滑块拖拽</b>和 <b><code>−</code> / <code>+</code> 精密步进</b>（按住 <code>Shift + 点击</code> 为 5 倍速微调）。</li>
+      <li><b>调参数切「⚙ 星海调参」</b>：首屏是 BEV 白盒核心（曲率/栅格/数字经济学/终点脱困），旧算法参数收进「旧算法兼容」标签且 BEV 模式下无效；支持<b>紫蓝滑块拖拽</b>与 <b><code>−</code>/<code>+</code> 精密步进</b>（<code>Shift+点击</code> 5 倍速）。</li>
+      <li><b>BEV 白盒 HUD</b>：实况页右侧常驻显示 DWA 决策（拓扑罗盘、选中弧代价分解、数字投票、安全标志）；双击 HUD 直达调参。</li>
+      <li><b>停车</b>：右上发车按钮再点一次即停车；已移除冗余的「立即停车」按钮。</li>
       <li><b>切 WiFi 切「WiFi 网络」</b>：附近网络与已保存网络都能一键连接；切换会断 SSH 隧道，面板重连后自动显示最终结果。</li>
       <li><b>快捷键</b>：<code>`</code>（Tab 上方按键）快速在「实况 ↔ 终端」间切换；<code>Esc</code> 关闭弹窗或返回实况（绝不占用空格键）。</li>
     </ul>
@@ -1349,9 +1453,10 @@ function setView(viewName){
     refreshWifiStatus();
     wifiScan(false);
   }
+  applyViewLoadPolicy();
 }
 document.querySelectorAll('#navTabs .nav-tab').forEach(btn=>btn.addEventListener('click', ()=>setView(btn.dataset.view)));
-$('chipGoTune').addEventListener('click', ()=>setView('tune'));
+$('bevHud').addEventListener('dblclick', ()=>setView('tune'));
 $('btnTermBack').addEventListener('click', ()=>setView('live'));
 
 // ---------------- WiFi 网络管理
@@ -1650,24 +1755,56 @@ function renderMilestoneStrip(d, milestones){
   strip.innerHTML = pills.join('');
 }
 
-function renderBrakeSpeedTelemetry(d){
-  const bs = d.brake_speed || {};
-  const vSafe = (typeof bs.v_safe_cap_mps === 'number' && Number.isFinite(bs.v_safe_cap_mps)) ? bs.v_safe_cap_mps : null;
-  const cScore = (typeof bs.clear_path_score === 'number' && Number.isFinite(bs.clear_path_score)) ? bs.clear_path_score : null;
-  const bCmd = (typeof bs.brake_cmd_mps === 'number' && Number.isFinite(bs.brake_cmd_mps)) ? bs.brake_cmd_mps : null;
-  const aEff = (typeof bs.effective_brake_decel_mps2 === 'number' && Number.isFinite(bs.effective_brake_decel_mps2)) ? bs.effective_brake_decel_mps2 : null;
+const COST_LABELS = {sa:'安全长度', so:'软惩罚', hd:'航向', br:'分支', di:'数字', cl:'净空', sm:'平滑'};
+function numOrDash(v, digits){
+  return (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(digits === undefined ? 2 : digits) : '--';
+}
+function branchText(br){
+  if(typeof br !== 'number') return '--';
+  return br < 0 ? '左 (-1)' : (br > 0 ? '右 (+1)' : '主道 (0)');
+}
 
-  $('bsVSafeCap').textContent = (vSafe !== null) ? `${vSafe.toFixed(2)}m/s` : '-';
-  $('bsVSafeCapBadge').className = 'telem-badge' + (vSafe !== null ? (vSafe >= 0.55 ? ' ok' : ' lit') : '');
+function renderBevHud(d){
+  const b = d.bev || {};
+  const avail = !!b.available;
+  $('bevHudTag').textContent = avail ? ('t=' + (b.last_t || '--') + 's · 1Hz') : '等待 1Hz 摘要…';
+  $('bevHudPhase').textContent = b.phase || '--';
+  $('bevHudGoal').textContent = numOrDash(b.goal_yaw_deg, 0);
+  $('bevHudRel').textContent = numOrDash(b.rel_yaw_deg, 0);
+  const arrow = $('bevCompassArrow');
+  if(arrow) arrow.setAttribute('transform', `rotate(${Number.isFinite(b.rel_yaw_deg) ? -b.rel_yaw_deg : 0} 32 32)`);
 
-  $('bsClearScore').textContent = (cScore !== null) ? `${Math.round(Math.max(0, Math.min(1, cScore)) * 100)}%` : '-';
-  $('bsClearScoreBadge').className = 'telem-badge' + (cScore !== null ? (cScore >= 0.70 ? ' ok' : (cScore >= 0.30 ? ' lit' : '')) : '');
+  $('bevHudKappa').textContent = numOrDash(b.kappa, 2) + (Number.isFinite(b.kappa) ? ' /m' : '');
+  $('bevHudSafe').textContent = numOrDash(b.safe_len_m, 2) + (Number.isFinite(b.safe_len_m) ? ' m' : '');
+  $('bevHudCap').textContent = numOrDash(b.speed_cap_mps, 2) + ' / ' + numOrDash(b.score, 2);
+  $('bevHudArc').textContent = (Number.isFinite(b.arc_feasible) && Number.isFinite(b.arc_total))
+    ? `${b.arc_feasible} / ${b.arc_total}` : '--';
 
-  $('bsBrakeCmd').textContent = (bCmd !== null) ? `${bCmd.toFixed(2)}m/s` : '-';
-  $('bsBrakeCmdBadge').className = 'telem-badge' + (bCmd !== null && bCmd < -0.005 ? ' warn' : '');
+  const cost = b.cost || {};
+  const costKeys = Object.keys(COST_LABELS).filter(k => typeof cost[k] === 'number');
+  const bars = $('bevCostBars');
+  if(costKeys.length){
+    const maxAbs = Math.max(0.1, ...costKeys.map(k => Math.abs(cost[k])));
+    bars.innerHTML = costKeys.map(k=>{
+      const v = cost[k];
+      const w = Math.min(100, Math.abs(v) / maxAbs * 100);
+      return `<div class="cost-row"><span>${COST_LABELS[k]}</span>`+
+        `<div class="cost-track"><div class="cost-fill ${v>=0?'pos':'neg'}" style="width:${w}%"></div></div>`+
+        `<b>${v>=0?'+':''}${v.toFixed(2)}</b></div>`;
+    }).join('');
+  } else {
+    bars.innerHTML = '<span class="bev-empty">等待摘要…</span>';
+  }
 
-  $('bsAEff').textContent = (aEff !== null) ? `${aEff.toFixed(2)}m/s²` : '-';
-  $('bsAEffBadge').className = 'telem-badge' + (aEff !== null ? (aEff < 1.2 ? ' warn' : ' lit') : '');
+  const dg = b.digits || {};
+  $('bevHudDigits').textContent = `L:${dg.left||0}(${dg.left_votes||0}) · R:${dg.right||0}(${dg.right_votes||0})`;
+  $('bevHudClr').textContent = numOrDash(b.wall_clr_m, 2) + ' / ' + numOrDash(b.obs_clr_m, 2) + ' m';
+  const flags = b.flags || {};
+  $('bevHudFlags').innerHTML = Object.keys(flags).map(k=>{
+    const on = !!flags[k];
+    const label = {feasible:'可行弧', escape:'脱困', dead_end:'死胡同', no_entry:'禁行区', finish:'终点'}[k] || k;
+    return `<span class="bev-flag${on?' on':''}">${label}</span>`;
+  }).join('');
 }
 
 function translateMilestoneOrIssue(e){
@@ -2025,39 +2162,42 @@ async function pollStatus(){
 
     lastEff = d.effective || {};
     yamlStale = !!(d.yaml && d.yaml.stale);
-    const yc = d.yellow.count;
+    const b = d.bev || {};
     const si = d.segment || {};
-    $('stYellow').textContent = `已停 ${yc} 次`;
-    const sTxt = (typeof si.s === 'number') ? `里程 ${si.s.toFixed(2)} m` : '里程 --';
-    const br = (typeof si.branch === 'number') ? (si.branch < 0 ? ' · 支路:左' : (si.branch > 0 ? ' · 支路:右' : '')) : '';
-    $('stYellowSub').textContent = sTxt + br;
+    const flags = b.flags || {};
 
-    $('stState').textContent = d.started ? (STATE_CN[d.track_state]||d.track_state) : '未发车';
-    $('stState').style.color = (d.started && d.track_state==='lost') ? 'var(--bad)' : '';
-    $('stStateSub').textContent = d.started ? '运行中' : '点右上「发车」或 ⑤窗口按空格';
+    // 顶栏 BEV 胶囊
+    $('btpPhase').textContent = b.phase || 'BEV 待命';
+    $('btpBranch').textContent = Number.isFinite(b.branch) ? branchText(b.branch) : '--';
+    $('btpKappa').textContent = 'κ ' + numOrDash(b.kappa, 2);
+    $('btpSafe').textContent = 'L ' + numOrDash(b.safe_len_m, 2);
+    const capDanger = !!(flags.escape || flags.dead_end || flags.no_entry);
+    const capWarn = !!(b.available && !flags.feasible);
+    $('bevTopPill').className = 'bev-top-pill' + (capDanger ? ' alert' : (capWarn ? ' warn' : ''));
 
-    const evPool = (d.milestones && d.milestones.length) ? d.milestones : (d.events || []);
-    const dg = evPool.filter(e=>e.area==='digit').slice(-1)[0];
-    if(dg){
-      const m = /best=(\d+)/.exec(dg.kv||'');
-      $('stDigit').textContent = m ? m[1] : '-';
-      $('stDigitSub').textContent = 't=' + Number(dg.t).toFixed(1) + 's';
-    } else { $('stDigit').textContent='-'; $('stDigitSub').textContent='最近一次转向'; }
+    // 芯片①：拓扑阶段
+    $('stBevPhase').textContent = b.phase || (d.started ? '等待摘要' : '待命');
+    $('stBevPhaseSub').textContent = d.started
+      ? `分支 ${branchText(b.branch)} · 里程 ${(typeof si.s==='number'?si.s.toFixed(2):'--')} m`
+      : '点右上「发车」启动巡线';
+
+    // 芯片②：选中轨迹
+    $('stBevTraj').textContent = `κ ${numOrDash(b.kappa,2)} · L ${numOrDash(b.safe_len_m,2)}`;
+    $('stBevTrajSub').textContent = (Number.isFinite(b.arc_feasible) && Number.isFinite(b.arc_total))
+      ? `可行弧 ${b.arc_feasible}/${b.arc_total} · 得分 ${numOrDash(b.score,2)}` : '可行弧 --/--';
+
+    // 芯片③：速度与净空（低净空/脱困时标红）
+    $('stBevSpeed').textContent = 'v ' + numOrDash(b.speed_mps,2) + (Number.isFinite(b.speed_cap_mps)?` / 帽 ${b.speed_cap_mps.toFixed(2)}`:'');
+    $('stBevClear').textContent = `墙 ${numOrDash(b.wall_clr_m,2)} · 障 ${numOrDash(b.obs_clr_m,2)} m`;
+    const danger = !!(flags.escape || flags.dead_end || flags.no_entry || (!flags.feasible && b.available));
+    $('stBevSpeed').closest('.stat-chip').classList.toggle('bev-alert', danger);
+
+    // 芯片④：数字投票
+    const dg = b.digits || {};
+    $('stBevDigit').textContent = `L ${dg.left||0}(${dg.left_votes||0}) · R ${dg.right||0}(${dg.right_votes||0})`;
+    $('stBevDigitSub').textContent = `提交分支 ${branchText(b.branch)}`;
 
     markPending();
-    const kpEff = lastEff['corridor_kp_y'];
-    const spdEff = lastEff['target_speed'];
-    $('stParam').textContent = `v=${spdEff !== undefined ? Number(spdEff).toFixed(2) : '-'} kp=${kpEff !== undefined ? Number(kpEff).toFixed(1) : '-'}`;
-    if(yamlStale){
-      $('stParamSub').textContent = 'YAML 已改，需重启巡线';
-      $('stParam').style.color = 'var(--warn)';
-    } else if(kpEff!==undefined || spdEff!==undefined){
-      $('stParamSub').textContent = effMismatch ? '与生效值不一致，需重启' : '与 YAML 一致';
-      $('stParam').style.color = effMismatch ? 'var(--warn)' : '';
-    } else {
-      $('stParamSub').textContent = '节点未启动或未上报';
-      $('stParam').style.color = '';
-    }
 
     const rf = d.params_file || null;
     if(rf) runningMap = rf;
@@ -2083,13 +2223,14 @@ async function pollStatus(){
     if(fe) lastFollowEpoch = fe;
 
     const frames = d.frames || {};
-    syncVideoSlot('debug', $('wrapDebug'), $('imgDebug'), $('dbgLivePill'), frames.debug);
-    syncVideoSlot('yolo', $('wrapYolo'), $('imgYolo'), $('yoloLivePill'), frames.yolo);
+    const streamOn = (activeView === 'live') && !document.hidden;
+    syncVideoSlot('debug', $('wrapDebug'), $('imgDebug'), $('dbgLivePill'), streamOn && frames.debug);
+    syncVideoSlot('yolo', $('wrapYolo'), $('imgYolo'), $('yoloLivePill'), streamOn && frames.yolo);
 
     lastStatusSnapshot = d;
     updateHealthDots(d);
     renderMilestoneStrip(d, evPool);
-    renderBrakeSpeedTelemetry(d);
+    renderBevHud(d);
     renderClinic(d);
     updateCompanions(d);
 
@@ -2234,20 +2375,18 @@ function refreshMapWarn(){
 }
 function isoHms(s){ const m=/(\d\d:\d\d:\d\d)/.exec(s||''); return m ? m[1] : '--:--:--'; }
 
-let activeTier = 'finals_core';
-const TIER_IDS = ['finals_core', 'calibration'];
+let activeTier = 'bev_core';
+const TIER_IDS = ['bev_core', 'legacy_core', 'calibration'];
 
 function tierMeta(id){
   const list = (paramsState && paramsState.tiers) || [];
   return list.find(t=>t.id===id) || {id, label:id, subtitle:''};
 }
 function syncTierBadges(){
-  $('tierBannerText').textContent = activeTier === 'finals_core'
-    ? (tierMeta('finals_core').subtitle || '日常只调这 4 组正交物理量')
-    : (tierMeta('calibration').subtitle || '模式切换、一次标定即冻结的硬件参数与应急覆盖');
+  $('tierBannerText').textContent = (tierMeta(activeTier).subtitle || '');
 }
 function setTier(tierId){
-  if(TIER_IDS.indexOf(tierId) < 0) tierId = 'finals_core';
+  if(TIER_IDS.indexOf(tierId) < 0) tierId = 'bev_core';
   activeTier = tierId;
   document.querySelectorAll('#paramTabs .ptab').forEach(btn=>btn.classList.toggle('active', btn.dataset.tier === activeTier));
   document.querySelectorAll('#params .tier-pane').forEach(pane=>pane.classList.toggle('active', pane.dataset.tier === activeTier));
@@ -2295,7 +2434,7 @@ async function loadParams(map){
     const tid = TIER_IDS.indexOf(g.tier) >= 0 ? g.tier : 'calibration';
     const det = document.createElement('details');
     det.className='grp';
-    det.open = tid === 'finals_core' ? true : !!g.default_open;
+    det.open = tid === 'bev_core' ? true : !!g.default_open;
     const sum = document.createElement('summary'); sum.textContent = g.group; det.appendChild(sum);
     if(g.desc){
       const desc = document.createElement('div'); desc.className = 'grp-desc'; desc.textContent = g.desc; det.appendChild(desc);
@@ -2620,7 +2759,8 @@ async function pollLogs(){
   if(logsBusy) return;
   logsBusy = true;
   try{
-    const url = `/api/logs?f=${encodeURIComponent(logFile)}&dec=${$('onlyDec').checked?1:0}&offset=${logOffset}`;
+    const areaParam = (logLevelFilter === 'bev' && logFile === 'follow') ? '&area=bev' : '';
+    const url = `/api/logs?f=${encodeURIComponent(logFile)}&offset=${logOffset}${areaParam}`;
     const d = await (await fetch(url,{cache:'no-store'})).json();
     if(!d.lines || !d.lines.length){ if(typeof d.offset==='number') logOffset=d.offset; return; }
     logOffset = d.offset;
@@ -2635,23 +2775,25 @@ async function pollLogs(){
       }
       if(isStart){ const div=document.createElement('div'); div.className='sep'; div.textContent=ln; frag.appendChild(div); return; }
       const isPe = ln.includes('[DEC] param effective') || ln.includes('[DEC] panel param_write');
+      const isBev = /\[DEC\] (bev|ctrl|preflight|fork_decision)/.test(ln);
       const isDec = ln.includes('[DEC]');
-      const isErr = /error|fail|exception|traceback|warn/i.test(ln);
+      const isBevAlert = /(escape_active|no_feasible|dead_end|no_entry_near|flg=(2|4|8|1[0-9])|repeat=\+)/i.test(ln);
+      const isErr = /error|fail|exception|traceback|warn/i.test(ln) || isBevAlert;
       if(isErr) logErrCount++;
-      const lvl = isErr ? 'err' : (isPe ? 'pe' : (isDec ? 'dec' : 'info'));
-      const badgeTxt = isErr ? 'ERR' : (isPe ? 'PARAM' : (isDec ? 'DEC' : 'LOG'));
+      const lvl = isErr ? 'err' : (isPe ? 'pe' : (isBev ? 'bev' : (isDec ? 'dec' : 'info')));
+      const badgeTxt = isErr ? 'ERR' : (isPe ? 'PARAM' : (isBev ? 'BEV' : (isDec ? 'DEC' : 'LOG')));
       let ts = '', msg = ln;
       const mTs = /^\s*\[?(\d{2}:\d{2}:\d{2}(?:\.\d+)?|\d{8,}\.\d+)\]?\s*(.*)$/.exec(ln);
       if(mTs){ ts = mTs[1].length > 10 ? mTs[1].slice(-8) : mTs[1]; msg = mTs[2]; }
       const div=document.createElement('div');
-      div.className = 'log-row' + (isErr ? ' is-err' : (isPe ? ' is-pe' : (isDec ? ' is-dec' : '')));
+      div.className = 'log-row' + (isErr ? ' is-err' : (isPe ? ' is-pe' : (isBev ? ' is-dec' : '')));
       div.dataset.lvl = lvl; div.dataset.raw = ln;
       div.innerHTML = `<span class="log-badge">${badgeTxt}</span>` + (ts ? `<span class="log-ts">${escHtml(ts)}</span>` : '') + `<span class="log-msg">${escHtml(msg)}</span>`;
       applyLogRowFilter(div, q);
       frag.appendChild(div);
     });
     box.appendChild(frag);
-    while(box.childNodes.length>1200) box.removeChild(box.firstChild);
+    while(box.childNodes.length>600) box.removeChild(box.firstChild);
     updateErrBadge();
     if(stick && activeView === 'term') box.scrollTop=box.scrollHeight;
   }catch(e){}
@@ -2697,10 +2839,15 @@ $('btnReset').addEventListener('click',async()=>{
   toast(d.ok?d.msg:('失败：'+d.error), !d.ok);
   if(d.ok){ logOffset=0; $('log').innerHTML=''; logErrCount=0; updateErrBadge(); setLocked(false, true); }
 });
-$('estop').addEventListener('click',async()=>{
-  const d = await (await fetch('/api/estop',{method:'POST'})).json();
-  toast(d.ok?'已停车，参数已解锁':('失败：'+d.error), !d.ok);
-  if(d.ok){ setLocked(false, true); }
+$('btnLogFollowHud').addEventListener('click',()=>{
+  const phase = ($('bevHudPhase').textContent || '').trim();
+  if(!phase || phase === '--'){ toast('HUD 暂无 BEV 阶段，先发车等 1Hz 摘要', true); return; }
+  $('search').value = phase;
+  logLevelFilter = 'bev';
+  document.querySelectorAll('#logLvls .pill-btn').forEach(b=>b.classList.toggle('active', b.dataset.lvl === 'bev'));
+  setView('term');
+  refreshLogFilters();
+  toast('已按阶段「' + phase + '」筛选 BEV 决策日志');
 });
 $('btnStartToggle').addEventListener('click',async()=>{
   const btn = $('btnStartToggle');
@@ -2770,14 +2917,30 @@ document.addEventListener('keydown', e=>{
   }
 });
 
-$('imgDebug').src='/api/stream/debug';
-$('imgYolo').src='/api/stream/yolo';
+// 性能降载：只在实况视图拉 MJPEG，其余视图停流把 CPU/带宽留给小车决策
+function setStreamActive(active){
+  const debug = $('imgDebug'), yolo = $('imgYolo');
+  if(active){
+    if(!debug.dataset.streaming){ debug.src='/api/stream/debug'; debug.dataset.streaming='1'; }
+    if(!yolo.dataset.streaming){ yolo.src='/api/stream/yolo'; yolo.dataset.streaming='1'; }
+  } else {
+    if(debug.dataset.streaming){ debug.removeAttribute('src'); debug.dataset.streaming=''; }
+    if(yolo.dataset.streaming){ yolo.removeAttribute('src'); yolo.dataset.streaming=''; }
+  }
+}
+function applyViewLoadPolicy(){
+  const live = (activeView === 'live') && !document.hidden;
+  setStreamActive(live);
+}
+document.addEventListener('visibilitychange', applyViewLoadPolicy);
 
 syncRecModeUI();
 loadParams('finals_fork');
 pollStatus(); pollLogs();
-setInterval(pollStatus, 500);
-setInterval(pollLogs, 700);
+applyViewLoadPolicy();
+// 1s 状态 + 1s 日志（原 500/700ms）：BEV 摘要本身 1Hz，更快轮询没有新信息
+setInterval(()=>{ if(!document.hidden) pollStatus(); }, 1000);
+setInterval(()=>{ if(!document.hidden) pollLogs(); }, 1000);
 </script>
 </body>
 </html>

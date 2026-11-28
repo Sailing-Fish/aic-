@@ -182,6 +182,14 @@ struct BevArcCandidate
   double min_obs_clr_m{0.0};
   double score{-1e9};
   bool hard_feasible{false};
+  // 白盒代价分解（面板 HUD 用；与 score 严格同源）
+  double cost_safe_len{0.0};
+  double cost_soft{0.0};
+  double cost_heading{0.0};
+  double cost_branch{0.0};
+  double cost_digit{0.0};
+  double cost_clearance{0.0};
+  double cost_smooth{0.0};
 };
 
 struct BevDwaPlanResult
@@ -218,6 +226,10 @@ struct BevDwaPlanResult
 
   std::string mode_tag{"bev_cruise"};
   std::vector<BevArcCandidate> candidates{};
+
+  // 选中弧快照（面板白盒 HUD：代价分解 + 可行弧统计）
+  BevArcCandidate chosen_candidate{};
+  int feasible_arc_count{0};
 };
 
 class BevDwaPlanner

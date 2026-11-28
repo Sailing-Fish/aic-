@@ -440,36 +440,45 @@ class TestPanelAndTelemetry(unittest.TestCase):
         self.assertIn("finals_fork", html)
         self.assertIn("finals_roundabout", html)
         self.assertIn("it.type==='enum'", html)
-        self.assertIn('data-tier="finals_core"', html)
+        self.assertIn('data-tier="bev_core"', html)
+        self.assertIn('data-tier="legacy_core"', html)
         self.assertIn('data-tier="calibration"', html)
-        self.assertIn("已停 0 次", html)
-        self.assertIn("v=- kp=-", html)
-        self.assertNotIn('data-tier="legacy"', html)
+        self.assertIn("btpPhase", html)
+        self.assertIn("bevHud", html)
+        self.assertNotIn('id="estop"', html)
         self.assertNotIn("segSel", html)
         self.assertNotIn("0 / 4", html)
         self.assertNotIn('<option value="fork">', html)
 
-    def test_panel_two_tiers_and_b10_grouping(self):
+    def test_panel_three_tiers_and_b10_grouping(self):
         payload = panel_server.load_params("finals_fork")
-        self.assertEqual([t["id"] for t in payload["tiers"]], ["finals_core", "calibration"])
+        self.assertEqual(
+            [t["id"] for t in payload["tiers"]],
+            ["bev_core", "legacy_core", "calibration"],
+        )
 
-        by_tier = {"finals_core": set(), "calibration": set()}
+        by_tier = {"bev_core": set(), "legacy_core": set(), "calibration": set()}
         for g in payload["groups"]:
             self.assertIn(g["tier"], by_tier)
             for it in g["items"]:
                 by_tier[g["tier"]].add(it["key"])
 
-        self.assertLessEqual(len(by_tier["finals_core"]), 20)
-        for core_key in ("target_speed", "speed_gain_damping", "corridor_kp_y",
-                         "yellow_bumper_margin_m", "yellow_creep_speed_mps",
-                         "obstacle_speed_mps", "no_entry_speed_mps",
-                         "cone_margin_m", "no_entry_margin_m"):
-            self.assertIn(core_key, by_tier["finals_core"])
+        for core_key in ("bev_planner_mode", "bev_wheelbase_m", "bev_kappa_max_left",
+                         "bev_kappa_max_right", "bev_control_latency_s", "bev_imu_yaw_kp",
+                         "bev_steer_launch_v_floor", "bev_max_lat_accel_mps2",
+                         "bev_memory_ttl_sec", "bev_rollout_horizon_m",
+                         "enable_anti_stall_escape", "finish_min_cum_yaw_rad",
+                         "fork_outer_branch", "fork_outer_time_penalty_s", "fork_min_votes"):
+            self.assertIn(core_key, by_tier["bev_core"], f"Missing BEV key: {core_key}")
 
-        for b_key in ("yellow_roi_bottom_ratio", "rear_axle_to_bumper_m",
-                      "obstacle_steer_horizon_m", "obstacle_curve_min_horizon_m",
-                      "obstacle_stagger_gap_m"):
+        for legacy_key in ("speed_gain_damping", "corridor_kp_y", "corridor_heading_gain",
+                           "cone_margin_m", "no_entry_margin_m", "yellow_bumper_margin_m"):
+            self.assertIn(legacy_key, by_tier["legacy_core"], f"Missing legacy key: {legacy_key}")
+
+        for b_key in ("yellow_roi_bottom_ratio", "obstacle_steer_horizon_m",
+                      "obstacle_curve_min_horizon_m", "obstacle_stagger_gap_m"):
             self.assertIn(b_key, by_tier["calibration"])
+        self.assertIn("rear_axle_to_bumper_m", by_tier["bev_core"])
 
         lane_seg_spec = params_schema.find("line_follower_node", "lane_seg_mode")
         self.assertEqual(lane_seg_spec[3], ["relative_border", "hybrid", "legacy_hsv"])
@@ -488,7 +497,7 @@ class TestPanelAndTelemetry(unittest.TestCase):
         )
 
         # No deleted legacy keys remain in schema
-        all_keys = by_tier["finals_core"] | by_tier["calibration"]
+        all_keys = by_tier["bev_core"] | by_tier["legacy_core"] | by_tier["calibration"]
         for removed in ("seg1_target_speed", "seg2_start_count", "planner_mode",
                         "enable_red_filter", "enable_soft_red_avoidance",
                         "enable_detection_override", "turn_duration",
@@ -863,7 +872,8 @@ class TestPanelAndTelemetry(unittest.TestCase):
 
             for k, (typ, lo, hi) in expected_specs.items():
                 self.assertIn(k, by_key, f"Missing brake/speed param '{k}' in {map_name}")
-                self.assertEqual(tier_by_key[k], "calibration")
+                self.assertIn(tier_by_key[k], ("calibration", "bev_core"),
+                              f"'{k}' should be in calibration or bev_core, got {tier_by_key[k]}")
                 it = by_key[k]
                 self.assertEqual(it["type"], typ)
                 if typ == "float":
@@ -1020,13 +1030,12 @@ class TestPanelAndTelemetry(unittest.TestCase):
                 panel_server.LOGROOT = orig_logroot
                 panel_server.STATE_DIR = orig_state_dir
 
-        # 3. Panel HTML surfaces compact live telemetry badges with graceful '-' fallback & preset UI
+        # 3. Panel HTML surfaces the BEV whitebox HUD with graceful '--' fallback & preset UI
         html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
         for token in (
-            "brakeSpeedStrip", "bsVSafeCap", "bsClearScore", "bsBrakeCmd", "bsAEff",
-            "d.brake_speed", "v_safe_cap_mps", "clear_path_score",
-            "brake_cmd_mps", "effective_brake_decel_mps2",
-            "presetSel", "btnApplyPreset",
+            "bevHud", "bevHudPhase", "bevHudKappa", "bevHudSafe", "bevHudArc",
+            "bevCostBars", "bevHudDigits", "bevHudFlags", "bevCompassArrow",
+            "d.bev", "presetSel", "btnApplyPreset",
         ):
             self.assertIn(token, html, f"Missing UI hook '{token}' in tools/panel/index.html")
 
@@ -1337,6 +1346,87 @@ class TestPanelWifi(unittest.TestCase):
             "/api/wifi/status", "/api/wifi/scan", "/api/wifi/connect", "/api/wifi/disconnect",
         ):
             self.assertIn(hook, html, f"Missing WiFi UI hook: {hook}")
+
+
+class TestPanelBevWhitebox(unittest.TestCase):
+    SUMMARY_KV = (
+        "phase=RB1_APPROACH br=-1 k=+0.38 L=0.72 score=+2.14 "
+        "cost=[sa=+3.02,so=-0.41,hd=+0.18,br=+0.09,di=+0.90,cl=+0.02,sm=-0.01] "
+        "goal=+90d rel=+12d cap=0.62 arc=29/18 clr=[w=+0.05,o=+0.08] "
+        "dig=L7(3)R0(0) flg=9"
+    )
+
+    def test_parse_bev_kv_full_summary(self):
+        p = panel_server.parse_bev_kv(self.SUMMARY_KV)
+        self.assertEqual(p['phase'], 'RB1_APPROACH')
+        self.assertEqual(p['branch'], -1)
+        self.assertAlmostEqual(p['kappa'], 0.38)
+        self.assertAlmostEqual(p['safe_len_m'], 0.72)
+        self.assertEqual(p['arc_total'], 29)
+        self.assertEqual(p['arc_feasible'], 18)
+        self.assertAlmostEqual(p['goal_yaw_deg'], 90.0)
+        self.assertAlmostEqual(p['rel_yaw_deg'], 12.0)
+        self.assertAlmostEqual(p['wall_clr_m'], 0.05)
+        self.assertAlmostEqual(p['obs_clr_m'], 0.08)
+        self.assertEqual(p['digits'], {'left': 7, 'left_votes': 3,
+                                       'right': 0, 'right_votes': 0})
+        self.assertEqual(p['cost']['sa'], 3.02)
+        self.assertEqual(p['cost']['sm'], -0.01)
+        self.assertTrue(p['flags']['feasible'])
+        self.assertTrue(p['flags']['no_entry'])
+        self.assertFalse(p['flags']['escape'])
+
+    def test_ctrl_kv_does_not_corrupt_branch_from_cost(self):
+        p = panel_server.parse_bev_kv(
+            'mode=bev_cruise phase=FORK_RIGHT_STEM branch=1 k=+0.20 L=0.40 '
+            'v=0.42 yaw=+0.10 w_bev=0.43 s=3.20 clr=[w=+0.09,o=+0.12] obs=0'
+        )
+        self.assertEqual(p['branch'], 1)
+        self.assertEqual(p['phase'], 'FORK_RIGHT_STEM')
+        self.assertAlmostEqual(p['speed_mps'], 0.42)
+
+    def test_preflight_and_empty_state(self):
+        pf = panel_server.parse_bev_preflight(
+            'ok=1 width=0.43 center=0.01 angle=0.5 gyro_bias=0.002 warn=none'
+        )
+        self.assertTrue(pf['checked'])
+        self.assertAlmostEqual(pf['lane_width_m'], 0.43)
+        self.assertAlmostEqual(pf['gyro_bias_rps'], 0.002)
+        st = panel_server.empty_bev_state()
+        self.assertFalse(st['available'])
+        self.assertFalse(st['flags']['escape'])
+
+    def test_status_api_exposes_bev(self):
+        import io
+        buf = io.BytesIO()
+        h = panel_server.Handler.__new__(panel_server.Handler)
+        h.path = '/api/status'
+        h.headers = {}
+        h.wfile = buf
+        h.requestline = 'GET /api/status HTTP/1.1'
+        h.request_version = 'HTTP/1.1'
+        h.client_address = ('127.0.0.1', 12345)
+        cap = {'status': 0}
+        h.send_response = lambda code, msg=None: cap.__setitem__('status', code)
+        h.send_header = lambda k, v: None
+        h.end_headers = lambda: None
+        h.do_GET()
+        self.assertEqual(cap['status'], 200)
+        body = json.loads(buf.getvalue().decode('utf-8'))
+        self.assertIn('bev', body)
+        self.assertIn('flags', body['bev'])
+        self.assertIn('cost', body['bev'])
+
+    def test_ui_hooks_bev_and_term(self):
+        html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
+        for hook in (
+            'id="bevTopPill"', 'id="bevHud"', 'id="bevHudPhase"',
+            'id="bevHudFlags"', 'id="bevCostBars"', 'id="btnLogFollowHud"',
+            'data-lvl="bev"', 'data-tier="bev_core"', 'data-tier="legacy_core"',
+            "applyViewLoadPolicy", "area=bev", "setStreamActive",
+        ):
+            self.assertIn(hook, html, f"Missing BEV/term UI hook: {hook}")
+        self.assertNotIn('id="estop"', html)
 
 
 if __name__ == "__main__":

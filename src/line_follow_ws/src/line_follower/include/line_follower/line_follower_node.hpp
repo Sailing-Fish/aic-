@@ -271,6 +271,7 @@ private:
   std::string last_ctrl_mode_tag_{};
   int last_ctrl_branch_{0};
   double last_ctrl_log_sec_{-1e9};
+  double last_bev_summary_sec_{-1e9};  // 1s 低频 BEV 白盒聚合（面板专用，避免 5Hz 全字段刷屏）
   double last_cbf_log_sec_{-1e9};
 
   // Tier 1 yellow-stop measured braking state for 1-param friction adaptation

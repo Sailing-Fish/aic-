@@ -1213,6 +1213,7 @@ void LineFollowerNode::start_callback(const std_msgs::msg::Bool::SharedPtr msg)
     last_ctrl_mode_tag_.clear();
     last_ctrl_branch_ = 0;
     last_ctrl_log_sec_ = -1e9;
+    last_bev_summary_sec_ = -1e9;
     last_cbf_log_sec_ = -1e9;
     yellow_brake_measure_pending_ = false;
     yellow_brake_entry_speed_mps_ = 0.0;
@@ -1749,7 +1750,8 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
       RCLCPP_INFO(
         this->get_logger(),
         "[DEC] ctrl mode=%s phase=%s branch=%d k=%+.2f L=%.2f th=%+.1fd "
-        "v=%.2f yaw=%+.2f w_bev=%.2f s=%.2f clr=[w=%+.2f,o=%+.2f] obs=%d",
+        "v=%.2f yaw=%+.2f w_bev=%.2f s=%.2f clr=[w=%+.2f,o=%+.2f] obs=%d "
+        "arc=%d/%d cap=%.2f goal=%+.0fd dig=L%d(%d)R%d(%d) flg=%d",
         bev_plan.mode_tag.c_str(),
         topology_phase_to_string(bev_plan.phase),
         bev_plan.committed_branch,
@@ -1762,10 +1764,52 @@ void LineFollowerNode::image_callback(const sensor_msgs::msg::Image::ConstShared
         finish_guard_.total_arc_m(),
         bev_plan.min_wall_clearance_m,
         bev_plan.min_obs_clearance_m,
-        bev_plan.has_near_obstacle ? 1 : 0);
+        bev_plan.has_near_obstacle ? 1 : 0,
+        static_cast<int>(bev_plan.candidates.size()),
+        bev_plan.feasible_arc_count,
+        bev_plan.speed_cap_mps,
+        bev_plan.goal_yaw_rad * (180.0 / kPi),
+        bev_plan.fork_left_digit, bev_plan.fork_left_votes,
+        bev_plan.fork_right_digit, bev_plan.fork_right_votes,
+        (bev_plan.has_feasible_arc ? 1 : 0) |
+        (bev_plan.escape_active ? 2 : 0) |
+        (bev_plan.visual_dead_end_ahead ? 4 : 0) |
+        (bev_plan.has_no_entry_near ? 8 : 0) |
+        (bev_plan.is_finish_line ? 16 : 0));
       last_ctrl_mode_tag_ = bev_plan.mode_tag;
       last_ctrl_branch_ = bev_plan.committed_branch;
       last_ctrl_log_sec_ = now_sec;
+    }
+
+    // 1s 低频白盒摘要：面板 HUD 专用，含选中弧代价分解与 Top-3 候选。
+    // 放在 ctrl 之后独立节流，避免把完整代价分解塞进 5Hz 日志造成 CPU/IO 浪费。
+    if (ctrl_changed || (now_sec - last_bev_summary_sec_) >= 1.0) {
+      const BevArcCandidate & c = bev_plan.chosen_candidate;
+      RCLCPP_INFO(
+        this->get_logger(),
+        "[DEC] bev summary phase=%s br=%d k=%+.2f L=%.2f score=%+.2f "
+        "cost=[sa=%+.2f,so=%+.2f,hd=%+.2f,br=%+.2f,di=%+.2f,cl=%+.2f,sm=%+.2f] "
+        "goal=%+.0fd rel=%+.0fd cap=%.2f arc=%d/%d clr=[w=%+.2f,o=%+.2f] "
+        "dig=L%d(%d)R%d(%d) flg=%d",
+        topology_phase_to_string(bev_plan.phase),
+        bev_plan.committed_branch,
+        c.kappa, c.safe_len_m, c.score,
+        c.cost_safe_len, c.cost_soft, c.cost_heading,
+        c.cost_branch, c.cost_digit, c.cost_clearance, c.cost_smooth,
+        bev_plan.goal_yaw_rad * (180.0 / kPi),
+        bev_plan.rel_yaw_rad * (180.0 / kPi),
+        bev_plan.speed_cap_mps,
+        static_cast<int>(bev_plan.candidates.size()),
+        bev_plan.feasible_arc_count,
+        c.min_wall_clr_m, c.min_obs_clr_m,
+        bev_plan.fork_left_digit, bev_plan.fork_left_votes,
+        bev_plan.fork_right_digit, bev_plan.fork_right_votes,
+        (bev_plan.has_feasible_arc ? 1 : 0) |
+        (bev_plan.escape_active ? 2 : 0) |
+        (bev_plan.visual_dead_end_ahead ? 4 : 0) |
+        (bev_plan.has_no_entry_near ? 8 : 0) |
+        (bev_plan.is_finish_line ? 16 : 0));
+      last_bev_summary_sec_ = now_sec;
     }
 
     finals_overlay.active_mode_tag = bev_plan.mode_tag;
