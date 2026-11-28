@@ -47,6 +47,7 @@
 | D12 | 自动重启判据 | 仅 **退出码非 0 且非 129** 才重启（0=正常退出，129=关窗口） |
 | D13 | 决策日志落盘 | `[DEC]` 同时汇总成 **`events.csv`** |
 | D14 | 参数文件命名 | `fork.yaml` / `roundabout.yaml` |
+| D15 | 面板手动切 WiFi | **专用受限 API**（`nmcli`/`iw` argv 调用，shell=False）；扫描先用 `sudo -n iw dev wlan0 scan` 真扫再读 NM 缓存（此板 `nmcli --rescan yes` 常只返回当前连接）；切网异步执行先回 HTTP 响应，结果由 `/api/wifi/status` 轮询；切换会断 SSH 隧道，需重连隧道 |
 
 ---
 

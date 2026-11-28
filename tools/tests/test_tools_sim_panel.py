@@ -1217,5 +1217,127 @@ class TestSimulatorFixesAndPerturbations(unittest.TestCase):
             sim_render.CameraModel.from_homography_matrix(H_i2g, direction="bad_dir")
 
 
+class TestPanelWifi(unittest.TestCase):
+    def test_ssid_and_password_validation(self):
+        self.assertEqual(panel_server._wifi_clean_ssid("  Home-5G  "), "Home-5G")
+        self.assertIsNone(panel_server._wifi_clean_ssid(""))
+        self.assertIsNone(panel_server._wifi_clean_ssid("-evil"))
+        self.assertIsNone(panel_server._wifi_clean_ssid("A" * 33))
+        self.assertIsNone(panel_server._wifi_clean_ssid("bad\nname"))
+        self.assertEqual(panel_server._wifi_clean_password(""), "")
+        self.assertEqual(panel_server._wifi_clean_password("p@ss w0rd"), "p@ss w0rd")
+        self.assertIsNone(panel_server._wifi_clean_password("x" * 64))
+        self.assertIsNone(panel_server._wifi_clean_password("bad\npwd"))
+
+    def test_parse_wifi_scan_dedupes_sorts_and_keeps_colon_in_ssid(self):
+        raw = "\n".join([
+            " :Home:55:WPA1 WPA2",
+            "*:Home:100:WPA1 WPA2",
+            " :Open Guest:80:",
+            " :With:Colon:70:WPA2",
+            "badline",
+        ])
+        nets = panel_server.parse_wifi_scan(raw, saved={"Home"})
+        self.assertEqual([n["ssid"] for n in nets], ["Home", "Open Guest", "With:Colon"])
+        self.assertEqual(nets[0]["signal"], 100)
+        self.assertTrue(nets[0]["in_use"])
+        self.assertTrue(nets[0]["saved"])
+        self.assertTrue(nets[1]["open"])
+        self.assertEqual(nets[2]["ssid"], "With:Colon")
+
+    def test_wifi_request_rejects_bad_input_without_spawning(self):
+        from unittest import mock
+        with mock.patch.object(panel_server.threading, "Thread") as spawn:
+            for args in ((None, None), ("-bad", "pw"), ("A" * 33, "pw")):
+                ok, _msg, _pending = panel_server.wifi_request("connect", *args)
+                self.assertFalse(ok)
+            ok, _msg, _pending = panel_server.wifi_request("bogus")
+            self.assertFalse(ok)
+            spawn.assert_not_called()
+
+    def test_wifi_routes(self):
+        import io
+        from unittest import mock
+
+        def invoke(method, path, payload=None):
+            body = json.dumps(payload).encode("utf-8") if payload is not None else b""
+            buf = io.BytesIO()
+            h = panel_server.Handler.__new__(panel_server.Handler)
+            h.path = path
+            h.headers = {"Content-Length": str(len(body))}
+            h.rfile = io.BytesIO(body)
+            h.wfile = buf
+            h.requestline = f"{method} {path} HTTP/1.1"
+            h.request_version = "HTTP/1.1"
+            h.client_address = ("127.0.0.1", 12345)
+            cap = {"status": 0}
+            h.send_response = lambda code, msg=None: cap.__setitem__("status", code)
+            h.send_header = lambda k, v: None
+            h.end_headers = lambda: None
+            (h.do_GET if method == "GET" else h.do_POST)()
+            return cap["status"], json.loads(buf.getvalue().decode("utf-8"))
+
+        fake_status = {
+            "ok": True, "iface": "wlan0", "connected": True, "ssid": "Home",
+            "ip": "192.168.1.7", "saved": ["Home"], "pending": None, "last_result": None,
+        }
+        with mock.patch.object(panel_server, "wifi_status", return_value=fake_status), \
+                mock.patch.object(panel_server, "wifi_scan", return_value=[{"ssid": "Home"}]), \
+                mock.patch.object(
+                    panel_server, "wifi_request",
+                    side_effect=lambda a, s="", p="": (True, "ok", {"action": a, "ssid": s}),
+                ):
+            code, body = invoke("GET", "/api/wifi/status")
+            self.assertEqual(code, 200)
+            self.assertEqual(body["ssid"], "Home")
+            code, body = invoke("GET", "/api/wifi/scan?force=1")
+            self.assertEqual(code, 200)
+            self.assertEqual(body["networks"][0]["ssid"], "Home")
+            code, body = invoke("POST", "/api/wifi/connect", {"ssid": "Home", "password": "secret"})
+            self.assertEqual(code, 200)
+            self.assertTrue(body["ok"])
+            code, body = invoke("POST", "/api/wifi/disconnect")
+            self.assertEqual(code, 200)
+            self.assertTrue(body["ok"])
+
+    def test_scan_triggers_iw_before_reading_nmcli_cache(self):
+        from unittest import mock
+        old_cache, old_ts = panel_server._wifi_scan_cache, panel_server._wifi_scan_ts
+        panel_server._wifi_scan_cache, panel_server._wifi_scan_ts = [], 0.0
+        calls = []
+
+        def fake_cmd(argv, timeout):
+            calls.append(list(argv))
+            if "iw" in argv:
+                return 0, "", ""
+            if argv and argv[0] == "nmcli":
+                return 0, "*:Home:80:WPA2\n :Guest:60:\n", ""
+            return 1, "", "unexpected"
+
+        try:
+            with mock.patch.object(panel_server, "_cmd_run", side_effect=fake_cmd), \
+                    mock.patch.object(panel_server, "_wifi_saved_ssids", return_value=[]):
+                nets = panel_server.wifi_scan(force=True)
+        finally:
+            panel_server._wifi_scan_cache, panel_server._wifi_scan_ts = old_cache, old_ts
+
+        self.assertEqual([n["ssid"] for n in nets], ["Home", "Guest"])
+        iw_call = ["sudo", "-n", "iw", "dev", "wlan0", "scan"]
+        self.assertIn(iw_call, calls)
+        nmcli_idx = next(i for i, c in enumerate(calls) if c and c[0] == "nmcli")
+        self.assertLess(calls.index(iw_call), nmcli_idx)
+        nmcli_call = calls[nmcli_idx]
+        self.assertEqual(nmcli_call[nmcli_call.index("--rescan") + 1], "no")
+
+    def test_ui_hooks(self):
+        html = (REPO_ROOT / "tools" / "panel" / "index.html").read_text(encoding="utf-8")
+        for hook in (
+            'data-view="wifi"', 'id="view-wifi"', 'id="btnWifiScan"',
+            'id="btnWifiConnect"', 'id="btnWifiDisconnect"',
+            "/api/wifi/status", "/api/wifi/scan", "/api/wifi/connect", "/api/wifi/disconnect",
+        ):
+            self.assertIn(hook, html, f"Missing WiFi UI hook: {hook}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

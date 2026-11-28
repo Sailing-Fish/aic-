@@ -19,6 +19,7 @@ import math
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -230,6 +231,261 @@ _TAG_SAFE_RE = re.compile(r'[^a-zA-Z0-9_-]+')
 def _sanitize_tag(raw, fallback):
     cleaned = _TAG_SAFE_RE.sub('_', str(raw or '').strip()).strip('_-').lower()
     return (cleaned[:24] or fallback)
+
+
+# ---------------------------------------------------------------- WiFi 管理
+# 只提供受限的专用 API，不开放通用 shell 执行；所有命令均 argv 列表调用，shell=False。
+WIFI_IFACE = 'wlan0'
+WIFI_CACHE_TTL_SEC = 5.0
+WIFI_CMD_TIMEOUT_SEC = 12.0
+WIFI_CONNECT_TIMEOUT_SEC = 45.0
+
+_wifi_lock = threading.Lock()
+_wifi_scan_cache = []
+_wifi_scan_ts = 0.0
+_wifi_saved_cache = []
+_wifi_saved_ts = 0.0
+_wifi_pending = None
+_wifi_last = None
+
+
+def _cmd_run(argv, timeout):
+    try:
+        p = subprocess.run(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding='utf-8', errors='replace',
+            timeout=timeout, check=False,
+        )
+        return p.returncode, (p.stdout or '').strip(), (p.stderr or '').strip()
+    except subprocess.TimeoutExpired:
+        return 124, '', '命令超时'
+    except FileNotFoundError:
+        return 127, '', '找不到命令 nmcli'
+    except OSError as e:
+        return 1, '', str(e)
+
+
+def _nmcli_read(args, timeout=WIFI_CMD_TIMEOUT_SEC):
+    return _cmd_run(['nmcli'] + list(args), timeout)
+
+
+def _nmcli_write(args, timeout=WIFI_CONNECT_TIMEOUT_SEC):
+    # 面板以普通用户启动；优先免密 sudo，失败再退回当前用户（polkit 已放行时可用）。
+    rc, out, err = _cmd_run(['sudo', '-n', 'nmcli'] + list(args), timeout)
+    if rc == 0:
+        return rc, out, err
+    rc2, out2, err2 = _cmd_run(['nmcli'] + list(args), timeout)
+    return (rc2, out2, err2) if rc2 == 0 else (rc, out, err)
+
+
+def _wifi_trigger_scan():
+    """同步触发底层扫描：此板上 nmcli --rescan yes 常只返回旧缓存（仅当前连接）。
+
+    iw scan 需 root；失败时返回 False，让 nmcli 自己决定要不要扫。
+    """
+    rc, _out, _err = _cmd_run(['sudo', '-n', 'iw', 'dev', WIFI_IFACE, 'scan'],
+                              timeout=WIFI_CMD_TIMEOUT_SEC)
+    if rc != 0:
+        rc, _out, _err = _cmd_run(['iw', 'dev', WIFI_IFACE, 'scan'],
+                                  timeout=WIFI_CMD_TIMEOUT_SEC)
+    return rc == 0
+
+
+def _wifi_clean_ssid(raw):
+    s = str(raw or '').strip()
+    if not s or len(s.encode('utf-8', 'replace')) > 32 or s.startswith('-'):
+        return None
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in s):
+        return None
+    return s
+
+
+def _wifi_clean_password(raw):
+    p = str(raw or '')
+    if not p:
+        return ''  # 开放网络
+    if len(p.encode('utf-8', 'replace')) > 63:
+        return None
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in p):
+        return None
+    return p
+
+
+def _wifi_saved_ssids(force=False):
+    global _wifi_saved_cache, _wifi_saved_ts
+    now = time.time()
+    if not force and _wifi_saved_cache and (now - _wifi_saved_ts) < WIFI_CACHE_TTL_SEC:
+        return list(_wifi_saved_cache)
+    rc, out, _err = _nmcli_read(['-g', 'NAME,TYPE', 'con', 'show'], timeout=6.0)
+    if rc != 0:
+        return list(_wifi_saved_cache)
+    saved = []
+    for line in out.splitlines():
+        if ':' not in line:
+            continue
+        name, typ = line.rsplit(':', 1)
+        if name and typ.strip() == '802-11-wireless':
+            saved.append(name)
+    _wifi_saved_cache = saved
+    _wifi_saved_ts = time.time()
+    return list(saved)
+
+
+def parse_wifi_scan(output, saved=()):
+    """解析 nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY dev wifi list 的输出。"""
+    saved_set = set(saved or ())
+    best = {}
+    for line in (output or '').splitlines():
+        # 从右往左切：SSID 自身允许包含冒号
+        parts = line.rsplit(':', 2)
+        if len(parts) != 3 or ':' not in parts[0]:
+            continue
+        head, sig, sec = parts
+        in_use, ssid = head.split(':', 1)
+        ssid = ssid.strip()
+        if not ssid:
+            continue
+        try:
+            signal = int(sig.strip())
+        except ValueError:
+            signal = 0
+        sec = sec.strip()
+        entry = {
+            'ssid': ssid,
+            'signal': signal,
+            'security': sec,
+            'open': not bool(sec),
+            'in_use': in_use.strip() == '*',
+            'saved': ssid in saved_set,
+        }
+        prev = best.get(ssid)
+        if prev is None or (signal, entry['in_use']) > (prev['signal'], prev['in_use']):
+            best[ssid] = entry
+    return sorted(best.values(), key=lambda e: (-e['signal'], e['ssid']))
+
+
+def wifi_scan(force=False):
+    global _wifi_scan_cache, _wifi_scan_ts
+    now = time.time()
+    if not force and _wifi_scan_cache and (now - _wifi_scan_ts) < WIFI_CACHE_TTL_SEC:
+        return list(_wifi_scan_cache)
+    saved = _wifi_saved_ssids(force=force)
+    scanned = _wifi_trigger_scan()
+    rc, out, err = _nmcli_read([
+        '-t', '-f', 'IN-USE,SSID,SIGNAL,SECURITY',
+        'dev', 'wifi', 'list', 'ifname', WIFI_IFACE,
+        '--rescan', 'no' if scanned else 'auto',
+    ], timeout=WIFI_CMD_TIMEOUT_SEC)
+    if rc != 0 and not out:
+        raise RuntimeError(f'WiFi 扫描失败: {err or "nmcli 不可用"}')
+    networks = parse_wifi_scan(out, saved)
+    _wifi_scan_cache = networks
+    _wifi_scan_ts = time.time()
+    return list(networks)
+
+
+def wifi_status():
+    rc, out, err = _nmcli_read([
+        '-t', '-f', 'GENERAL.CONNECTION,GENERAL.STATE,IP4.ADDRESS',
+        'device', 'show', WIFI_IFACE,
+    ], timeout=6.0)
+    info = {}
+    for line in out.splitlines():
+        if ':' in line:
+            k, v = line.split(':', 1)
+            info[k] = v
+    state_raw = info.get('GENERAL.STATE', '')
+    state_code = state_raw.split(' ', 1)[0] if state_raw else ''
+    connected = state_code == '100'
+    ssid = info.get('GENERAL.CONNECTION', '') or ''
+    if ssid.lower() in ('--', '(none)'):
+        ssid = ''
+    ip = ''
+    for k, v in info.items():
+        if k.startswith('IP4.ADDRESS'):
+            ip = v.split('/', 1)[0]
+            break
+    signal = None
+    if connected and ssid:
+        for n in _wifi_scan_cache:
+            if n['ssid'] == ssid:
+                signal = n['signal']
+                break
+    with _wifi_lock:
+        pending = dict(_wifi_pending) if _wifi_pending else None
+        last = dict(_wifi_last) if _wifi_last else None
+    return {
+        'ok': True,
+        'iface': WIFI_IFACE,
+        'available': rc == 0,
+        'connected': connected,
+        'ssid': ssid,
+        'state': state_raw or 'unknown',
+        'ip': ip,
+        'signal': signal,
+        'saved': _wifi_saved_ssids(),
+        'pending': pending,
+        'last_result': last,
+        'error': '' if rc == 0 else (err or 'nmcli 不可用'),
+    }
+
+
+def _wifi_apply(action, ssid='', password=''):
+    global _wifi_pending, _wifi_last
+    t0 = time.time()
+    try:
+        if action == 'connect':
+            args = ['dev', 'wifi', 'connect', ssid]
+            if password:
+                args += ['password', password]
+            args += ['ifname', WIFI_IFACE]
+            rc, out, err = _nmcli_write(args)
+        else:
+            rc, out, err = _nmcli_write(['device', 'disconnect', WIFI_IFACE],
+                                        timeout=WIFI_CMD_TIMEOUT_SEC)
+        ok = rc == 0
+        msg = out or err or ('已连接' if ok else '操作失败')
+        if not ok and 'password' in msg.lower():
+            msg = '密码错误或加密方式不匹配'
+    except Exception as e:  # noqa: BLE001
+        ok, msg = False, f'{type(e).__name__}: {e}'
+    with _wifi_lock:
+        _wifi_pending = None
+        _wifi_last = {
+            'ok': ok,
+            'action': action,
+            'ssid': ssid,
+            'msg': str(msg)[:300],
+            'ts': t0,
+            'duration': round(time.time() - t0, 1),
+        }
+        _wifi_scan_cache = []
+        _wifi_scan_ts = 0.0
+        _wifi_saved_cache = []
+        _wifi_saved_ts = 0.0
+    print(f'[DEC] panel wifi {action} ssid={ssid!r} ok={ok}', flush=True)
+
+
+def wifi_request(action, ssid='', password=''):
+    """校验参数后异步执行，立即返回；切网会断 SSH 隧道，让 HTTP 响应先发出去。"""
+    global _wifi_pending
+    with _wifi_lock:
+        if _wifi_pending and (time.time() - _wifi_pending['t0']) < 90:
+            return False, '上一次 WiFi 操作仍在进行中，请稍候', None
+        if action == 'connect':
+            clean_ssid = _wifi_clean_ssid(ssid)
+            if clean_ssid is None:
+                return False, 'SSID 无效（1–32 字节，且不能以 - 开头）', None
+            clean_pwd = _wifi_clean_password(password)
+            if clean_pwd is None:
+                return False, '密码无效（最长 63 字节，且不能含控制字符）', None
+            ssid, password = clean_ssid, clean_pwd
+        elif action != 'disconnect':
+            return False, f'未知 WiFi 操作 {action}', None
+        _wifi_pending = {'action': action, 'ssid': ssid, 't0': time.time()}
+    threading.Thread(target=_wifi_apply, args=(action, ssid, password), daemon=True).start()
+    label = (f'正在连接 {ssid}…' if action == 'connect' else '正在断开当前 WiFi…')
+    return True, label, {'action': action, 'ssid': ssid}
 
 
 class RawVideoRecorder:
@@ -1513,6 +1769,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._logs(query)
             if path == '/api/params':
                 return self._json(load_params(_resolve_map_name(query.get('map'))))
+            if path == '/api/wifi/status':
+                return self._json(wifi_status())
+            if path == '/api/wifi/scan':
+                force = str(query.get('force', '')).lower() in ('1', 'true', 'yes')
+                return self._json({'ok': True, 'networks': wifi_scan(force=force)})
             if path == '/api/record/status':
                 return self._json({'ok': True, 'recording': RECORDER.status()})
             if path.startswith('/api/record/download/'):
@@ -1542,6 +1803,15 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._body()
                 ok, msg = apply_preset(_resolve_map_name(body.get('map')), body.get('preset'))
                 return self._json({'ok': ok, 'msg': msg}, 200 if ok else 400)
+
+            if path == '/api/wifi/connect':
+                body = self._body()
+                ok, msg, pending = wifi_request('connect', body.get('ssid', ''), body.get('password', ''))
+                return self._json({'ok': ok, 'msg': msg, 'pending': pending}, 200 if ok else 400)
+
+            if path == '/api/wifi/disconnect':
+                ok, msg, pending = wifi_request('disconnect')
+                return self._json({'ok': ok, 'msg': msg, 'pending': pending}, 200 if ok else 400)
 
             if path.startswith('/api/restart/'):
                 if self._is_running():

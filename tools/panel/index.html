@@ -798,6 +798,93 @@
   }
   .toast.show{opacity:1;transform:none}
 
+  /* ==================== 视图 ④：WiFi 网络 ==================== */
+  .wifi-shell{
+    flex:1;min-height:0;border-radius:var(--radius-xl);overflow:hidden;
+    display:flex;flex-direction:column;
+  }
+  .wifi-hero{
+    display:flex;align-items:center;gap:14px;padding:16px 20px;
+    background:var(--glass-2);border-bottom:1px solid var(--border-soft);flex-shrink:0;
+  }
+  .wifi-hero-icon{
+    width:52px;height:52px;border-radius:var(--radius-lg);flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg, var(--gem-soft), var(--ds-soft));
+    border:1px solid var(--border-strong);color:var(--ds);
+  }
+  .wifi-hero-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+  .wifi-hero-title{font-size:15px;font-weight:800;display:flex;align-items:center;gap:9px}
+  .wifi-state{
+    font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:var(--radius-pill);
+    background:var(--ok-soft);color:var(--ok);border:1px solid rgba(20,158,97,.3);
+  }
+  .wifi-state.off{background:var(--bad-soft);color:var(--bad);border-color:rgba(224,62,82,.4)}
+  .wifi-state.pending{background:var(--warn-soft);color:var(--warn);border-color:rgba(212,130,10,.4)}
+  .wifi-hero-sub{font-size:11.5px;color:var(--mute);display:flex;gap:16px;flex-wrap:wrap}
+  .wifi-hero-sub b{color:var(--dim);font-weight:700}
+  .wifi-hero-actions{display:flex;gap:8px;flex-shrink:0}
+  .wifi-note{
+    margin:12px 20px 0;padding:9px 13px;border-radius:var(--radius-md);
+    background:var(--warn-soft);border:1px solid rgba(212,130,10,.32);
+    color:var(--warn);font-size:11.5px;font-weight:600;flex-shrink:0;
+  }
+  .wifi-result{
+    padding:9px 20px 0;font-size:11.5px;font-weight:600;flex-shrink:0;
+    color:var(--mute);display:none;
+  }
+  .wifi-result.show{display:block}
+  .wifi-result.bad{color:var(--bad)}
+  .wifi-result.good{color:var(--ok)}
+  .wifi-body{
+    flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);
+    gap:14px;padding:14px 20px 18px;
+  }
+  .wifi-col{
+    min-height:0;border-radius:var(--radius-lg);border:1px solid var(--border-soft);
+    background:var(--glass-soft);display:flex;flex-direction:column;overflow:hidden;
+  }
+  .wifi-col-head{
+    display:flex;align-items:center;gap:8px;padding:10px 14px;flex-shrink:0;
+    border-bottom:1px solid var(--border-soft);background:var(--glass-2);
+  }
+  .wifi-col-head b{font-size:12.5px;font-weight:800}
+  .wifi-col-head span{font-size:10.5px;color:var(--mute)}
+  .wifi-col-head button{margin-left:auto;padding:4px 10px;font-size:11px}
+  .wifi-list{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:6px}
+  .wifi-item{
+    display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--radius-md);
+    border:1px solid var(--border-soft);background:var(--glass-2);cursor:pointer;transition:.16s;
+  }
+  .wifi-item:hover{border-color:var(--ds-border);background:var(--glass-hover)}
+  .wifi-item.selected{border-color:var(--gem-border);background:var(--gem-soft)}
+  .wifi-item.connected{border-color:rgba(20,158,97,.4);background:var(--ok-soft)}
+  .wifi-sig{width:20px;height:20px;flex-shrink:0;color:var(--ds)}
+  .wifi-item.connected .wifi-sig{color:var(--ok)}
+  .wifi-name{flex:1;min-width:0;display:flex;flex-direction:column}
+  .wifi-name b{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wifi-name small{font-size:10.5px;color:var(--mute)}
+  .wifi-tag{
+    font-size:10px;font-weight:700;padding:2px 7px;border-radius:var(--radius-pill);
+    background:var(--ds-soft);color:var(--ds);border:1px solid var(--ds-border);white-space:nowrap;
+  }
+  .wifi-tag.ok{background:var(--ok-soft);color:var(--ok);border-color:rgba(20,158,97,.34)}
+  .wifi-tag.warn{background:var(--warn-soft);color:var(--warn);border-color:rgba(212,130,10,.34)}
+  .wifi-item button{padding:4px 10px;font-size:11px}
+  .wifi-empty{padding:24px 10px;text-align:center;color:var(--mute);font-size:12px}
+  .wifi-connect-bar{
+    display:flex;align-items:center;gap:8px;padding:10px 14px;flex-shrink:0;
+    border-top:1px solid var(--border-soft);background:var(--glass-2);
+  }
+  .wifi-connect-bar span{
+    flex:1;min-width:0;font-size:11.5px;color:var(--dim);font-weight:600;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .wifi-connect-bar input{
+    width:180px;background:var(--glass-input);color:var(--fg);border:1px solid var(--border-soft);
+    border-radius:var(--radius-pill);padding:6px 11px;font-size:12px;outline:none;
+  }
+
   ::-webkit-scrollbar{width:6px;height:6px}
   ::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:4px}
   ::-webkit-scrollbar-track{background:transparent}
@@ -871,6 +958,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
         深度终端
         <span class="nav-err-cnt" id="navErrCnt">0</span>
+      </button>
+      <button class="nav-tab" data-view="wifi" id="navWifi">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M2 8.8a15 15 0 0 1 20 0"/><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16.2a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>
+        WiFi 网络
       </button>
     </nav>
 
@@ -1129,6 +1220,46 @@
         <div id="log"></div>
       </div>
     </section>
+
+    <!-- ==================== 视图 ④：WiFi 网络 ==================== -->
+    <section class="view" id="view-wifi">
+      <div class="wifi-shell island">
+        <div class="wifi-hero">
+          <div class="wifi-hero-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 8.8a15 15 0 0 1 20 0"/><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16.2a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>
+          </div>
+          <div class="wifi-hero-main">
+            <div class="wifi-hero-title">WiFi 网络 <span class="wifi-state" id="wifiState">检测中</span></div>
+            <div class="wifi-hero-sub">
+              <span>当前：<b id="wifiSsid">-</b></span>
+              <span>地址：<b id="wifiIp">-</b></span>
+              <span>接口：<b id="wifiIface">wlan0</b></span>
+            </div>
+          </div>
+          <div class="wifi-hero-actions">
+            <button id="btnWifiRefresh" type="button" title="刷新当前连接状态">刷新状态</button>
+            <button id="btnWifiDisconnect" type="button" title="断开当前 WiFi（会中断 SSH 隧道）">断开</button>
+          </div>
+        </div>
+        <div class="wifi-result" id="wifiResult"></div>
+        <div class="wifi-note">⚠ 切换 WiFi 会短暂中断 SSH 隧道与面板连接；新网络连通后重新打开隧道即可。已保存网络可一键连接，新网络请输入密码。</div>
+        <div class="wifi-body">
+          <div class="wifi-col">
+            <div class="wifi-col-head"><b>附近网络</b><span id="wifiScanTag">-</span><button id="btnWifiScan" type="button">重新扫描</button></div>
+            <div class="wifi-list" id="wifiList"></div>
+            <div class="wifi-connect-bar">
+              <span id="wifiTarget">点击一个网络以选择</span>
+              <input type="password" id="wifiPassword" placeholder="密码（开放网络留空）" autocomplete="off">
+              <button class="primary" id="btnWifiConnect" type="button" disabled>连接</button>
+            </div>
+          </div>
+          <div class="wifi-col">
+            <div class="wifi-col-head"><b>已保存网络</b><span>点击直接连接，无需密码</span></div>
+            <div class="wifi-list" id="wifiSaved"></div>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 </div>
 
@@ -1140,6 +1271,7 @@
     <ul>
       <li><b>平时看「✦ 实况伴行」</b>：小车一切正常时，右侧诊室保持安静不刷屏；只要出现丢线、卡顿、节点掉线或兜底急刹，诊室会立刻用直观中文告诉您哪里出了问题，并附带一键跳转日志按钮。</li>
       <li><b>调参数切「⚙ 星海调参」</b>：决赛核心 4 组参数平铺一屏，支持<b>紫蓝滑块拖拽</b>和 <b><code>−</code> / <code>+</code> 精密步进</b>（按住 <code>Shift + 点击</code> 为 5 倍速微调）。</li>
+      <li><b>切 WiFi 切「WiFi 网络」</b>：附近网络与已保存网络都能一键连接；切换会断 SSH 隧道，面板重连后自动显示最终结果。</li>
       <li><b>快捷键</b>：<code>`</code>（Tab 上方按键）快速在「实况 ↔ 终端」间切换；<code>Esc</code> 关闭弹窗或返回实况（绝不占用空格键）。</li>
     </ul>
     <h4>二、比赛计分与常见决策说明</h4>
@@ -1173,6 +1305,7 @@ let runningMap = null, yamlStale = false, restarting = false, pendingChanged = '
 let lastFollowEpoch = null, mapMismatchPrev = null, mapAutoSynced = false, lastRunId = null, lastRoundNum = null;
 let lowVoltWarned = false, recActive = false, lastRecFilesSig = '';
 let logErrCount = 0, statusBusy = false, logsBusy = false, statusFailCount = 0;
+let wifiSelected = null, wifiNetworks = [], wifiSaved = [], wifiScanning = false, wifiBusy = false;
 let prevFramesLive = {debug:false, yolo:false}, imgLoaded = {debug:false, yolo:false};
 const expandedDiagIds = new Set();
 
@@ -1202,9 +1335,9 @@ $('btnTheme').addEventListener('click', ()=>{
   applyTheme(cur === 'light' ? 'dark' : 'light');
 });
 
-// ---------------- 三视图切换
+// ---------------- 四视图切换
 function setView(viewName){
-  if(!['live', 'tune', 'term'].includes(viewName)) viewName = 'live';
+  if(!['live', 'tune', 'term', 'wifi'].includes(viewName)) viewName = 'live';
   activeView = viewName;
   document.querySelectorAll('#navTabs .nav-tab').forEach(b=>b.classList.toggle('active', b.dataset.view === activeView));
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id === 'view-' + activeView));
@@ -1212,10 +1345,168 @@ function setView(viewName){
     const box = $('log');
     requestAnimationFrame(()=>{ box.scrollTop = box.scrollHeight; });
   }
+  if(activeView === 'wifi'){
+    refreshWifiStatus();
+    wifiScan(false);
+  }
 }
 document.querySelectorAll('#navTabs .nav-tab').forEach(btn=>btn.addEventListener('click', ()=>setView(btn.dataset.view)));
 $('chipGoTune').addEventListener('click', ()=>setView('tune'));
 $('btnTermBack').addEventListener('click', ()=>setView('live'));
+
+// ---------------- WiFi 网络管理
+function wifiSigIcon(level){
+  const bars = level >= 75 ? 4 : level >= 50 ? 3 : level >= 25 ? 2 : 1;
+  let svg = '';
+  for(let i=0;i<4;i++){
+    const h = 4 + i * 4;
+    svg += `<rect x="${1+i*5}" y="${17-h}" width="3.4" height="${h}" rx="1" fill="${i<bars?'currentColor':'var(--mute)'}" opacity="${i<bars?1:.35}"/>`;
+  }
+  return `<svg class="wifi-sig" viewBox="0 0 21 20" fill="none">${svg}</svg>`;
+}
+
+function renderWifiNetworks(){
+  const box = $('wifiList');
+  if(!wifiNetworks.length){
+    box.innerHTML = '<div class="wifi-empty">暂无扫描结果，点「重新扫描」重试</div>';
+    return;
+  }
+  box.innerHTML = wifiNetworks.map(n=>{
+    const cls = 'wifi-item' + (wifiSelected === n.ssid ? ' selected' : '') + (n.in_use ? ' connected' : '');
+    const tag = n.in_use ? '<span class="wifi-tag ok">当前</span>'
+              : n.saved ? '<span class="wifi-tag">已保存</span>'
+              : n.open ? '<span class="wifi-tag warn">开放</span>' : '';
+    return `<div class="${cls}" data-ssid="${escHtml(n.ssid)}">` + wifiSigIcon(n.signal) +
+      `<div class="wifi-name"><b>${escHtml(n.ssid)}</b><small>${n.signal}% · ${escHtml(n.security || '开放网络')}</small></div>` +
+      tag + `</div>`;
+  }).join('');
+  box.querySelectorAll('.wifi-item').forEach(el=>el.addEventListener('click', ()=>{
+    wifiSelected = el.dataset.ssid;
+    $('wifiTarget').textContent = '目标：' + wifiSelected;
+    $('wifiPassword').value = '';
+    $('btnWifiConnect').disabled = false;
+    renderWifiNetworks();
+  }));
+}
+
+function renderWifiSaved(){
+  const box = $('wifiSaved');
+  if(!wifiSaved.length){
+    box.innerHTML = '<div class="wifi-empty">暂无已保存的 WiFi 配置</div>';
+    return;
+  }
+  const current = $('wifiSsid').textContent;
+  box.innerHTML = wifiSaved.map(s=>{
+    const isCur = (s === current);
+    const icon = '<svg class="wifi-sig" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16.2a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>';
+    return `<div class="wifi-item${isCur?' connected':''}" data-ssid="${escHtml(s)}">` + icon +
+      `<div class="wifi-name"><b>${escHtml(s)}</b><small>${isCur?'当前连接':'已保存配置'}</small></div>` +
+      (isCur ? '<span class="wifi-tag ok">当前</span>' : '<button type="button">连接</button>') + `</div>`;
+  }).join('');
+  box.querySelectorAll('.wifi-item').forEach(el=>el.addEventListener('click', e=>{
+    const ssid = el.dataset.ssid;
+    if(e.target.closest('button')){ wifiDoConnect(ssid, ''); return; }
+    wifiSelected = ssid;
+    $('wifiTarget').textContent = '目标：' + ssid;
+    $('wifiPassword').value = '';
+    $('btnWifiConnect').disabled = false;
+    renderWifiNetworks();
+  }));
+}
+
+function renderWifiStatus(d){
+  if(!d || !d.ok) return;
+  $('wifiIface').textContent = d.iface || 'wlan0';
+  $('wifiSsid').textContent = d.ssid || '未连接';
+  $('wifiIp').textContent = d.ip || '-';
+  const st = $('wifiState');
+  st.className = 'wifi-state' + (d.pending ? ' pending' : (d.connected ? '' : ' off'));
+  st.textContent = d.pending ? (d.pending.action === 'connect' ? '连接中…' : '断开中…')
+                             : (d.connected ? '已连接' : (d.available ? '未连接' : 'nmcli 不可用'));
+  wifiSaved = d.saved || [];
+  const box = $('wifiResult');
+  const lr = d.last_result;
+  if(lr){
+    box.className = 'wifi-result show ' + (lr.ok ? 'good' : 'bad');
+    box.textContent = `${lr.action === 'connect' ? '连接' : '断开'} ${lr.ssid || ''}：${lr.msg}（${lr.duration}s）`;
+  }else{
+    box.className = 'wifi-result';
+  }
+  renderWifiSaved();
+  renderWifiNetworks();
+}
+
+async function refreshWifiStatus(){
+  try{
+    const d = await (await fetch('/api/wifi/status',{cache:'no-store'})).json();
+    renderWifiStatus(d);
+  }catch(e){ /* 面板断连由 connBanner 统一提示 */ }
+}
+
+async function wifiScan(force){
+  if(wifiScanning) return;
+  wifiScanning = true;
+  $('btnWifiScan').disabled = true;
+  $('wifiScanTag').textContent = '扫描中…';
+  try{
+    const d = await (await fetch('/api/wifi/scan'+(force?'?force=1':''),{cache:'no-store'})).json();
+    if(!d.ok) throw new Error(d.error || '扫描失败');
+    wifiNetworks = d.networks || [];
+    $('wifiScanTag').textContent = wifiNetworks.length + ' 个网络';
+    renderWifiNetworks();
+  }catch(e){
+    $('wifiScanTag').textContent = '扫描失败';
+    toast('WiFi 扫描失败：' + e.message, true);
+  }finally{
+    wifiScanning = false;
+    $('btnWifiScan').disabled = false;
+  }
+}
+
+async function wifiDoConnect(ssid, password){
+  if(wifiBusy){ toast('上一次 WiFi 操作仍在进行中', true); return; }
+  if(!ssid){ toast('请先选择一个网络', true); return; }
+  wifiBusy = true;
+  $('btnWifiConnect').disabled = true;
+  try{
+    const d = await (await fetch('/api/wifi/connect',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ssid, password}),
+    })).json();
+    toast(d.msg, !d.ok);
+    if(d.ok) $('wifiResult').className = 'wifi-result';
+    refreshWifiStatus();
+  }catch(e){
+    toast('连接请求未送达，网络可能已切换：' + e.message, true);
+  }finally{
+    wifiBusy = false;
+    $('btnWifiConnect').disabled = false;
+  }
+}
+
+async function wifiDoDisconnect(){
+  if(wifiBusy) return;
+  if(!confirm('确认断开当前 WiFi？SSH 隧道会中断，需通过其他方式重新接入面板。')) return;
+  wifiBusy = true;
+  try{
+    const d = await (await fetch('/api/wifi/disconnect',{method:'POST'})).json();
+    toast(d.msg, !d.ok);
+    refreshWifiStatus();
+  }catch(e){
+    toast('断开请求未送达：' + e.message, true);
+  }finally{
+    wifiBusy = false;
+  }
+}
+
+$('btnWifiScan').addEventListener('click', ()=>wifiScan(true));
+$('btnWifiRefresh').addEventListener('click', refreshWifiStatus);
+$('btnWifiConnect').addEventListener('click', ()=>wifiDoConnect(wifiSelected, $('wifiPassword').value));
+$('btnWifiDisconnect').addEventListener('click', wifiDoDisconnect);
+$('wifiPassword').addEventListener('keydown', e=>{
+  if(e.key === 'Enter' && wifiSelected) wifiDoConnect(wifiSelected, $('wifiPassword').value);
+});
+setInterval(()=>{ if(activeView === 'wifi') refreshWifiStatus(); }, 1500);
 
 function jumpToNodeLog(nodeName){
   if(LOG_LABEL[nodeName]){
